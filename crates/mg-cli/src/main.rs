@@ -57,14 +57,41 @@ fn require_files(files: &[PathBuf]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+fn read_source(path: &Path) -> Result<String, ExitCode> {
+    std::fs::read_to_string(path).map_err(|err| {
+        eprintln!("error: could not read {}: {err}", path.display());
+        ExitCode::from(2)
+    })
+}
+
 fn cmd_check(files: &[PathBuf]) -> ExitCode {
     let code = require_files(files);
     if code != ExitCode::SUCCESS {
         return code;
     }
 
-    eprintln!("mg check: not yet implemented (M1 adds the lexer and parser)");
-    ExitCode::FAILURE
+    let mut had_errors = false;
+
+    for path in files {
+        let source = match read_source(path) {
+            Ok(source) => source,
+            Err(code) => return code,
+        };
+
+        let parsed = mg_syntax::parse(&source);
+        let filename = path.display().to_string();
+
+        for diagnostic in &parsed.diagnostics {
+            eprint!("{}", diagnostic.render(&filename, &source));
+            had_errors |= diagnostic.severity == mg_diag::Severity::Error;
+        }
+    }
+
+    if had_errors {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
 }
 
 fn cmd_build(files: &[PathBuf], _out: &Path) -> ExitCode {
@@ -83,8 +110,22 @@ fn cmd_fmt(files: &[PathBuf]) -> ExitCode {
         return code;
     }
 
-    eprintln!("mg fmt: not yet implemented");
-    ExitCode::FAILURE
+    for path in files {
+        let source = match read_source(path) {
+            Ok(source) => source,
+            Err(code) => return code,
+        };
+
+        let formatted = mg_syntax::fmt::format(&source);
+        if formatted != source
+            && let Err(err) = std::fs::write(path, &formatted)
+        {
+            eprintln!("error: could not write {}: {err}", path.display());
+            return ExitCode::from(2);
+        }
+    }
+
+    ExitCode::SUCCESS
 }
 
 fn cmd_svg(files: &[PathBuf], _glyph: &str, _instance: Option<&str>) -> ExitCode {

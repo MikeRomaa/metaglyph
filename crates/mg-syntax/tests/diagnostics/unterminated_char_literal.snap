@@ -1,0 +1,16 @@
+---
+source: crates/mg-syntax/tests/diagnostics.rs
+expression: rendered
+---
+error[MG0108]: unterminated character literal
+  ┌─ unterminated_char_literal.mg:1:9
+  │
+1 │ let x = 'a
+  │         ^^ character literal starts here
+
+
+error[MG0102]: expected `;`, found end of file
+  ┌─ unterminated_char_literal.mg:2:1
+  │
+2 │ 
+  │ ^ found end of file

@@ -1,0 +1,11 @@
+---
+source: crates/mg-syntax/tests/diagnostics.rs
+expression: rendered
+---
+error[MG0101]: expected `)`, found end of file
+  ┌─ unclosed_paren.mg:2:1
+  │
+1 │ param stem (default: 100
+  │            - unclosed `(` opened here
+2 │ 
+  │ ^ found end of file

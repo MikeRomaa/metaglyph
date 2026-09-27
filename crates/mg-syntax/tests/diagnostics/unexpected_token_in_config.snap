@@ -1,0 +1,23 @@
+---
+source: crates/mg-syntax/tests/diagnostics.rs
+expression: rendered
+---
+error[MG0102]: expected `)` or `,`, found `deg`
+  ┌─ unexpected_token_in_config.mg:1:26
+  │
+1 │ param stem (default: 100 deg, range: 20..260)
+  │                          ^^^ found `deg`
+
+
+error[MG0102]: expected an identifier, found `,`
+  ┌─ unexpected_token_in_config.mg:1:29
+  │
+1 │ param stem (default: 100 deg, range: 20..260)
+  │                             ^ found `,`
+
+
+error[MG0102]: expected `:`, found `,`
+  ┌─ unexpected_token_in_config.mg:1:29
+  │
+1 │ param stem (default: 100 deg, range: 20..260)
+  │                             ^ found `,`

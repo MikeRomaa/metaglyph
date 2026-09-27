@@ -1,0 +1,18 @@
+---
+source: crates/mg-syntax/tests/diagnostics.rs
+expression: rendered
+---
+error[MG0105]: unterminated string literal
+  ┌─ unterminated_string.mg:1:13
+  │
+1 │ font (name: "Metaglyph Sans, em: 1000)
+  │             ^^^^^^^^^^^^^^^^^^^^^^^^^^ string starts here
+
+
+error[MG0101]: expected `)`, found end of file
+  ┌─ unterminated_string.mg:2:1
+  │
+1 │ font (name: "Metaglyph Sans, em: 1000)
+  │      - unclosed `(` opened here
+2 │ 
+  │ ^ found end of file

@@ -1,0 +1,9 @@
+---
+source: crates/mg-syntax/tests/diagnostics.rs
+expression: rendered
+---
+error[MG0103]: codepoint U+110000 exceeds U+10FFFF
+  ┌─ invalid_codepoint.mg:1:21
+  │
+1 │ glyph A (codepoint: U+110000, advance: 1) {}
+  │                     ^^^^^^^^ codepoint out of range

@@ -1,0 +1,9 @@
+---
+source: crates/mg-syntax/tests/diagnostics.rs
+expression: rendered
+---
+error[MG0104]: unknown escape sequence `\q`
+  ┌─ unknown_escape.mg:1:24
+  │
+1 │ font (name: "Metaglyph \q Sans", em: 1000)
+  │                        ^^ unknown escape

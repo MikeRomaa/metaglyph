@@ -1,0 +1,9 @@
+---
+source: crates/mg-syntax/tests/diagnostics.rs
+expression: rendered
+---
+error[MG0109]: character literal is empty
+  ┌─ empty_char_literal.mg:1:9
+  │
+1 │ let x = '';
+  │         ^^ empty character literal

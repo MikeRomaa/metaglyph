@@ -1,0 +1,9 @@
+---
+source: crates/mg-syntax/tests/diagnostics.rs
+expression: rendered
+---
+error[MG0110]: character literal holds more than one scalar value
+  ┌─ char_literal_multiple_scalars.mg:1:9
+  │
+1 │ let x = 'ab';
+  │         ^^^^ expected exactly one scalar value

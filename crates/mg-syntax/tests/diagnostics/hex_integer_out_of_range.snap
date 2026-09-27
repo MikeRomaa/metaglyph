@@ -1,0 +1,9 @@
+---
+source: crates/mg-syntax/tests/diagnostics.rs
+expression: rendered
+---
+error[MG0107]: hex integer 0xFFFFFFFFFFFFFF exceeds 2^53
+  ┌─ hex_integer_out_of_range.mg:1:9
+  │
+1 │ let x = 0xFFFFFFFFFFFFFF;
+  │         ^^^^^^^^^^^^^^^^ hex integer out of range

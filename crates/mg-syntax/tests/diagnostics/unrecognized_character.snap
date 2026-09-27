@@ -1,0 +1,16 @@
+---
+source: crates/mg-syntax/tests/diagnostics.rs
+expression: rendered
+---
+error[MG0106]: unrecognized character `#`
+  ┌─ unrecognized_character.mg:2:1
+  │
+2 │ #
+  │ ^ not valid here
+
+
+error[MG0102]: expected `let`, `glyph`, or `path`, found an unrecognized character
+  ┌─ unrecognized_character.mg:2:1
+  │
+2 │ #
+  │ ^ found an unrecognized character

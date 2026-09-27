@@ -1,8 +1,9 @@
 use mg_diag::{Code, Diagnostic, Label};
 
 /// Exercises the renderer's full feature set (secondary label, help, note)
-/// ahead of the M1 parser. `tests/diagnostics/*.mg` grows into the real
-/// corpus once `mg-syntax` can produce these diagnostics itself.
+/// ahead of the M1 parser. `crates/mg-syntax/tests/diagnostics/*.mg` grows
+/// into the real corpus once `mg-syntax` can produce these diagnostics
+/// itself.
 #[test]
 fn renders_unclosed_block_with_secondary_label_and_help() {
     let source = "glyph A (\n{\n  path p {\n";

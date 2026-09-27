@@ -458,6 +458,7 @@ dependencies = [
 name = "mg-syntax"
 version = "0.1.0"
 dependencies = [
+ "insta",
  "mg-diag",
  "rowan",
 ]
