@@ -6,6 +6,7 @@
 //! commit instead of a rewrite once secondary labels are needed.
 
 mod codes;
+pub mod suggest;
 
 pub use codes::Code;
 

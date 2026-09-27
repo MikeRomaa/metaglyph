@@ -1,0 +1,11 @@
+---
+source: crates/mg-hir/tests/diagnostics.rs
+expression: rendered
+---
+error[MG0503]: a path body must begin with `start`
+   ┌─ path_missing_start.mg:8:3
+   │  
+ 8 │ ╭   path p (stroke: 10) {
+ 9 │ │     line (to: (1, 1))
+10 │ │   }
+   │ ╰───^ no `start` declaration

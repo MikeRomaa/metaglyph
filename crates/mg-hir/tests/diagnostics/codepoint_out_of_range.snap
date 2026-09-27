@@ -1,0 +1,9 @@
+---
+source: crates/mg-hir/tests/diagnostics.rs
+expression: rendered
+---
+error[MG0411]: codepoint 1114112 is outside 0..=U+10FFFF
+  ┌─ codepoint_out_of_range.mg:7:20
+  │
+7 │ glyph A (codepoint: 0x110000, advance: 1) {}
+  │                    ^^^^^^^^^ out of range

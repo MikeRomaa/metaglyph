@@ -1,0 +1,9 @@
+---
+source: crates/mg-hir/tests/diagnostics.rs
+expression: rendered
+---
+error[MG0301]: `advance` must be `num`, found `pair`
+  ┌─ pair_where_num_expected.mg:7:18
+  │
+7 │ glyph A (advance: (1, 2)) {}
+  │                  ^^^^^^^ expected `num`

@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use mg_syntax::ast::AstNode;
 
 #[derive(Parser)]
 #[command(name = "mg", version, about = "Metaglyph font compiler")]
@@ -82,6 +83,18 @@ fn cmd_check(files: &[PathBuf]) -> ExitCode {
         let filename = path.display().to_string();
 
         for diagnostic in &parsed.diagnostics {
+            eprint!("{}", diagnostic.render(&filename, &source));
+            had_errors |= diagnostic.severity == mg_diag::Severity::Error;
+        }
+
+        // One file at a time, same simplification M1's parser made: spec
+        // §5.6's multi-file merge (every directive from every file visible
+        // everywhere) is not yet implemented, so this checks each file as
+        // if it were the whole font.
+        let source_file = mg_syntax::ast::SourceFile::cast(parsed.syntax())
+            .expect("SOURCE_FILE always casts from a parse's root node");
+        let (_, hir_diagnostics) = mg_hir::lower(&source_file);
+        for diagnostic in &hir_diagnostics {
             eprint!("{}", diagnostic.render(&filename, &source));
             had_errors |= diagnostic.severity == mg_diag::Severity::Error;
         }

@@ -450,6 +450,7 @@ name = "mg-hir"
 version = "0.1.0"
 dependencies = [
  "indexmap",
+ "insta",
  "mg-diag",
  "mg-syntax",
 ]

@@ -1,0 +1,18 @@
+---
+source: crates/mg-hir/tests/diagnostics.rs
+expression: rendered
+---
+error[MG0401]: `glyph` has no field `advnace`
+  ┌─ unknown_field.mg:7:10
+  │
+7 │ glyph A (advnace: 1) {}
+  │          ^^^^^^^ unknown field
+  │
+  = help: did you mean `advance`?
+
+
+error[MG0403]: `glyph` is missing required field `advance`
+  ┌─ unknown_field.mg:7:1
+  │
+7 │ glyph A (advnace: 1) {}
+  │ ^^^^^^^^^^^^^^^^^^^^^^^ missing `advance`

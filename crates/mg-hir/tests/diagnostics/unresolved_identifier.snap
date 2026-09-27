@@ -1,0 +1,11 @@
+---
+source: crates/mg-hir/tests/diagnostics.rs
+expression: rendered
+---
+error[MG0201]: cannot find `sten` in this scope
+  ┌─ unresolved_identifier.mg:8:19
+  │
+8 │ glyph A (advance: sten) {}
+  │                   ^^^^ not found
+  │
+  = help: a similarly named value exists: `stem`

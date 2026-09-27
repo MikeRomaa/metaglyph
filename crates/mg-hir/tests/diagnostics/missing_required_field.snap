@@ -1,0 +1,9 @@
+---
+source: crates/mg-hir/tests/diagnostics.rs
+expression: rendered
+---
+error[MG0403]: `glyph` is missing required field `advance`
+  ┌─ missing_required_field.mg:7:1
+  │
+7 │ glyph A () {}
+  │ ^^^^^^^^^^^^^ missing `advance`

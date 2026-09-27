@@ -1,0 +1,9 @@
+---
+source: crates/mg-hir/tests/diagnostics.rs
+expression: rendered
+---
+error[MG0205]: `glyphs` is a reserved word and cannot be a declaration name
+  ┌─ reserved_word_declaration_name.mg:7:5
+  │
+7 │ let glyphs = 1;
+  │     ^^^^^^ reserved word

@@ -95,6 +95,30 @@ ast_node!(MemberExpr, MEMBER_EXPR);
 ast_node!(RangeExpr, RANGE_EXPR);
 ast_node!(ErrorNode, ERROR);
 
+impl Literal {
+    /// The literal's own token (spec §5.1). `start_node` opens this node
+    /// before `bump` flushes pending trivia, so any whitespace or comment
+    /// immediately before the literal is nested inside it as a leading
+    /// token — this skips that, the same way [`UnaryExpr::op_token`] does.
+    pub fn token(&self) -> Option<SyntaxToken> {
+        self.0
+            .children_with_tokens()
+            .filter_map(|e| e.into_token())
+            .find(|t| !t.kind().is_trivia())
+    }
+}
+
+impl IdentExpr {
+    /// The identifier's own token; see [`Literal::token`] for why this
+    /// isn't simply the node's first token.
+    pub fn token(&self) -> Option<SyntaxToken> {
+        self.0
+            .children_with_tokens()
+            .filter_map(|e| e.into_token())
+            .find(|t| !t.kind().is_trivia())
+    }
+}
+
 impl SourceFile {
     /// The file's top-level declarations, in source order.
     pub fn items(&self) -> impl Iterator<Item = SyntaxNode> {
