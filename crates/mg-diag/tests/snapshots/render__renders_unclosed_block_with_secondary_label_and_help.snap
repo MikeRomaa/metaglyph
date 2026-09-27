@@ -1,0 +1,16 @@
+---
+source: crates/mg-diag/tests/render.rs
+assertion_line: 18
+expression: "diagnostic.render(\"sample.mg\", source)"
+---
+error[MG0101]: unexpected end of file inside block
+  ┌─ sample.mg:4:1
+  │
+2 │ {
+  │ - unclosed block opened here
+3 │   path p {
+4 │ 
+  │ ^ expected `}` here
+  │
+  = help: add a closing `}`
+  = note: blocks opened with `{` must be closed before the file ends
