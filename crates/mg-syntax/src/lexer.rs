@@ -1,5 +1,5 @@
-use crate::codes;
 use crate::syntax_kind::SyntaxKind;
+use mg_diag::codes;
 use mg_diag::{Diagnostic, Label};
 
 /// One lexed token: a kind plus its byte range in the source. Trivia

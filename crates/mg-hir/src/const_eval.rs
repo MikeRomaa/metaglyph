@@ -22,7 +22,7 @@ use mg_syntax::{SyntaxToken, ast};
 pub fn eval_const(expr: &ast::Expr, font_em: Option<f64>) -> Option<f64> {
     use ast::Expr;
     match expr {
-        Expr::Literal(lit) => literal_value(&lit.token()?, font_em),
+        Expr::Literal(lit) => literal_num_value(&lit.token()?, font_em),
         Expr::Paren(paren) => eval_const(&paren.inner()?, font_em),
         Expr::Unary(unary) => {
             let operand = eval_const(&unary.operand()?, font_em)?;
@@ -70,7 +70,11 @@ pub fn eval_const(expr: &ast::Expr, font_em: Option<f64>) -> Option<f64> {
 /// (spec §5.3: `deg` × π/180, `rad` × 1, `em` × `font.em`, `%` × 0.01).
 /// Hex, codepoint, and character literals are exact integers, same value
 /// regardless of spelling (spec §5.1).
-fn literal_value(token: &SyntaxToken, font_em: Option<f64>) -> Option<f64> {
+///
+/// Public because `mg-eval` (M3) needs the exact same literal semantics
+/// for its real evaluator — a literal always means the same value whether
+/// or not the expression containing it happens to be constant.
+pub fn literal_num_value(token: &SyntaxToken, font_em: Option<f64>) -> Option<f64> {
     let text = token.text();
     match token.kind() {
         SyntaxKind::NUMBER => text.parse().ok(),

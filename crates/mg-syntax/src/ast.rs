@@ -106,6 +106,32 @@ impl Literal {
             .filter_map(|e| e.into_token())
             .find(|t| !t.kind().is_trivia())
     }
+
+    /// The unescaped value of a `"…"` literal (spec §5.1: `\"` `\\` `\n`
+    /// `\t`), or `None` when this literal isn't a string at all.
+    pub fn string_value(&self) -> Option<String> {
+        let token = self.token()?;
+        if token.kind() != SyntaxKind::STRING {
+            return None;
+        }
+        let inner = token.text().strip_prefix('"')?.strip_suffix('"')?;
+        let mut out = String::with_capacity(inner.len());
+        let mut chars = inner.chars();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('"') => out.push('"'),
+                    Some('\\') => out.push('\\'),
+                    Some('n') => out.push('\n'),
+                    Some('t') => out.push('\t'),
+                    _ => {}
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        Some(out)
+    }
 }
 
 impl IdentExpr {

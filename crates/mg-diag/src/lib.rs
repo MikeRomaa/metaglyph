@@ -5,16 +5,22 @@
 //! through this type so the parser can carry labeled spans from its first
 //! commit instead of a rewrite once secondary labels are needed.
 
-mod codes;
+pub mod codes;
 pub mod suggest;
 
 pub use codes::Code;
+/// Re-exported so a caller can build the `ColorChoice`-aware writer
+/// [`Diagnostic::emit_color`] wants (a `StandardStream`, typically)
+/// without taking its own dependency on `codespan-reporting` — every
+/// other crate treats this one as the sole facade over it.
+pub use codespan_reporting::term::termcolor;
 
 use std::ops::Range;
 
 use codespan_reporting::diagnostic::{self, LabelStyle};
-use codespan_reporting::files::SimpleFile;
+use codespan_reporting::files::{self, SimpleFile};
 use codespan_reporting::term;
+use codespan_reporting::term::termcolor::WriteColor;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
@@ -121,11 +127,41 @@ impl Diagnostic {
 
     /// Renders this diagnostic as rustc-style text against `source`.
     /// `filename` is shown in the output; it need not exist on disk.
+    ///
+    /// Always plain, deliberately: this is what the `tests/diagnostics/`
+    /// snapshot corpora commit, and ANSI escapes in a `.snap` file would
+    /// make every diagnostic corpus far less readable in review for no
+    /// benefit (`insta` diffs text, not a terminal). Terminal output
+    /// wants [`Diagnostic::emit_color`] instead.
     pub fn render(&self, filename: &str, source: &str) -> String {
         let file = SimpleFile::new(filename, source);
         let diagnostic = self.to_codespan();
         let config = term::Config::default();
         term::emit_into_string(&config, &file, &diagnostic)
             .expect("rendering a diagnostic to an in-memory string does not fail")
+    }
+
+    /// Renders with the same rustc-style layout as [`Diagnostic::render`],
+    /// but with ANSI color styling written directly to `writer` — e.g. a
+    /// `codespan_reporting::term::termcolor::StandardStream`, whose own
+    /// `ColorChoice` decides whether color actually comes out (so a
+    /// caller gets "colored on a real terminal, plain when piped" for
+    /// free by constructing the stream with `ColorChoice::Auto`).
+    pub fn emit_color(
+        &self,
+        filename: &str,
+        source: &str,
+        writer: &mut dyn WriteColor,
+    ) -> std::io::Result<()> {
+        let file = SimpleFile::new(filename, source);
+        let diagnostic = self.to_codespan();
+        let config = term::Config::default();
+        let styles = term::Styles::default();
+        let mut styled = term::StylesWriter::new(writer, &styles);
+        term::emit_to_write_style(&mut styled, &config, &file, &diagnostic).map_err(|err| match err
+        {
+            files::Error::Io(io_err) => io_err,
+            other => panic!("rendering a diagnostic failed: {other}"),
+        })
     }
 }

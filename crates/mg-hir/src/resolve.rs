@@ -10,7 +10,7 @@ use std::ops::Range;
 use indexmap::IndexMap;
 use mg_diag::{Diagnostic, Label};
 
-use crate::codes;
+use mg_diag::codes;
 
 /// The closed reserved-word list (spec §5.4): declaration keywords,
 /// built-in constants, literals, operator words, and namespace roots.

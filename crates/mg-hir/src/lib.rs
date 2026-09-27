@@ -1,7 +1,6 @@
 //! CST to HIR lowering, field schemas, enum validation, name resolution,
 //! static type checking, and structural checks (spec §5.3–§5.8, §5.11).
 
-pub mod codes;
 pub mod const_eval;
 pub mod model;
 mod path_check;

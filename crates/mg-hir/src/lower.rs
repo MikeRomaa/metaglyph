@@ -26,13 +26,13 @@ use mg_syntax::SyntaxNode;
 use mg_syntax::ast::{self, AstNode};
 use mg_syntax::syntax_kind::SyntaxKind;
 
-use crate::codes;
 use crate::const_eval;
 use crate::model::*;
 use crate::resolve::{self, ValueNamespace};
 use crate::schema;
 use crate::type_check::{self, Ctx};
 use crate::types::Type;
+use mg_diag::codes;
 
 pub(crate) fn lower(source_file: &ast::SourceFile) -> (Hir, Vec<Diagnostic>) {
     let mut diagnostics = Vec::new();
@@ -84,27 +84,7 @@ fn string_literal_value(expr: &ast::Expr) -> Option<String> {
     let ast::Expr::Literal(lit) = expr else {
         return None;
     };
-    let token = lit.token()?;
-    if token.kind() != SyntaxKind::STRING {
-        return None;
-    }
-    let inner = token.text().strip_prefix('"')?.strip_suffix('"')?;
-    let mut out = String::with_capacity(inner.len());
-    let mut chars = inner.chars();
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            match chars.next() {
-                Some('"') => out.push('"'),
-                Some('\\') => out.push('\\'),
-                Some('n') => out.push('\n'),
-                Some('t') => out.push('\t'),
-                _ => {}
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    Some(out)
+    lit.string_value()
 }
 
 /// A field whose value must be one of `legal`, defaulting to
@@ -1716,6 +1696,14 @@ fn resolve_glyph_sets(hir: &mut Hir, diagnostics: &mut Vec<Diagnostic>) {
     for slant in slants.into_iter().flatten() {
         let mut ctx = Ctx::new(hir, diagnostics);
         expect_type(&mut ctx, &slant, Type::Num, "`slant`");
+        let font_em = ctx.hir.font.em.map(|v| v as f64);
+        if const_eval::eval_const(&slant, font_em).is_none() {
+            ctx.diagnostics.push(Diagnostic::error(
+                codes::NON_CONSTANT_EXPRESSION,
+                "`slant` must be a constant expression",
+                Label::new(slant.syntax().text_range().into(), "not constant"),
+            ));
+        }
     }
 }
 

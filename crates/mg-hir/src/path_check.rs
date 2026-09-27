@@ -5,8 +5,8 @@
 
 use mg_diag::{Diagnostic, Label};
 
-use crate::codes;
 use crate::model::{PathDecl, SegmentDecl, SegmentKind};
+use mg_diag::codes;
 
 pub fn check_path(all_paths: &[PathDecl], path: &PathDecl, diagnostics: &mut Vec<Diagnostic>) {
     let has_body = !path.segments.is_empty() || path_has_close_only(path);

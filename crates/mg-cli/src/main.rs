@@ -2,7 +2,25 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use mg_diag::Diagnostic;
+use mg_diag::termcolor::{ColorChoice, StandardStream};
 use mg_syntax::ast::AstNode;
+
+/// Prints `diagnostic` to `stream`, colored when `stream`'s own
+/// `ColorChoice` calls for it (so callers get "colored on a real
+/// terminal, plain when piped" just by constructing the stream with
+/// `ColorChoice::Auto`). Falls back to the always-plain rendering if
+/// writing to `stream` somehow fails.
+fn print_diagnostic(
+    stream: &mut StandardStream,
+    diagnostic: &Diagnostic,
+    filename: &str,
+    source: &str,
+) {
+    if diagnostic.emit_color(filename, source, stream).is_err() {
+        eprint!("{}", diagnostic.render(filename, source));
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "mg", version, about = "Metaglyph font compiler")]
@@ -32,7 +50,11 @@ enum Command {
         instance: Option<String>,
     },
     /// Print the evaluation dependency graph.
-    DumpGraph { files: Vec<PathBuf> },
+    DumpGraph {
+        files: Vec<PathBuf>,
+        #[arg(long)]
+        instance: Option<String>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -45,7 +67,7 @@ fn main() -> ExitCode {
             glyph,
             instance,
         } => cmd_svg(&files, &glyph, instance.as_deref()),
-        Command::DumpGraph { files } => cmd_dump_graph(&files),
+        Command::DumpGraph { files, instance } => cmd_dump_graph(&files, instance.as_deref()),
     }
 }
 
@@ -72,6 +94,7 @@ fn cmd_check(files: &[PathBuf]) -> ExitCode {
     }
 
     let mut had_errors = false;
+    let mut stderr = StandardStream::stderr(ColorChoice::Auto);
 
     for path in files {
         let source = match read_source(path) {
@@ -83,7 +106,7 @@ fn cmd_check(files: &[PathBuf]) -> ExitCode {
         let filename = path.display().to_string();
 
         for diagnostic in &parsed.diagnostics {
-            eprint!("{}", diagnostic.render(&filename, &source));
+            print_diagnostic(&mut stderr, diagnostic, &filename, &source);
             had_errors |= diagnostic.severity == mg_diag::Severity::Error;
         }
 
@@ -95,7 +118,7 @@ fn cmd_check(files: &[PathBuf]) -> ExitCode {
             .expect("SOURCE_FILE always casts from a parse's root node");
         let (_, hir_diagnostics) = mg_hir::lower(&source_file);
         for diagnostic in &hir_diagnostics {
-            eprint!("{}", diagnostic.render(&filename, &source));
+            print_diagnostic(&mut stderr, diagnostic, &filename, &source);
             had_errors |= diagnostic.severity == mg_diag::Severity::Error;
         }
     }
@@ -151,12 +174,84 @@ fn cmd_svg(files: &[PathBuf], _glyph: &str, _instance: Option<&str>) -> ExitCode
     ExitCode::FAILURE
 }
 
-fn cmd_dump_graph(files: &[PathBuf]) -> ExitCode {
+fn cmd_dump_graph(files: &[PathBuf], instance_name: Option<&str>) -> ExitCode {
     let code = require_files(files);
     if code != ExitCode::SUCCESS {
         return code;
     }
 
-    eprintln!("mg dump-graph: not yet implemented");
-    ExitCode::FAILURE
+    let mut had_errors = false;
+    let mut stderr = StandardStream::stderr(ColorChoice::Auto);
+
+    for path in files {
+        let source = match read_source(path) {
+            Ok(source) => source,
+            Err(code) => return code,
+        };
+        let filename = path.display().to_string();
+
+        let parsed = mg_syntax::parse(&source);
+        for diagnostic in &parsed.diagnostics {
+            print_diagnostic(&mut stderr, diagnostic, &filename, &source);
+            had_errors |= diagnostic.severity == mg_diag::Severity::Error;
+        }
+
+        let source_file = mg_syntax::ast::SourceFile::cast(parsed.syntax())
+            .expect("SOURCE_FILE always casts from a parse's root node");
+        let (hir, hir_diagnostics) = mg_hir::lower(&source_file);
+        for diagnostic in &hir_diagnostics {
+            print_diagnostic(&mut stderr, diagnostic, &filename, &source);
+            had_errors |= diagnostic.severity == mg_diag::Severity::Error;
+        }
+        if had_errors {
+            // Evaluating a font with unresolved names or type errors
+            // would just rediscover the same problems less clearly.
+            continue;
+        }
+
+        let instance = match instance_name {
+            Some(name) => match hir.instances.get(name) {
+                Some(instance) => instance,
+                None => {
+                    eprintln!("error: no instance named `{name}` in {filename}");
+                    return ExitCode::from(2);
+                }
+            },
+            None => hir
+                .instances
+                .values()
+                .next()
+                .expect("mg-hir always inserts at least one instance"),
+        };
+
+        let (graph, outcome) = mg_eval::evaluate(&hir, instance);
+        let ordering = mg_eval::toposort::topo_sort(&graph);
+
+        println!("instance {}", instance.name);
+        for node in &ordering.sorted {
+            let deps = graph.deps[node]
+                .iter()
+                .map(mg_eval::NodeId::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            match outcome.values.get(node) {
+                Some(value) => println!("  {node}  <- [{deps}]  = {value}"),
+                None => println!("  {node}  <- [{deps}]  = FAILED"),
+            }
+        }
+        for node in &ordering.remaining {
+            println!("  {node}  <- [cycle]  = FAILED");
+        }
+
+        for diagnostic in &outcome.diagnostics {
+            print_diagnostic(&mut stderr, diagnostic, &filename, &source);
+            had_errors = true;
+        }
+    }
+
+    if had_errors {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
 }

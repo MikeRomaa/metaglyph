@@ -17,24 +17,9 @@ use mg_diag::{Diagnostic, Label};
 use mg_syntax::SyntaxNode;
 use mg_syntax::ast::{self, AstNode};
 
-use crate::codes;
+use mg_diag::codes;
 
-/// `node`'s span, minus any leading trivia nested inside it. A block node
-/// (spec §5.2: `<kind> <name>? (config)? (body)?`) is opened, in the
-/// parser, before the whitespace between it and the previous declaration
-/// is flushed — the same reason [`mg_syntax::ast::Literal::token`] exists
-/// — so anchoring a diagnostic directly on `node.text_range()` would
-/// underline that leading gap instead of the declaration itself.
-pub fn trimmed_span(node: &SyntaxNode) -> Range<usize> {
-    let full: Range<usize> = node.text_range().into();
-    let start = node
-        .children_with_tokens()
-        .filter_map(|e| e.into_token())
-        .find(|t| !t.kind().is_trivia())
-        .map(|t| Range::<usize>::from(t.text_range()).start)
-        .unwrap_or(full.start);
-    start..full.end
-}
+pub use mg_syntax::trimmed_range as trimmed_span;
 
 pub struct FieldSchema {
     pub name: &'static str,

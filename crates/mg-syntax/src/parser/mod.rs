@@ -3,9 +3,9 @@ mod token_set;
 
 pub use token_set::TokenSet;
 
-use crate::codes;
 use crate::lexer::RawToken;
 use crate::syntax_kind::{Lang, SyntaxKind};
+use mg_diag::codes;
 use mg_diag::{Diagnostic, Label};
 use rowan::{Checkpoint, GreenNode, GreenNodeBuilder, Language};
 

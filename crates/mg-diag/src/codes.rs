@@ -5,6 +5,11 @@
 /// structure, `MG06xx` evaluation and domain errors, `MG07xx` geometry,
 /// `MG08xx` export. Each milestone adds its codes here; a shipped code is
 /// never renumbered or reused for a different error.
+///
+/// All codes live in this one file, regardless of which crate raises
+/// them, so the whole numbering scheme can be read (and grepped) in one
+/// place instead of fragmented across the crates that happen to use each
+/// class.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Code(&'static str);
 
@@ -23,3 +28,96 @@ impl std::fmt::Display for Code {
         f.write_str(self.0)
     }
 }
+
+// -- MG01xx: syntax (mg-syntax: lexer and parser) ------------------------
+
+pub const UNCLOSED_DELIMITER: Code = Code::new("MG0101");
+pub const UNEXPECTED_TOKEN: Code = Code::new("MG0102");
+pub const INVALID_CODEPOINT: Code = Code::new("MG0103");
+pub const UNKNOWN_ESCAPE: Code = Code::new("MG0104");
+pub const UNTERMINATED_STRING: Code = Code::new("MG0105");
+pub const UNRECOGNIZED_CHARACTER: Code = Code::new("MG0106");
+pub const HEX_INTEGER_OUT_OF_RANGE: Code = Code::new("MG0107");
+pub const UNTERMINATED_CHAR: Code = Code::new("MG0108");
+pub const EMPTY_CHAR_LITERAL: Code = Code::new("MG0109");
+pub const CHAR_LITERAL_MULTIPLE_SCALARS: Code = Code::new("MG0110");
+
+// -- MG02xx: name resolution (mg-hir) -------------------------------------
+
+pub const UNRESOLVED_NAME: Code = Code::new("MG0201");
+pub const DUPLICATE_DEFINITION: Code = Code::new("MG0202");
+pub const CASE_FOLD_COLLISION: Code = Code::new("MG0203");
+pub const SHADOWS_TOP_LEVEL: Code = Code::new("MG0204");
+pub const RESERVED_WORD_NAME: Code = Code::new("MG0205");
+pub const RESERVED_ANCHOR_NAME: Code = Code::new("MG0206");
+pub const CALL_TO_NON_FUNCTION: Code = Code::new("MG0207");
+
+// -- MG03xx: type checking (mg-hir) ---------------------------------------
+
+pub const TYPE_MISMATCH: Code = Code::new("MG0301");
+pub const NO_SUCH_MEMBER: Code = Code::new("MG0302");
+pub const MIXED_TUPLE: Code = Code::new("MG0303");
+pub const NON_INTEGRAL_INT_FIELD: Code = Code::new("MG0304");
+pub const WRONG_ARGUMENT_COUNT: Code = Code::new("MG0305");
+
+// -- MG04xx: field validation (mg-hir) ------------------------------------
+//
+// Metrics-class errors (a missing reserved metric, `baseline.y != 0`,
+// negative `overshoot`) are field-validation errors about a `metric`
+// block's configuration, so they live here alongside every other
+// field-validation code rather than getting a bucket of their own.
+
+pub const UNKNOWN_FIELD: Code = Code::new("MG0401");
+pub const UNKNOWN_ENUM_VALUE: Code = Code::new("MG0402");
+pub const MISSING_REQUIRED_FIELD: Code = Code::new("MG0403");
+pub const MUTUALLY_EXCLUSIVE_FIELDS: Code = Code::new("MG0404");
+pub const FIELD_ILLEGAL_HERE: Code = Code::new("MG0405");
+pub const NON_CONSTANT_EXPRESSION: Code = Code::new("MG0406");
+pub const VALUE_OUT_OF_RANGE: Code = Code::new("MG0407");
+pub const PARAM_NAMED_AFTER_INSTANCE_FIELD: Code = Code::new("MG0408");
+pub const ALTERNATE_WITHOUT_DEFAULT: Code = Code::new("MG0409");
+pub const ALTERNATE_WITH_CODEPOINT: Code = Code::new("MG0410");
+pub const CODEPOINT_OUT_OF_RANGE: Code = Code::new("MG0411");
+pub const UNKNOWN_GLYPH_SET: Code = Code::new("MG0412");
+pub const MISSING_REQUIRED_METRIC: Code = Code::new("MG0413");
+pub const BASELINE_NOT_ZERO: Code = Code::new("MG0414");
+pub const NEGATIVE_OVERSHOOT: Code = Code::new("MG0415");
+pub const GLYPH_NAME_TOO_LONG: Code = Code::new("MG0416");
+pub const EMPTY_GLYPH_LIST: Code = Code::new("MG0417");
+pub const KERN_GROUP_OVERLAP: Code = Code::new("MG0418");
+pub const DUPLICATE_KERN_PAIR: Code = Code::new("MG0419");
+pub const MISSING_DECLARATION_NAME: Code = Code::new("MG0420");
+pub const UNEXPECTED_DECLARATION_NAME: Code = Code::new("MG0421");
+
+// -- MG05xx: path structure (mg-hir) --------------------------------------
+
+pub const PATH_NEEDS_BODY_OR_FOLLOWS: Code = Code::new("MG0501");
+pub const FOLLOWS_TARGET_HAS_NO_BODY: Code = Code::new("MG0502");
+pub const PATH_MISSING_START: Code = Code::new("MG0503");
+pub const CLOSE_NOT_LAST: Code = Code::new("MG0504");
+pub const MULTIPLE_CLOSE: Code = Code::new("MG0505");
+pub const MULTIPLE_START: Code = Code::new("MG0506");
+pub const START_NOT_FIRST: Code = Code::new("MG0507");
+pub const FILL_REQUIRES_CLOSED_PATH: Code = Code::new("MG0508");
+
+// -- MG06xx: evaluation and domain errors (mg-eval) -----------------------
+//
+// Includes cycles, arithmetic/geometric domain errors, and the M3-scope
+// markers for what M4 has not landed yet (a free direction needing
+// Hobby's algorithm, a rendering path's stroked/filled bounds,
+// curve–curve intersection needing Bézier clipping).
+
+pub const CYCLE: Code = Code::new("MG0601");
+pub const DIVISION_BY_ZERO: Code = Code::new("MG0602");
+pub const SQRT_OF_NEGATIVE: Code = Code::new("MG0603");
+pub const INVERSE_TRIG_OUT_OF_RANGE: Code = Code::new("MG0604");
+pub const MEET_ON_PARALLEL_LINES: Code = Code::new("MG0605");
+pub const PATH_PARAMETER_OUT_OF_DOMAIN: Code = Code::new("MG0606");
+pub const EMPTY_LIST_REDUCTION: Code = Code::new("MG0607");
+pub const GLYPH_HAS_NO_INK: Code = Code::new("MG0608");
+pub const FREE_DIRECTION_NOT_YET_IMPLEMENTED: Code = Code::new("MG0609");
+pub const STROKING_NOT_YET_IMPLEMENTED: Code = Code::new("MG0610");
+pub const ZERO_LENGTH_SEGMENT: Code = Code::new("MG0611");
+pub const NEEDS_BEZIER_CLIPPING: Code = Code::new("MG0612");
+pub const POWER_DOMAIN_ERROR: Code = Code::new("MG0613");
+pub const ZERO_VECTOR: Code = Code::new("MG0614");

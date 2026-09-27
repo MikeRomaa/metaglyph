@@ -16,10 +16,10 @@ use mg_diag::Diagnostic;
 use mg_syntax::ast::{self, AstNode};
 use mg_syntax::syntax_kind::SyntaxKind;
 
-use crate::codes;
 use crate::model::{GlyphKey, Hir};
 use crate::resolve;
 use crate::types::{self, Type};
+use mg_diag::codes;
 
 pub struct Ctx<'a> {
     pub hir: &'a mut Hir,
