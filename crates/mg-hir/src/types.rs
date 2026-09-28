@@ -235,3 +235,94 @@ pub fn glyph_member(member: &str) -> Option<Type> {
         _ => None,
     }
 }
+
+/// Hover and completion text for a spec §5.9 function: a placeholder
+/// name per parameter of its first signature, and one line of meaning.
+/// Types come from [`lookup_function`], not from here.
+pub struct FnDoc {
+    pub params: &'static [&'static str],
+    pub doc: &'static str,
+}
+
+/// The [`FnDoc`] of every name in [`FUNCTION_NAMES`] (spec §5.9).
+pub fn function_doc(name: &str) -> Option<FnDoc> {
+    let (params, doc): (&'static [&'static str], &'static str) = match name {
+        "abs" => (&["x"], "Absolute value."),
+        "sign" => (&["x"], "−1, 0, or 1."),
+        "floor" => (&["x"], "Rounds down."),
+        "ceil" => (&["x"], "Rounds up."),
+        "round" => (&["x"], "Rounds half away from zero."),
+        "sqrt" => (&["x"], "Square root; a domain error below 0."),
+        "exp" => (&["x"], "e to the power x."),
+        "log" => (&["x"], "Natural logarithm."),
+        "sin" => (&["θ"], "Sine; radians."),
+        "cos" => (&["θ"], "Cosine; radians."),
+        "tan" => (&["θ"], "Tangent; radians."),
+        "asin" => (&["x"], "Arcsine, in radians; x in [−1, 1]."),
+        "acos" => (&["x"], "Arccosine, in radians; x in [−1, 1]."),
+        "atan2" => (&["y", "x"], "The angle of (x, y), in radians."),
+        "min" => (&["a", "b"], "The smaller of two numbers."),
+        "max" => (&["a", "b"], "The larger of two numbers."),
+        "clamp" => (&["x", "lo", "hi"], "x limited to [lo, hi]."),
+        "lerp" => (&["a", "b", "t"], "a + (b − a)·t."),
+        "length" => (&["v"], "A pair's length."),
+        "angle" => (&["v"], "A pair's direction, in radians."),
+        "unit" => (&["v"], "A pair scaled to length 1; a domain error at zero."),
+        "dir" => (&["θ"], "The unit pair at angle θ."),
+        "dot" => (&["a", "b"], "Dot product."),
+        "cross" => (&["a", "b"], "The z-component of the cross product."),
+        "perpendicular" => (&["v"], "The pair rotated +90°."),
+        "meet" => (
+            &["a", "b"],
+            "Where two lines cross; a domain error when parallel.",
+        ),
+        "mediate" => (&["a", "b", "t"], "The point a + (b − a)·t."),
+        "project" => (&["p", "l"], "The foot of the perpendicular from p to l."),
+        "polar" => (&["p", "len", "θ"], "The point len from p at angle θ."),
+        "mirror" => (&["p", "l"], "p reflected across l."),
+        "lineThrough" => (&["a", "b"], "The line through two points."),
+        "lineAt" => (&["p", "θ"], "The line through p at angle θ."),
+        "hline" => (&["y"], "The horizontal line at y."),
+        "vline" => (&["x"], "The vertical line at x."),
+        "translate" => (&["dx", "dy"], "A translation."),
+        "rotate" => (&["θ"], "A counter-clockwise rotation about the origin."),
+        "scale" => (&["s"], "A uniform scale; `scale(sx, sy)` scales each axis."),
+        "slant" => (&["θ"], "A shear: (x, y) → (x + y·tan θ, y)."),
+        "reflect" => (&["l"], "A reflection across a line."),
+        "apply" => (&["t", "p"], "A transform applied to a point."),
+        "pointAt" => (&["path", "t"], "The point at path parameter t in [0, n]."),
+        "directionAt" => (&["path", "t"], "The unit tangent at path parameter t."),
+        "curvatureAt" => (
+            &["path", "t"],
+            "The signed curvature at t, positive turning counter-clockwise.",
+        ),
+        "arcLength" => (&["path"], "The skeleton's total length."),
+        "pointAtLength" => (&["path", "s"], "The point at distance s along the path."),
+        "intersect" => (
+            &["a", "b"],
+            "Parameters on a where it crosses b, ascending; empty when none.",
+        ),
+        "subpath" => (&["path", "t0", "t1"], "The part between two parameters."),
+        "reverse" => (&["path"], "The path traversed backwards."),
+        "extrema" => (&["path"], "Parameters where x′ = 0 or y′ = 0, ascending."),
+        "sum" => (&["xs"], "The sum of a list; 0 when empty."),
+        "minOf" => (&["xs"], "The smallest element; a domain error when empty."),
+        "maxOf" => (&["xs"], "The largest element; a domain error when empty."),
+        _ => return None,
+    };
+    Some(FnDoc { params, doc })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_function_has_docs_matching_its_first_signature() {
+        for name in FUNCTION_NAMES {
+            let doc = function_doc(name).unwrap_or_else(|| panic!("`{name}` has no docs"));
+            let sigs = lookup_function(name).unwrap();
+            assert_eq!(doc.params.len(), sigs[0].params.len(), "`{name}`");
+        }
+    }
+}

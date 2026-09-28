@@ -32,6 +32,33 @@ impl Client {
     /// Starts a server and completes the handshake, offering `encodings`
     /// (none at all when `None`).
     pub fn start(encodings: Option<Vec<PositionEncodingKind>>) -> (Self, InitializeResult) {
+        Self::start_with(ClientCapabilities {
+            general: Some(GeneralClientCapabilities {
+                position_encodings: encodings,
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+    }
+
+    /// A client that accepts snippets in completions.
+    pub fn start_with_snippets() -> (Self, InitializeResult) {
+        Self::start_with(ClientCapabilities {
+            text_document: Some(lsp_types::TextDocumentClientCapabilities {
+                completion: Some(lsp_types::CompletionClientCapabilities {
+                    completion_item: Some(lsp_types::CompletionItemCapability {
+                        snippet_support: Some(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+    }
+
+    pub fn start_with(capabilities: ClientCapabilities) -> (Self, InitializeResult) {
         let (client, server) = Connection::memory();
         let handle = std::thread::spawn(move || mg_lsp::main_loop(server));
         let mut client = Client {
@@ -40,13 +67,7 @@ impl Client {
             next_id: 0,
         };
         let params = InitializeParams {
-            capabilities: ClientCapabilities {
-                general: Some(GeneralClientCapabilities {
-                    position_encodings: encodings,
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
+            capabilities,
             ..Default::default()
         };
         let response = client.request(Initialize::METHOD, params);
@@ -170,4 +191,13 @@ metric descender (y: -200, align: "bottom")
 /// `body` after [`PREAMBLE`].
 pub fn valid(body: &str) -> String {
     format!("{PREAMBLE}{body}\n")
+}
+
+/// `text` with its one `|` marker removed, and the marker's position.
+pub fn cursor(text: &str) -> (String, Position) {
+    let offset = text.find('|').expect("a `|` cursor marker");
+    let clean = format!("{}{}", &text[..offset], &text[offset + 1..]);
+    let line = text[..offset].matches('\n').count();
+    let column = offset - text[..offset].rfind('\n').map_or(0, |i| i + 1);
+    (clean, Position::new(line as u32, column as u32))
 }

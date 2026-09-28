@@ -145,9 +145,23 @@ fn closing_a_document_clears_its_diagnostics() {
 #[test]
 fn an_unsupported_request_gets_method_not_found() {
     let (mut client, _) = Client::start(None);
-    let response = client.request("textDocument/hover", serde_json::json!({}));
+    let response = client.request("textDocument/rename", serde_json::json!({}));
     let error = response.response_result.unwrap_err();
     assert_eq!(error.code, lsp_server::ErrorCode::MethodNotFound as i32);
+    client.stop();
+}
+
+#[test]
+fn malformed_params_get_an_error_and_the_server_keeps_running() {
+    let (mut client, _) = Client::start(None);
+    let response = client.request("textDocument/hover", serde_json::json!({}));
+    let error = response.response_result.unwrap_err();
+    assert_eq!(error.code, lsp_server::ErrorCode::InvalidParams as i32);
+
+    // A malformed notification is dropped, not fatal.
+    client.notify("textDocument/didOpen", serde_json::json!({ "nonsense": 1 }));
+    let published = client.open(&uri("after.mg"), &valid("glyph A (advance: 1) {}"));
+    assert!(published.diagnostics.is_empty());
     client.stop();
 }
 

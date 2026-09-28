@@ -5,7 +5,7 @@ pub mod const_eval;
 pub mod model;
 mod path_check;
 mod resolve;
-mod schema;
+pub mod schema;
 pub mod type_check;
 pub mod types;
 

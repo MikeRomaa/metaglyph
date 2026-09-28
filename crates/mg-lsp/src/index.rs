@@ -67,6 +67,8 @@ pub struct PathEntry {
     pub range: Range<usize>,
     pub segments: Vec<Decl>,
     pub follows: Option<String>,
+    /// Whether it declares its own segments, so `follows:` may name it.
+    pub has_body: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -89,6 +91,9 @@ pub struct KernEntry {
 #[derive(Debug, Clone, Default)]
 pub struct Index {
     pub font: Option<Decl>,
+    /// `font.em`, when it is a plain number literal (spec §5.6 requires
+    /// one), for converting `em`-suffixed literals.
+    pub em: Option<f64>,
     pub params: Vec<Decl>,
     pub metrics: Vec<Decl>,
     pub lets: Vec<Decl>,
@@ -129,6 +134,18 @@ impl Index {
         for item in file.items() {
             match item.kind() {
                 SyntaxKind::FONT => {
+                    index.em = ast::Font::cast(item.clone())
+                        .and_then(|font| font.config())
+                        .and_then(|config| {
+                            config
+                                .fields()
+                                .find(|f| f.name_token().is_some_and(|t| t.text() == "em"))
+                        })
+                        .and_then(|field| field.value())
+                        .and_then(|value| match value {
+                            ast::Expr::Literal(lit) => lit.token()?.text().parse().ok(),
+                            _ => None,
+                        });
                     index.font = Some(Decl {
                         name: "font".to_string(),
                         range: mg_syntax::trimmed_range(&item),
@@ -172,14 +189,14 @@ impl Index {
     }
 
     /// The default-set declaration of glyph `name`.
-    fn default_glyph(&self, name: &str) -> Option<usize> {
+    pub fn default_glyph(&self, name: &str) -> Option<usize> {
         self.glyphs
             .iter()
             .position(|g| g.decl.name == name && g.glyphset.is_none())
     }
 
     /// The glyph whose declaration spans `offset`.
-    fn glyph_at(&self, offset: usize) -> Option<usize> {
+    pub fn glyph_at(&self, offset: usize) -> Option<usize> {
         self.glyphs
             .iter()
             .position(|g| g.decl.range.contains(&offset))
@@ -256,7 +273,7 @@ impl Index {
 
     /// The path declared by the `PATH` node spanning `offset` in glyph
     /// `glyph`, as an index into its paths.
-    fn path_at(&self, glyph: usize, offset: usize) -> Option<usize> {
+    pub fn path_at(&self, glyph: usize, offset: usize) -> Option<usize> {
         self.glyphs[glyph]
             .paths
             .iter()
@@ -478,6 +495,7 @@ fn glyph_entry(glyph: &ast::Glyph) -> Option<GlyphEntry> {
                     range: mg_syntax::trimmed_range(&item),
                     segments,
                     follows: ident_field(path.config(), "follows"),
+                    has_body: path.body().is_some(),
                 });
             }
             _ => {}

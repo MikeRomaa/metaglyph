@@ -7,11 +7,14 @@
 //! `mg check` reports, document symbols, go-to-definition, and references
 //! (L1).
 
+pub mod completion;
 pub mod diagnostics;
+pub mod hover;
 pub mod index;
 pub mod line_index;
 mod server;
 pub mod symbols;
+pub mod types;
 
 pub use server::main_loop;
 

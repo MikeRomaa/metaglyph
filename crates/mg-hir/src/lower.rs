@@ -92,11 +92,16 @@ fn string_literal_value(expr: &ast::Expr) -> Option<String> {
 /// field, so a diagnostic enumerates the legal set").
 fn enum_field(
     fields: &IndexMap<String, ast::Field>,
+    table: &'static [schema::FieldSchema],
     name: &str,
-    legal: &[&str],
-    default: &str,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> String {
+    let entry = schema::entry(table, name);
+    let legal = entry.values;
+    let default = entry
+        .default
+        .expect("an enum field with a default")
+        .trim_matches('"');
     let Some(field) = fields.get(name) else {
         return default.to_string();
     };
@@ -542,7 +547,7 @@ fn lower_metric(
 
     let y = fields.get("y").and_then(|f| f.value());
     let overshoot = fields.get("overshoot").and_then(|f| f.value());
-    let align_text = enum_field(&fields, "align", &["top", "bottom"], "top", diagnostics);
+    let align_text = enum_field(&fields, schema::METRIC_FIELDS, "align", diagnostics);
     let align = if align_text == "bottom" {
         Align::Bottom
     } else {
@@ -784,13 +789,7 @@ fn lower_path(
         .and_then(|f| f.value())
         .and_then(|e| const_eval::eval_const_bool(&e))
         .unwrap_or(true);
-    let joins = enum_field(
-        &fields,
-        "joins",
-        &["miter", "round", "bevel"],
-        "miter",
-        diagnostics,
-    );
+    let joins = enum_field(&fields, schema::PATH_FIELDS, "joins", diagnostics);
 
     let caps = fields
         .get("caps")
@@ -828,7 +827,10 @@ fn lower_path(
 /// here, so (like `sweep`/`joins`/`align`) this matches the AST shape by
 /// hand rather than going through the general expression type-checker.
 fn lower_caps(expr: &ast::Expr, diagnostics: &mut Vec<Diagnostic>) -> CapsSpec {
-    const DEFAULT: &str = "butt";
+    let default = schema::entry(schema::PATH_FIELDS, "caps")
+        .default
+        .expect("`caps` has a default")
+        .trim_matches('"');
 
     match expr {
         ast::Expr::Tuple(tuple) => {
@@ -840,16 +842,16 @@ fn lower_caps(expr: &ast::Expr, diagnostics: &mut Vec<Diagnostic>) -> CapsSpec {
                     Label::new(expr.syntax().text_range().into(), "expected a 2-tuple"),
                 ));
                 return CapsSpec {
-                    start: DEFAULT.to_string(),
-                    end: DEFAULT.to_string(),
+                    start: default.to_string(),
+                    end: default.to_string(),
                 };
             }
-            let start = lower_cap_value(&elements[0], diagnostics).unwrap_or(DEFAULT.to_string());
-            let end = lower_cap_value(&elements[1], diagnostics).unwrap_or(DEFAULT.to_string());
+            let start = lower_cap_value(&elements[0], diagnostics).unwrap_or(default.to_string());
+            let end = lower_cap_value(&elements[1], diagnostics).unwrap_or(default.to_string());
             CapsSpec { start, end }
         }
         _ => {
-            let value = lower_cap_value(expr, diagnostics).unwrap_or(DEFAULT.to_string());
+            let value = lower_cap_value(expr, diagnostics).unwrap_or(default.to_string());
             CapsSpec {
                 start: value.clone(),
                 end: value,
@@ -859,7 +861,7 @@ fn lower_caps(expr: &ast::Expr, diagnostics: &mut Vec<Diagnostic>) -> CapsSpec {
 }
 
 fn lower_cap_value(expr: &ast::Expr, diagnostics: &mut Vec<Diagnostic>) -> Option<String> {
-    let legal = ["butt", "round", "square"];
+    let legal = schema::CAP_VALUES;
     let Some(value) = string_literal_value(expr) else {
         diagnostics.push(Diagnostic::error(
             codes::TYPE_MISMATCH,
@@ -888,7 +890,7 @@ fn lower_join_at(
     diagnostics: &mut Vec<Diagnostic>,
 ) -> IndexMap<String, String> {
     let mut result = IndexMap::new();
-    let legal = ["miter", "round", "bevel"];
+    let legal = schema::JOIN_VALUES;
 
     let ast::Expr::Map(map) = expr else {
         diagnostics.push(Diagnostic::error(
@@ -987,13 +989,17 @@ fn lower_sweep(
 ) -> Option<Sweep> {
     let field = fields.get("sweep")?;
     let expr = field.value()?;
+    let legal = schema::entry(schema::ARC_FIELDS, "sweep").values;
     match string_literal_value(&expr) {
-        Some(value) if value == "ccw" => Some(Sweep::Ccw),
-        Some(value) if value == "cw" => Some(Sweep::Cw),
+        Some(value) if value == Sweep::Ccw.as_str() => Some(Sweep::Ccw),
+        Some(value) if value == Sweep::Cw.as_str() => Some(Sweep::Cw),
         Some(value) => {
             diagnostics.push(Diagnostic::error(
                 codes::UNKNOWN_ENUM_VALUE,
-                format!("unknown sweep \"{value}\"; expected one of: ccw, cw"),
+                format!(
+                    "unknown sweep \"{value}\"; expected one of: {}",
+                    legal.join(", ")
+                ),
                 Label::new(expr.syntax().text_range().into(), "not a legal value"),
             ));
             None

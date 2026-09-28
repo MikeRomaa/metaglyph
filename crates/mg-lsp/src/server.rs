@@ -7,19 +7,22 @@
 //! enough.
 
 use indexmap::IndexMap;
-use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
+use lsp_server::{Connection, ErrorCode, Message, Notification, Request, Response};
 use lsp_types::notification::{
     DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument,
     Notification as NotificationTrait, PublishDiagnostics,
 };
 use lsp_types::request::{
-    DocumentSymbolRequest, GotoDefinition, References, Request as RequestTrait,
+    Completion, DocumentSymbolRequest, GotoDefinition, HoverRequest, References,
+    Request as RequestTrait,
 };
 use lsp_types::{
-    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
-    InitializeParams, InitializeResult, Location, OneOf, Position, PositionEncodingKind,
-    PublishDiagnosticsParams, ReferenceParams, ServerCapabilities, ServerInfo,
-    TextDocumentSyncCapability, TextDocumentSyncKind, Uri,
+    CompletionOptions, CompletionParams, CompletionResponse, DocumentSymbolParams,
+    DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents,
+    HoverParams, HoverProviderCapability, InitializeParams, InitializeResult, Location,
+    MarkupContent, MarkupKind, OneOf, Position, PositionEncodingKind, PublishDiagnosticsParams,
+    ReferenceParams, ServerCapabilities, ServerInfo, TextDocumentSyncCapability,
+    TextDocumentSyncKind, Uri,
 };
 use mg_syntax::ast::AstNode;
 use mg_syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
@@ -27,9 +30,29 @@ use mg_syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
 use crate::diagnostics;
 use crate::index::Index;
 use crate::line_index::{Encoding, LineIndex};
-use crate::symbols;
+use crate::types::NameTypes;
+use crate::{completion, hover, symbols};
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
+
+/// A response payload. The LSP types always serialize.
+fn json(value: impl serde::Serialize) -> serde_json::Value {
+    serde_json::to_value(value).expect("LSP types serialize")
+}
+
+/// A notification's params, or `None` — logged to stderr, which is the
+/// client's server log — when they are malformed. A notification has no
+/// response to carry an error, and one bad message must not stop the
+/// server.
+fn notification_params<P: serde::de::DeserializeOwned>(notification: Notification) -> Option<P> {
+    match serde_json::from_value(notification.params) {
+        Ok(params) => Some(params),
+        Err(err) => {
+            eprintln!("mg lsp: invalid params for {}: {err}", notification.method);
+            None
+        }
+    }
+}
 
 /// One open document (full-document sync) and everything derived from
 /// its text, recomputed on each change.
@@ -40,12 +63,16 @@ struct Document {
     root: SyntaxNode,
     index: Index,
     diagnostics: Vec<mg_diag::Diagnostic>,
+    /// From this version's type check, or carried over from the last
+    /// version that had one (see `crate::types`).
+    types: NameTypes,
 }
 
 impl Document {
-    fn new(text: String, version: i32) -> Self {
+    fn new(text: String, version: i32, previous: Option<NameTypes>) -> Self {
         let lines = LineIndex::new(&text);
-        let (root, diagnostics) = analyse(&text);
+        let (root, diagnostics, types) = analyse(&text);
+        let types = types.or(previous).unwrap_or_default();
         let file = mg_syntax::ast::SourceFile::cast(root.clone())
             .expect("SOURCE_FILE always casts from a parse's root node");
         let index = Index::new(&file);
@@ -56,6 +83,7 @@ impl Document {
             root,
             index,
             diagnostics,
+            types,
         }
     }
 
@@ -84,11 +112,13 @@ impl Document {
 ///
 /// Like `mg check`, stage two is skipped after a syntax error: recovery
 /// can misplace whole declarations, and lowering them would only restate
-/// the same typo in unrelated-looking ways.
-fn analyse(text: &str) -> (SyntaxNode, Vec<mg_diag::Diagnostic>) {
+/// the same typo in unrelated-looking ways. The name types come back only
+/// when stage two ran.
+fn analyse(text: &str) -> (SyntaxNode, Vec<mg_diag::Diagnostic>, Option<NameTypes>) {
     let parsed = mg_syntax::parse(text);
     let root = parsed.syntax();
     let mut diagnostics = parsed.diagnostics.clone();
+    let mut types = None;
     if diagnostics
         .iter()
         .all(|d| d.severity != mg_diag::Severity::Error)
@@ -98,13 +128,16 @@ fn analyse(text: &str) -> (SyntaxNode, Vec<mg_diag::Diagnostic>) {
         let (hir, hir_diagnostics) = mg_hir::lower(&file);
         diagnostics.extend(hir_diagnostics);
         diagnostics.extend(mg_font::build::check_codepoints(&hir));
+        types = Some(NameTypes::from_hir(&hir));
     }
-    (root, diagnostics)
+    (root, diagnostics, types)
 }
 
 struct Server {
     connection: Connection,
     encoding: Encoding,
+    /// Whether completions may use snippet syntax.
+    snippets: bool,
     /// Keyed by URI string, in open order.
     documents: IndexMap<String, Document>,
 }
@@ -129,6 +162,14 @@ pub fn main_loop(connection: Connection) -> Result<(), Error> {
     let (id, params) = connection.initialize_start()?;
     let params: InitializeParams = serde_json::from_value(params)?;
     let encoding = negotiate_encoding(&params);
+    let snippets = params
+        .capabilities
+        .text_document
+        .as_ref()
+        .and_then(|t| t.completion.as_ref())
+        .and_then(|c| c.completion_item.as_ref())
+        .and_then(|i| i.snippet_support)
+        .unwrap_or(false);
 
     let result = InitializeResult {
         capabilities: ServerCapabilities {
@@ -140,6 +181,11 @@ pub fn main_loop(connection: Connection) -> Result<(), Error> {
             document_symbol_provider: Some(OneOf::Left(true)),
             definition_provider: Some(OneOf::Left(true)),
             references_provider: Some(OneOf::Left(true)),
+            hover_provider: Some(HoverProviderCapability::Simple(true)),
+            completion_provider: Some(CompletionOptions {
+                trigger_characters: Some(vec![".".into(), "\"".into()]),
+                ..Default::default()
+            }),
             ..Default::default()
         },
         server_info: Some(ServerInfo {
@@ -152,6 +198,7 @@ pub fn main_loop(connection: Connection) -> Result<(), Error> {
     let mut server = Server {
         connection,
         encoding,
+        snippets,
         documents: IndexMap::new(),
     };
     server.run()
@@ -174,46 +221,55 @@ impl Server {
         Ok(())
     }
 
+    /// Answers `request`. Malformed params get an `InvalidParams` error
+    /// response rather than stopping the server; only a closed connection
+    /// is fatal.
     fn handle_request(&self, request: Request) -> Result<(), Error> {
-        let id = request.id.clone();
-        match request.method.as_str() {
-            DocumentSymbolRequest::METHOD => {
-                let params: DocumentSymbolParams = serde_json::from_value(request.params)?;
-                let result = self.document_symbols(&params.text_document.uri);
-                self.respond(id, result)
-            }
+        let Request { id, method, params } = request;
+        let result = match method.as_str() {
+            DocumentSymbolRequest::METHOD => serde_json::from_value(params)
+                .map(|p: DocumentSymbolParams| json(self.document_symbols(&p.text_document.uri))),
             GotoDefinition::METHOD => {
-                let params: GotoDefinitionParams = serde_json::from_value(request.params)?;
-                let at = params.text_document_position_params;
-                let result = self.definition(&at.text_document.uri, at.position);
-                self.respond(id, result)
+                serde_json::from_value(params).map(|p: GotoDefinitionParams| {
+                    let at = p.text_document_position_params;
+                    json(self.definition(&at.text_document.uri, at.position))
+                })
             }
-            References::METHOD => {
-                let params: ReferenceParams = serde_json::from_value(request.params)?;
-                let at = params.text_document_position;
-                let result = self.references(
+            References::METHOD => serde_json::from_value(params).map(|p: ReferenceParams| {
+                let at = p.text_document_position;
+                json(self.references(
                     &at.text_document.uri,
                     at.position,
-                    params.context.include_declaration,
-                );
-                self.respond(id, result)
-            }
-            method => {
+                    p.context.include_declaration,
+                ))
+            }),
+            Completion::METHOD => serde_json::from_value(params).map(|p: CompletionParams| {
+                let at = p.text_document_position;
+                json(self.completion(&at.text_document.uri, at.position))
+            }),
+            HoverRequest::METHOD => serde_json::from_value(params).map(|p: HoverParams| {
+                let at = p.text_document_position_params;
+                json(self.hover(&at.text_document.uri, at.position))
+            }),
+            _ => {
                 let response = Response::new_err(
                     id,
                     ErrorCode::MethodNotFound as i32,
                     format!("unsupported request: {method}"),
                 );
                 self.connection.sender.send(response.into())?;
-                Ok(())
+                return Ok(());
             }
-        }
-    }
-
-    fn respond(&self, id: RequestId, result: impl serde::Serialize) -> Result<(), Error> {
-        self.connection
-            .sender
-            .send(Response::new_ok(id, result).into())?;
+        };
+        let response = match result {
+            Ok(value) => Response::new_ok(id, value),
+            Err(err) => Response::new_err(
+                id,
+                ErrorCode::InvalidParams as i32,
+                format!("invalid params for {method}: {err}"),
+            ),
+        };
+        self.connection.sender.send(response.into())?;
         Ok(())
     }
 
@@ -228,6 +284,37 @@ impl Server {
             &document.index,
             &ctx,
         )))
+    }
+
+    fn completion(&self, uri: &Uri, position: Position) -> Option<CompletionResponse> {
+        let document = self.documents.get(uri.as_str())?;
+        let ctx = completion::Ctx {
+            root: &document.root,
+            index: &document.index,
+            types: &document.types,
+            offset: document.offset(position, self.encoding),
+            snippets: self.snippets,
+        };
+        Some(CompletionResponse::Array(completion::complete(&ctx)))
+    }
+
+    fn hover(&self, uri: &Uri, position: Position) -> Option<Hover> {
+        let document = self.documents.get(uri.as_str())?;
+        let ctx = hover::Ctx {
+            root: &document.root,
+            text: &document.text,
+            index: &document.index,
+            types: &document.types,
+            offset: document.offset(position, self.encoding),
+        };
+        let (value, span) = hover::hover(&ctx)?;
+        Some(Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value,
+            }),
+            range: Some(document.range(&span, self.encoding)),
+        })
     }
 
     fn definition(&self, uri: &Uri, position: Position) -> Option<GotoDefinitionResponse> {
@@ -265,30 +352,41 @@ impl Server {
     fn handle_notification(&mut self, notification: Notification) -> Result<(), Error> {
         match notification.method.as_str() {
             DidOpenTextDocument::METHOD => {
-                let params: lsp_types::DidOpenTextDocumentParams =
-                    serde_json::from_value(notification.params)?;
+                let Some(params) =
+                    notification_params::<lsp_types::DidOpenTextDocumentParams>(notification)
+                else {
+                    return Ok(());
+                };
                 let doc = params.text_document;
                 let key = doc.uri.as_str().to_string();
+                let previous = self.documents.get(&key).map(|d| d.types.clone());
                 self.documents
-                    .insert(key, Document::new(doc.text, doc.version));
+                    .insert(key, Document::new(doc.text, doc.version, previous));
                 self.publish(&doc.uri)?;
             }
             DidChangeTextDocument::METHOD => {
-                let params: lsp_types::DidChangeTextDocumentParams =
-                    serde_json::from_value(notification.params)?;
+                let Some(params) =
+                    notification_params::<lsp_types::DidChangeTextDocumentParams>(notification)
+                else {
+                    return Ok(());
+                };
                 // Full sync: the last change holds the whole new text.
                 if let Some(change) = params.content_changes.into_iter().last() {
                     let uri = params.text_document.uri;
+                    let previous = self.documents.get(uri.as_str()).map(|d| d.types.clone());
                     self.documents.insert(
                         uri.as_str().to_string(),
-                        Document::new(change.text, params.text_document.version),
+                        Document::new(change.text, params.text_document.version, previous),
                     );
                     self.publish(&uri)?;
                 }
             }
             DidCloseTextDocument::METHOD => {
-                let params: lsp_types::DidCloseTextDocumentParams =
-                    serde_json::from_value(notification.params)?;
+                let Some(params) =
+                    notification_params::<lsp_types::DidCloseTextDocumentParams>(notification)
+                else {
+                    return Ok(());
+                };
                 let uri = params.text_document.uri;
                 self.documents.shift_remove(uri.as_str());
                 // A closed file's diagnostics would otherwise linger.
