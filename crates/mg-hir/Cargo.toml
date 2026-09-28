@@ -6,9 +6,10 @@ license = { workspace = true }
 publish = { workspace = true }
 
 [dependencies]
-indexmap = { workspace = true }
 mg-diag = { workspace = true }
 mg-syntax = { workspace = true }
+
+indexmap = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }

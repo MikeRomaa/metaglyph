@@ -7,6 +7,7 @@ publish = { workspace = true }
 
 [dependencies]
 mg-diag = { workspace = true }
+
 rowan = { workspace = true }
 
 [dev-dependencies]

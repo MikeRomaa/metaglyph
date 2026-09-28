@@ -7,16 +7,16 @@ publish = { workspace = true }
 
 [dependencies]
 mg-diag = { workspace = true }
-mg-syntax = { workspace = true }
-mg-hir = { workspace = true }
 mg-eval = { workspace = true }
 mg-font = { workspace = true }
+mg-hir = { workspace = true }
+mg-syntax = { workspace = true }
+
 indexmap = { workspace = true }
 lsp-server = { workspace = true }
 lsp-types = { workspace = true }
-serde = "1"
+serde = { workspace = true }
 serde_json = { workspace = true }
-
 
 [dev-dependencies]
 kurbo = { workspace = true }

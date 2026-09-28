@@ -11,12 +11,13 @@ path = "src/main.rs"
 
 [dependencies]
 mg-diag = { workspace = true }
-mg-syntax = { workspace = true }
-mg-hir = { workspace = true }
-mg-geom = { workspace = true }
 mg-eval = { workspace = true }
 mg-font = { workspace = true }
+mg-geom = { workspace = true }
+mg-hir = { workspace = true }
 mg-lsp = { workspace = true }
+mg-syntax = { workspace = true }
+
 clap = { workspace = true }
 indexmap = { workspace = true }
 kurbo = { workspace = true }
