@@ -1,7 +1,7 @@
 //! Pure geometry on kurbo types, with no dependency on evaluation: segment
 //! realization (quad elevation, cube passthrough, arc radius fit and
 //! realization, [`skeleton`]), curve–curve intersection ([`intersect`]),
-//! the curvature limit check ([`curvature`]), stroking with join patches
+//! the curvature limit check ([`curvature`]), stroking with join splicing
 //! ([`stroke`]), filled contours and their self-intersection check
 //! ([`fill`]), and contour roles and winding direction ([`winding`]) —
 //! spec §6, §7, §8.

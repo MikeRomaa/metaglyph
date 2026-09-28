@@ -15,7 +15,7 @@ This plan implements four of the five workstreams in spec §16: **DSL surface (1
 | Decision | Choice | Consequence |
 |---|---|---|
 | Output formats | **TTF only** | `write-fonts` covers every table needed. OTF/CFF (and with it all of spec §11.1–§11.3) and WOFF2 are deferred. TrueType output is unhinted with a `gasp` table (spec §11.4). |
-| Stroker | **`kurbo::stroke`**, bevel joins, plus join patches | kurbo supplies error-bounded offsets and the SVG cap set per end. It takes one join per stroke, so `joinAt` is implemented by stroking with `Join::Bevel` and adding overlap patches (M4). The spec's curvature check (§7.2) runs first, as a hard error. |
+| Stroker | **`kurbo::stroke`**, bevel joins, then join splicing | kurbo supplies error-bounded offsets and the SVG cap set per end. It takes one join per stroke, so `joinAt` is implemented by stroking with `Join::Bevel` and rewriting each corner's bevel chord in place (M4). Each path stays one seamless outline, with no overlaid join shapes. The spec's curvature check (§7.2) runs first, as a hard error. |
 | Stroker oracle | **`tiny-skia` stroker, test-only** | An independent implementation (a Skia port) for the spec §15.4 differential test. kurbo is never tested against itself. |
 | Syntax tree | **rowan CST → typed AST** | Trivia and formatting survive, and §9.3 needs no front-end rewrite later. |
 | Diagnostics | **rustc-style, designed at M0** | rowan supplies spans and `ERROR` nodes, not messages. Labeled spans, error codes, and structured `help` are threaded through the parser from the first commit. |
@@ -175,17 +175,17 @@ Every error in spec §13's "field validation", "name resolution", "type", and "p
   - The error names glyph, path, segment, parameter interval, and instance.
 - **Degenerate cases (spec §7.3) error before kurbo is called:** zero total arc length, a zero-length segment, `stroke <= 0`. An open path whose ends coincide is valid.
 - **Stroke via `kurbo::stroke`** with per-end `Cap` mapped from the validated strings, `Join::Bevel` for every corner, and tolerance `OFFSET_TOLERANCE` (spec §14).
-- **Join patches.** For each corner, add one overlap contour, exact under nonzero fill:
-  - `"round"`: a circle of radius `r` centred on the vertex. Bevel plus disk equals the round join.
-  - `"miter"`, within `MITER_LIMIT`: the kite bounded by the bevel chord and the two tangent-line extensions. Bevel plus kite equals the miter join.
-  - `"bevel"`, or a miter past the limit: nothing.
+- **Join splicing.** kurbo's `Join::Bevel` emits, on the outer side of each corner, exactly one `LineTo` between the two offset endpoints `vertex ± r·n̂`. Both endpoints are known from the skeleton, so locate that chord in the output (endpoint match within `OFFSET_TOLERANCE`) and replace it in place:
+  - `"round"`: the circular arc of radius `r` centred on the vertex, from one endpoint to the other on the outer side, as cubics at `4/3·tan(φ/4)` per ≤90° piece.
+  - `"miter"`, within `MITER_LIMIT`: two lines, endpoint → miter apex → endpoint.
+  - `"bevel"`, or a miter past the limit: the chord stays.
 
-  Patches are outer-role contours.
+  No extra contours are emitted: an open stroke is exactly one contour, a closed stroke exactly two. Failing to find a corner's chord is an internal error, not a silent skip. Pin the kurbo version, since the splice relies on its bevel emission; a unit test asserts the one-chord-per-corner shape so an upgrade that changes it fails loudly.
 - **Filled paths (spec §6.5) skip everything above.** A `fill` emits the realized closed skeleton as one contour.
 - **Self-intersection detection for filled contours is a hard error (spec §8.3).** Run a pairwise curve–curve test over the contour's own segments (O(n²) on small n), reusing the M3 Bézier clipping and excluding the shared endpoints of adjacent segments. A missed crossing silently drops a lobe, so the false-negative rate is what the tests measure.
 - **Contour roles (spec §8.1).**
   - kurbo returns two subpaths for a stroked closed path; the one enclosing the other is outer. Decide by point-in-contour, not by kurbo's output order.
-  - Open strokes and join patches are outer.
+  - Open strokes are outer.
   - Among filled contours only, a contour enclosed by an odd number of other filled contours is a counter.
 - **Winding (spec §8.2):** signed area per contour, reversed where the direction disagrees with the role; `glyf` outer is clockwise in y-up. Stroke outlines self-overlap at corners (spec §7.4), so the signed area of the whole contour decides.
 
@@ -232,7 +232,7 @@ Per spec §15, ordered by value:
 |---|---|
 | Evaluator | proptest: permuting statements within a scope yields identical values. Cycle tests for self-reference, two-node, and long cycles, asserting the reported path *is* the cycle. Golden tests for `meet`/`mediate`/`project`/`polar`/`mirror` against hand-computed geometry. |
 | Segments | Arc pieces against a densely sampled exact ellipse, within the 90°-piece bound; quad elevation exact; reflection and `close` per spec §15.2. |
-| Stroking | Hausdorff distance against a densely sampled exact offset, at most `OFFSET_TOLERANCE`. Each join patch against the spec §6.4 definition. Each degenerate case of spec §7.3 produces its named error. |
+| Stroking | Hausdorff distance against a densely sampled exact offset, at most `OFFSET_TOLERANCE`. Each spliced join against the spec §6.4 definition; every stroke yields exactly one contour (open) or two (closed). Each degenerate case of spec §7.3 produces its named error. |
 | Stroker differential | The same paths, widths, caps, and joins through `tiny-skia`'s stroker. Rasterize both and compare coverage (spec §15.4). |
 | Curvature check | Fuzz random paths against random widths; assert the check fires exactly when the exact offset folds back within a segment interior (spec §15.5). |
 | Fills and roles | A filled closed path emits its skeleton as one contour; a fill nested in a fill renders a hole; `stroke` + `fill` on one closed path renders solid, asserted by rasterizing and comparing coverage. Fuzz self-intersecting outlines and assert spec §8.3 fires on each. |
@@ -254,7 +254,7 @@ M8 grows from M0 (diagnostics corpus) and M3 (evaluator tests) onward.
 
 M1–M3 gate everything. M4 carries most of the correctness risk. With kurbo doing the offsetting, what remains in M4 is:
 - the curvature check
-- join patches
+- join splicing
 - contour roles from kurbo's output
 - the fill self-intersection test
 

@@ -93,7 +93,7 @@ fn render_glyph_at_depth(
         };
         for (i, entry) in path_contours.into_iter().enumerate() {
             // `render_path` always pushes a `fill`ed path's own contour
-            // first, before any stroke contours or join patches.
+            // first, before any stroke contours.
             if is_filled && i == 0 {
                 fill_slots.push(contours.len());
             }

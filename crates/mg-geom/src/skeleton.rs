@@ -241,6 +241,29 @@ fn realize_arc(
         }
     };
 
+    let pieces = arc_cubics(p, to, center, rx, ry, sweep);
+    let piece_count = pieces.len();
+    for (c0, c1, end) in pieces {
+        path.curve_to(c0, c1, end);
+    }
+
+    Ok(piece_count)
+}
+
+/// The `⌈Δ/90°⌉` cubic pieces (spec §6.3) of the arc of the ellipse
+/// centred on `center` with radii `rx`, `ry`, from `p` to `to`, travelling
+/// in `sweep`'s direction — each piece as `(c0, c1, end)`, ready for
+/// `BezPath::curve_to`. Shared by [`realize_arc`] and, for the one-off
+/// circular case a round join needs (`rx == ry`, `crate::stroke`), a
+/// caller with no `Skeleton` of its own to build.
+pub(crate) fn arc_cubics(
+    p: Point,
+    to: Point,
+    center: Point,
+    rx: f64,
+    ry: f64,
+    sweep: Sweep,
+) -> Vec<(Point, Point, Point)> {
     let theta_p = eccentric_angle(p, center, rx, ry);
     let theta_to = eccentric_angle(to, center, rx, ry);
     let delta = swept_angle(theta_p, theta_to, sweep);
@@ -253,6 +276,7 @@ fn realize_arc(
 
     let mut theta = theta_p;
     let mut point = p;
+    let mut pieces = Vec::with_capacity(m);
     for k in 0..m {
         let theta_next = theta + signed_step;
         let end = if k + 1 == m {
@@ -263,12 +287,11 @@ fn realize_arc(
         let k_factor = 4.0 / 3.0 * (signed_step / 4.0).tan();
         let c0 = point + ellipse_deriv(rx, ry, theta) * k_factor;
         let c1 = end - ellipse_deriv(rx, ry, theta_next) * k_factor;
-        path.curve_to(c0, c1, end);
+        pieces.push((c0, c1, end));
         point = end;
         theta = theta_next;
     }
-
-    Ok(m)
+    pieces
 }
 
 fn ellipse_point(center: Point, rx: f64, ry: f64, theta: f64) -> Point {

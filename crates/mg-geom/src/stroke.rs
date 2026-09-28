@@ -2,16 +2,19 @@
 //! (spec plan M4's stroker decision); what this module adds is everything
 //! kurbo can't do on its own:
 //! - the spec §7.2/§7.3 checks that must run *before* kurbo is called,
-//! - join patches, since kurbo takes one join style for the whole path
+//! - join splicing, since kurbo takes one join style for the whole path
 //!   and `joinAt` needs a different join at one vertex (spec plan M4:
-//!   "stroking with `Join::Bevel` and adding overlap patches"),
+//!   "stroking with `Join::Bevel` and rewriting each corner's bevel chord
+//!   in place") — every corner is `Join::Bevel`'s straight chord unless
+//!   overwritten, so a path stays one seamless outline with no overlaid
+//!   join shapes,
 //! - assigning each output contour its role (spec §8.1), which kurbo's
 //!   subpath emission order does not track.
 
-use kurbo::{BezPath, Circle, Line, ParamCurve, PathEl, Point, Shape, Vec2};
+use kurbo::{BezPath, Line, ParamCurve, PathEl, Point, Vec2};
 
 use crate::curvature::{self, CurvatureViolation};
-use crate::skeleton::{self, Skeleton};
+use crate::skeleton::{self, Skeleton, Sweep};
 use crate::winding::{self, ContourRole};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,8 +67,9 @@ pub enum StrokeError {
 
 /// Strokes `skeleton` per `spec` (spec §6.4, §7), returning every output
 /// contour with its role already assigned: one outer contour for an open
-/// path, an (outer, counter) pair for a closed one, plus any join
-/// patches — always outer (spec: "Patches are outer-role contours").
+/// path, an (outer, counter) pair for a closed one. No extra contours:
+/// every corner needing a join other than `"bevel"` gets it by rewriting
+/// `Join::Bevel`'s own chord in place (spec plan M4's "join splicing").
 pub fn stroke_path(
     skeleton: &Skeleton,
     closed: bool,
@@ -97,7 +101,7 @@ pub fn stroke_path(
     );
 
     let mut subpaths = split_subpaths(&stroked);
-    let mut result = Vec::with_capacity(subpaths.len() + 2);
+    let mut result = Vec::with_capacity(subpaths.len());
     if closed {
         let b = subpaths.pop().expect("a closed stroke yields two subpaths");
         let a = subpaths.pop().expect("a closed stroke yields two subpaths");
@@ -117,9 +121,7 @@ pub fn stroke_path(
             .iter()
             .find(|&&(index, _)| index == corner.segment_index)
             .map_or(spec.default_join, |&(_, join)| join);
-        if let Some(patch) = build_patch(corner, join, r) {
-            result.push((patch, ContourRole::Outer));
-        }
+        splice_join(&mut result, &corner, join, r, offset_tolerance);
     }
 
     Ok(result)
@@ -205,8 +207,8 @@ fn is_corner(incoming: Vec2, outgoing: Vec2) -> bool {
     (a - b).hypot() > 1e-9
 }
 
-/// The outward unit normal at a tangent `t`, on the side the join patch
-/// belongs (spec §6.4: "on the outer side of the turn"). A positive
+/// The outward unit normal at a tangent `t`, on the side a join belongs
+/// (spec §6.4: "on the outer side of the turn"). A positive
 /// `turn` (the incoming and outgoing tangents' cross product) is a CCW
 /// (left) turn, whose outer side is the traveler's right; `left_normal`
 /// is `t` rotated +90°, so the outer offset is `-left_normal` there, and
@@ -220,51 +222,144 @@ fn outer_offset(t: Vec2, turn: f64) -> Vec2 {
     }
 }
 
-/// The join patch for `corner` (spec §6.4), or `None` for `"bevel"` (the
-/// base stroke already is one) or a `"miter"` past `MITER_LIMIT` (falls
-/// back to bevel, i.e. also nothing extra to add).
-fn build_patch(corner: Corner, join: JoinKind, r: f64) -> Option<BezPath> {
-    match join {
-        JoinKind::Bevel => None,
-        JoinKind::Round => Some(Circle::new(corner.vertex, r).to_path(0.1 * r)),
-        JoinKind::Miter => build_miter_patch(&corner, r),
+/// Rewrites `corner`'s join in place (spec plan M4's "join splicing"):
+/// `"bevel"` leaves `Join::Bevel`'s own chord untouched; `"round"`/`"miter"`
+/// (the latter within `MITER_LIMIT`) replace it with the exact join
+/// geometry. A `"miter"` past the limit, or a degenerate (180°-reversal)
+/// corner with no well-defined apex, also leaves the chord as the bevel.
+///
+/// `corner`'s own tangent check only flags a *candidate* — kurbo has its
+/// own, independent threshold for when a join is worth emitting at all,
+/// and two arcs meeting at a carefully matched tangent (a common
+/// deliberate construction, not just a straight-through joint) can come
+/// out only *numerically* distinct after independent ellipse fits, close
+/// enough that kurbo folds the join away entirely. When that happens,
+/// there is no chord to find, and none is needed: this returns quietly,
+/// same as `"bevel"`. `bevel_emits_exactly_one_chord_per_corner_matching_this_modules_assumption`
+/// is what actually pins `Join::Bevel`'s emission shape for a genuine
+/// corner, so a real kurbo drift still fails loudly — in the test suite,
+/// not as a panic on someone's font.
+fn splice_join(
+    contours: &mut [(BezPath, ContourRole)],
+    corner: &Corner,
+    join: JoinKind,
+    r: f64,
+    tolerance: f64,
+) {
+    if join == JoinKind::Bevel {
+        return;
+    }
+
+    let turn = corner.incoming.cross(corner.outgoing);
+    let p_a = corner.vertex + outer_offset(corner.incoming, turn) * r;
+    let p_b = corner.vertex + outer_offset(corner.outgoing, turn) * r;
+
+    let make_replacement: Box<dyn Fn(Point, Point) -> Vec<PathEl>> = match join {
+        JoinKind::Bevel => unreachable!("returned above"),
+        JoinKind::Round => {
+            let base_sweep = if turn > 0.0 { Sweep::Ccw } else { Sweep::Cw };
+            Box::new(move |from, to| {
+                // `from`/`to` is whichever of `(p_a, p_b)` or `(p_b, p_a)`
+                // this corner's chord was actually found in; reverse the
+                // sweep to match when it's the latter.
+                let sweep = if from == p_a {
+                    base_sweep
+                } else {
+                    flip(base_sweep)
+                };
+                skeleton::arc_cubics(from, to, corner.vertex, r, r, sweep)
+                    .into_iter()
+                    .map(|(c0, c1, end)| PathEl::CurveTo(c0, c1, end))
+                    .collect()
+            })
+        }
+        JoinKind::Miter => {
+            if turn.abs() < 1e-9 {
+                // A 180° reversal: no well-defined miter apex. Leaves the
+                // bevel chord as-is.
+                return;
+            }
+            let line_in = Line::new(p_a, p_a + corner.incoming);
+            let line_out = Line::new(p_b, p_b + corner.outgoing);
+            let Some(apex) = line_in.crossing_point(line_out) else {
+                return;
+            };
+            if (apex - corner.vertex).hypot() / (2.0 * r) > MITER_LIMIT {
+                return;
+            }
+            Box::new(move |_from, to| vec![PathEl::LineTo(apex), PathEl::LineTo(to)])
+        }
+    };
+
+    for (contour, _) in contours.iter_mut() {
+        if splice_chord(contour, p_a, p_b, tolerance, &*make_replacement) {
+            return;
+        }
+    }
+    // No chord in any contour: kurbo already treated this joint as
+    // continuous (see this function's doc comment) — nothing to splice.
+}
+
+fn flip(sweep: Sweep) -> Sweep {
+    match sweep {
+        Sweep::Ccw => Sweep::Cw,
+        Sweep::Cw => Sweep::Ccw,
     }
 }
 
-fn build_miter_patch(corner: &Corner, r: f64) -> Option<BezPath> {
-    let turn = corner.incoming.cross(corner.outgoing);
-    if turn.abs() < 1e-9 {
-        // Tangents point in opposite directions (a 180° reversal): no
-        // well-defined miter apex. Falls back to the base bevel.
-        return None;
+/// Finds the one `LineTo` in `contour` running between `p_a` and `p_b`
+/// (in either direction, within `tolerance`) and replaces it with
+/// `make_replacement(from, to)`'s elements, `from`/`to` being whichever
+/// direction was actually found. Returns whether a chord was found.
+fn splice_chord(
+    contour: &mut BezPath,
+    p_a: Point,
+    p_b: Point,
+    tolerance: f64,
+    make_replacement: &dyn Fn(Point, Point) -> Vec<PathEl>,
+) -> bool {
+    let elements = contour.elements();
+    let mut current = Point::ORIGIN;
+    let mut start = Point::ORIGIN;
+    let mut found: Option<(usize, Point, Point)> = None;
+
+    for (i, el) in elements.iter().enumerate() {
+        match *el {
+            PathEl::MoveTo(p) => {
+                current = p;
+                start = p;
+            }
+            PathEl::LineTo(p) => {
+                if current.distance(p_a) <= tolerance && p.distance(p_b) <= tolerance {
+                    found = Some((i, p_a, p_b));
+                    break;
+                }
+                if current.distance(p_b) <= tolerance && p.distance(p_a) <= tolerance {
+                    found = Some((i, p_b, p_a));
+                    break;
+                }
+                current = p;
+            }
+            PathEl::QuadTo(_, p) | PathEl::CurveTo(_, _, p) => current = p,
+            PathEl::ClosePath => current = start,
+        }
     }
 
-    let offset_in = outer_offset(corner.incoming, turn) * r;
-    let offset_out = outer_offset(corner.outgoing, turn) * r;
-    let p_a = corner.vertex + offset_in;
-    let p_b = corner.vertex + offset_out;
-
-    let line_a = Line::new(p_a, p_a + corner.incoming);
-    let line_b = Line::new(p_b, p_b + corner.outgoing);
-    let apex = line_a.crossing_point(line_b)?;
-
-    let miter_length = (apex - corner.vertex).hypot();
-    if miter_length / (2.0 * r) > MITER_LIMIT {
-        return None;
-    }
-
-    let mut patch = BezPath::new();
-    patch.move_to(p_a);
-    patch.line_to(apex);
-    patch.line_to(p_b);
-    patch.close_path();
-    Some(patch)
+    let Some((index, from, to)) = found else {
+        return false;
+    };
+    let replacement = make_replacement(from, to);
+    let mut owned: Vec<PathEl> = elements.to_vec();
+    owned.splice(index..=index, replacement);
+    *contour = BezPath::from_vec(owned);
+    true
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::skeleton::{RawSegment, RawStart};
+    use kurbo::PathSeg;
 
     const NO_ARC_TOLERANCE: f64 = 1e-9;
     const OFFSET_TOLERANCE: f64 = 0.05;
@@ -328,29 +423,145 @@ mod tests {
     }
 
     #[test]
-    fn round_join_adds_a_circular_patch() {
+    fn bevel_emits_exactly_one_chord_per_corner_matching_this_modules_assumption() {
+        // Pinned assumption (spec plan M4): `kurbo::Join::Bevel` emits
+        // exactly one `LineTo` between the two offset endpoints at each
+        // corner. If a kurbo upgrade changes this, `splice_join`'s panic
+        // (not a silent skip) is the intended failure mode; this test
+        // just makes the same assumption explicit and fast to check.
+        let skeleton = right_angle_skeleton();
+        let spec = default_spec(2.0);
+        let contours = stroke_path(&skeleton, false, &spec, OFFSET_TOLERANCE).unwrap();
+        let (p_a, p_b) = (Point::new(10.0, -1.0), Point::new(11.0, 0.0));
+        let segs = skeleton::segments(&contours[0].0);
+        let chord_count = segs
+            .iter()
+            .filter(|seg| {
+                matches!(seg, PathSeg::Line(l) if
+                    (l.p0.distance(p_a) < 1e-6 && l.p1.distance(p_b) < 1e-6)
+                    || (l.p0.distance(p_b) < 1e-6 && l.p1.distance(p_a) < 1e-6))
+            })
+            .count();
+        assert_eq!(chord_count, 1, "{segs:#?}");
+    }
+
+    #[test]
+    fn round_join_splices_an_exact_arc_with_no_extra_contour() {
         let skeleton = right_angle_skeleton();
         let mut spec = default_spec(2.0);
         spec.default_join = JoinKind::Round;
         let contours = stroke_path(&skeleton, false, &spec, OFFSET_TOLERANCE).unwrap();
-        // The base outer contour, plus one round-join patch at the corner.
-        assert_eq!(contours.len(), 2);
-        assert!(contours.iter().all(|(_, role)| *role == ContourRole::Outer));
+        assert_eq!(contours.len(), 1, "join splicing adds no extra contours");
+        assert_eq!(contours[0].1, ContourRole::Outer);
+
+        let vertex = Point::new(10.0, 0.0);
+        let r = 1.0;
+        let segs = skeleton::segments(&contours[0].0);
+        let arc = segs
+            .iter()
+            .find_map(|seg| match seg {
+                PathSeg::Cubic(c)
+                    if ((c.p0 - vertex).hypot() - r).abs() < 1e-6
+                        && ((c.p3 - vertex).hypot() - r).abs() < 1e-6 =>
+                {
+                    Some(*c)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no round-join arc found among {segs:#?}"));
+
+        // A single cubic Bézier only approximates a 90° circular arc, to
+        // within about `2.7e-4 · r` at its worst point — the same bound
+        // `skeleton`'s own arc tests use (`arc_stays_within_bound_of_the_exact_ellipse`),
+        // not exact to floating-point precision.
+        let bound = 3e-4 * r;
+        for i in 0..=10 {
+            let t = i as f64 / 10.0;
+            let p = arc.eval(t);
+            assert!(
+                ((p - vertex).hypot() - r).abs() < bound,
+                "point at t={t} is off the circle: {p:?}"
+            );
+        }
     }
 
     #[test]
-    fn miter_join_adds_a_triangular_patch_within_limit() {
+    fn miter_join_splices_two_lines_through_the_apex_with_no_extra_contour() {
         let skeleton = right_angle_skeleton();
+        let bevel_contours =
+            stroke_path(&skeleton, false, &default_spec(2.0), OFFSET_TOLERANCE).unwrap();
+        let bevel_count = skeleton::segments(&bevel_contours[0].0).len();
+
         let mut spec = default_spec(2.0);
         spec.default_join = JoinKind::Miter;
         let contours = stroke_path(&skeleton, false, &spec, OFFSET_TOLERANCE).unwrap();
-        // A 90-degree corner's miter ratio (~1.41) is well within the
-        // default limit of 4, so a patch is added.
-        assert_eq!(contours.len(), 2);
+        assert_eq!(contours.len(), 1, "join splicing adds no extra contours");
+
+        let segs = skeleton::segments(&contours[0].0);
+        assert_eq!(
+            segs.len(),
+            bevel_count + 1,
+            "one bevel chord becomes two miter lines: {segs:#?}"
+        );
+
+        // Worked out by hand for `right_angle_skeleton`'s corner: the
+        // incoming offset line is x=10, the outgoing offset line is
+        // y=-1, so the apex is their intersection (11, -1).
+        let apex = Point::new(11.0, -1.0);
+        assert!(
+            segs.iter().any(|seg| matches!(seg, PathSeg::Line(l)
+                if l.p0.distance(apex) < 1e-6 || l.p1.distance(apex) < 1e-6)),
+            "expected the miter apex {apex:?} among {segs:#?}"
+        );
     }
 
     #[test]
-    fn bevel_join_adds_no_patch() {
+    fn near_tangent_corner_between_different_center_arcs_does_not_panic() {
+        // Regression: two arcs with *different* centers, deliberately
+        // chosen (as a hand-tuned bowl/stem transition typically is) so
+        // their tangents match closely at the shared point. Two
+        // independent `fit_ellipse` solves can land this a hair short of
+        // exactly continuous, over `is_corner`'s threshold — but kurbo's
+        // own stroker still folds a joint this close together and emits
+        // no distinguishable chord, so `splice_join` must not treat that
+        // as an error (see its own doc comment).
+        let w = 500.0;
+        let h = 1000.0;
+        let ctr0 = Point::new(0.477 * w, 0.281 * h);
+        let r0 = 0.548 * w;
+        let ctr1 = Point::new(0.305 * w, 0.172 * h);
+        let r1 = 0.270 * w;
+
+        let polar = |ctr: Point, r: f64, deg: f64| {
+            let rad = deg.to_radians();
+            ctr + Vec2::new(r * rad.cos(), r * rad.sin())
+        };
+        let bowl0 = polar(ctr0, r0, -25.0);
+        let bowl1 = polar(ctr0, r0, 180.0 + 52.0);
+        let bowl2 = polar(ctr1, r1, 14.0 + 90.0);
+
+        let start = RawStart { at: bowl0 };
+        let segs = [
+            RawSegment::Arc {
+                to: bowl1,
+                geometry: skeleton::ArcGeometry::Center(ctr0),
+                sweep: Sweep::Cw,
+            },
+            RawSegment::Arc {
+                to: bowl2,
+                geometry: skeleton::ArcGeometry::Center(ctr1),
+                sweep: Sweep::Cw,
+            },
+        ];
+        let skeleton = skeleton::realize(&start, &segs, false, 1e-9).unwrap();
+        let mut spec = default_spec(2.0);
+        spec.default_join = JoinKind::Round;
+        // Must not panic.
+        stroke_path(&skeleton, false, &spec, OFFSET_TOLERANCE).unwrap();
+    }
+
+    #[test]
+    fn bevel_join_leaves_the_chord_unchanged() {
         let skeleton = right_angle_skeleton();
         let spec = default_spec(2.0); // default_join is Bevel
         let contours = stroke_path(&skeleton, false, &spec, OFFSET_TOLERANCE).unwrap();
@@ -378,9 +589,25 @@ mod tests {
         spec.default_join = JoinKind::Bevel;
         spec.join_overrides.push((0, JoinKind::Round));
         let contours = stroke_path(&skeleton, false, &spec, OFFSET_TOLERANCE).unwrap();
-        // Corner 0 (overridden to round) gets a patch; corner 1 (still
-        // bevel) does not.
-        assert_eq!(contours.len(), 2);
+        assert_eq!(contours.len(), 1, "join splicing adds no extra contours");
+
+        let r = 1.0;
+        let has_round_arc_at = |vertex: Point, segs: &[PathSeg]| {
+            segs.iter().any(|seg| {
+                matches!(seg, PathSeg::Cubic(c)
+                    if ((c.p0 - vertex).hypot() - r).abs() < 1e-6
+                        && ((c.p3 - vertex).hypot() - r).abs() < 1e-6)
+            })
+        };
+        let spliced = skeleton::segments(&contours[0].0);
+        assert!(
+            has_round_arc_at(Point::new(10.0, 0.0), &spliced),
+            "corner 0 (overridden to round) should have a spliced arc: {spliced:#?}"
+        );
+        assert!(
+            !has_round_arc_at(Point::new(10.0, 10.0), &spliced),
+            "corner 1 (still bevel) should not: {spliced:#?}"
+        );
     }
 
     #[test]
