@@ -1,0 +1,311 @@
+================================================================================
+level 1: member access and call bind tighter than any binary operator
+================================================================================
+
+let a = glyphs.six.advance + 1;
+let b = sin(x) * 2;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    value: (binary_expression
+      left: (member_expression
+        object: (member_expression object: (namespace) property: (identifier))
+        property: (identifier))
+      right: (number)))
+  (let_statement
+    name: (identifier)
+    value: (binary_expression
+      left: (call_expression function: (identifier) (argument_list (identifier)))
+      right: (number))))
+
+================================================================================
+level 1: grouping
+================================================================================
+
+let a = (x + y) * 2;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    value: (binary_expression
+      left: (parenthesized_expression
+        (binary_expression left: (identifier) right: (identifier)))
+      right: (number))))
+
+================================================================================
+level 2: `^` is right-associative
+================================================================================
+
+let a = 2 ^ 3 ^ 2;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    value: (binary_expression
+      left: (number)
+      right: (binary_expression left: (number) right: (number)))))
+
+================================================================================
+level 2 vs 3: `-2^2` is `-(2^2)`, not `(-2)^2`
+================================================================================
+
+let a = -2^2;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    value: (unary_expression
+      operand: (binary_expression left: (number) right: (number)))))
+
+================================================================================
+level 2's right operand may itself carry a unary operator
+================================================================================
+
+let a = 2^-1;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    value: (binary_expression
+      left: (number)
+      right: (unary_expression operand: (number)))))
+
+================================================================================
+level 3: unary `not`
+================================================================================
+
+let a = not enabled;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    value: (unary_expression operand: (identifier))))
+
+================================================================================
+level 4 binds tighter than level 5: `1 + 2 * 3`
+================================================================================
+
+let a = 1 + 2 * 3;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    value: (binary_expression
+      left: (number)
+      right: (binary_expression left: (number) right: (number)))))
+
+================================================================================
+level 4/5 are left-associative
+================================================================================
+
+let a = 8 / 4 / 2;
+let b = 8 - 4 - 2;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    value: (binary_expression
+      left: (binary_expression left: (number) right: (number))
+      right: (number)))
+  (let_statement
+    name: (identifier)
+    value: (binary_expression
+      left: (binary_expression left: (number) right: (number))
+      right: (number))))
+
+================================================================================
+level 6: relational operators
+================================================================================
+
+let a = x < y;
+let b = x <= y;
+let c = x > y;
+let d = x >= y;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement name: (identifier) value: (binary_expression left: (identifier) right: (identifier)))
+  (let_statement name: (identifier) value: (binary_expression left: (identifier) right: (identifier)))
+  (let_statement name: (identifier) value: (binary_expression left: (identifier) right: (identifier)))
+  (let_statement name: (identifier) value: (binary_expression left: (identifier) right: (identifier))))
+
+================================================================================
+level 6 binds tighter than level 7: `a < b == c < d`
+================================================================================
+
+let a = w < h == x < y;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    value: (binary_expression
+      left: (binary_expression left: (identifier) right: (identifier))
+      right: (binary_expression left: (identifier) right: (identifier)))))
+
+================================================================================
+level 7: equality
+================================================================================
+
+let a = x == y;
+let b = x != y;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement name: (identifier) value: (binary_expression left: (identifier) right: (identifier)))
+  (let_statement name: (identifier) value: (binary_expression left: (identifier) right: (identifier))))
+
+================================================================================
+level 8 binds tighter than level 9: `a or b and c`
+================================================================================
+
+let a = p or q and r;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    value: (binary_expression
+      left: (identifier)
+      right: (binary_expression left: (identifier) right: (identifier)))))
+
+================================================================================
+tuple (two or more elements)
+================================================================================
+
+let a = (x, y);
+let b = (rotate(180deg), translate(1, 2));
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement name: (identifier) value: (tuple (identifier) (identifier)))
+  (let_statement
+    name: (identifier)
+    value: (tuple
+      (call_expression function: (identifier) (argument_list (suffixed_number (number) (unit))))
+      (call_expression function: (identifier) (argument_list (number) (number))))))
+
+================================================================================
+list
+================================================================================
+
+let a = [1, 2, 3];
+let b = [];
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement name: (identifier) value: (list (number) (number) (number)))
+  (let_statement name: (identifier) value: (list)))
+
+================================================================================
+map, used by joinAt
+================================================================================
+
+path p (stroke: stem, joinAt: { seg1: "round", seg2: "bevel" }) {
+  start (at: a)
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (declaration
+    name: (identifier)
+    config: (config
+      (field name: (identifier) value: (identifier))
+      (field
+        name: (identifier)
+        value: (map
+          (map_entry key: (identifier) value: (string))
+          (map_entry key: (identifier) value: (string)))))
+    body: (body
+      (declaration config: (config (field name: (identifier) value: (identifier)))))))
+
+================================================================================
+namespace roots in expression position, vs the same words as declaration keywords
+================================================================================
+
+glyph six {
+  let a = glyph.bbox.x1;
+  let b = font.em;
+  let c = instance.slant;
+  let d = math.pi;
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (declaration
+    name: (identifier)
+    body: (body
+      (let_statement
+        name: (identifier)
+        value: (member_expression
+          object: (member_expression object: (namespace) property: (identifier))
+          property: (identifier)))
+      (let_statement
+        name: (identifier)
+        value: (member_expression object: (namespace) property: (identifier)))
+      (let_statement
+        name: (identifier)
+        value: (member_expression object: (namespace) property: (identifier)))
+      (let_statement
+        name: (identifier)
+        value: (member_expression object: (namespace) property: (identifier))))))
+
+================================================================================
+built-in constants
+================================================================================
+
+let a = up;
+let b = down;
+let c = left;
+let d = right;
+let e = identity;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement name: (identifier) value: (constant))
+  (let_statement name: (identifier) value: (constant))
+  (let_statement name: (identifier) value: (constant))
+  (let_statement name: (identifier) value: (constant))
+  (let_statement name: (identifier) value: (constant)))
+
+================================================================================
+`line` is a segment keyword and never appears in expression position
+================================================================================
+
+path p (stroke: stem) { start (at: a) line (to: b) }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (declaration
+    name: (identifier)
+    config: (config (field name: (identifier) value: (identifier)))
+    body: (body
+      (declaration config: (config (field name: (identifier) value: (identifier))))
+      (declaration config: (config (field name: (identifier) value: (identifier)))))))

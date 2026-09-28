@@ -11,7 +11,7 @@ repository = "https://github.com/mikeromashov/metaglyph"
 [grammars.metaglyph]
 repository = "file:///C:/Users/miker/Documents/Projects/metaglyph"
 rev = "main"
-path = "tree-sitter-metaglyph"
+path = "editors/tree-sitter"
 
 [language_servers.metaglyph]
 name = "Metaglyph Language Server"

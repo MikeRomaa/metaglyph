@@ -1,0 +1,202 @@
+================================================================================
+let statement
+================================================================================
+
+let hair = stem * contrast;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    value: (binary_expression left: (identifier) right: (identifier))))
+
+================================================================================
+declaration with no name, config only (font)
+================================================================================
+
+font (name: "Metaglyph Sans", em: 1000)
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (declaration
+    config: (config
+      (field name: (identifier) value: (string))
+      (field name: (identifier) value: (number)))))
+
+================================================================================
+declaration with a name and config, no body (param)
+================================================================================
+
+param stem (default: 100, range: 20..260)
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (declaration
+    name: (identifier)
+    config: (config
+      (field name: (identifier) value: (number))
+      (field
+        name: (identifier)
+        value: (range start: (number) end: (number))))))
+
+================================================================================
+declaration with no config, body only (glyph)
+================================================================================
+
+glyph six {
+  let w = figW;
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (declaration
+    name: (identifier)
+    body: (body
+      (let_statement name: (identifier) value: (identifier)))))
+
+================================================================================
+declaration with name, config, and body (glyph)
+================================================================================
+
+glyph A (codepoint: U+0041, advance: glyph.bbox.x1 + sidebear) {
+  let w = capW;
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (declaration
+    name: (identifier)
+    config: (config
+      (field name: (identifier) value: (codepoint_integer))
+      (field
+        name: (identifier)
+        value: (binary_expression
+          left: (member_expression
+            object: (member_expression object: (namespace) property: (identifier))
+            property: (identifier))
+          right: (identifier))))
+    body: (body
+      (let_statement name: (identifier) value: (identifier)))))
+
+================================================================================
+declaration with neither name, config, nor body (close)
+================================================================================
+
+path p (stroke: stem) { start (at: a) close }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (declaration
+    name: (identifier)
+    config: (config (field name: (identifier) value: (identifier)))
+    body: (body
+      (declaration
+        config: (config (field name: (identifier) value: (identifier))))
+      (declaration))))
+
+================================================================================
+config trailing comma
+================================================================================
+
+path bowl (
+  stroke: stem,
+  caps: "butt",
+) { start (at: a) }
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (declaration
+    name: (identifier)
+    config: (config
+      (field name: (identifier) value: (identifier))
+      (field name: (identifier) value: (string)))
+    body: (body
+      (declaration
+        config: (config (field name: (identifier) value: (identifier)))))))
+
+================================================================================
+component's `glyph` field name is a keyword elsewhere
+================================================================================
+
+component (glyph: six, transform: identity)
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (declaration
+    config: (config
+      (field name: (identifier) value: (identifier))
+      (field name: (identifier) value: (constant)))))
+
+================================================================================
+range with negative bounds
+================================================================================
+
+param slant (default: 0, range: -10..10)
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (declaration
+    name: (identifier)
+    config: (config
+      (field name: (identifier) value: (number))
+      (field
+        name: (identifier)
+        value: (range start: (number) end: (number))))))
+
+================================================================================
+range with suffixed bounds
+================================================================================
+
+param slant (default: 0deg, range: -45deg..45deg)
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (declaration
+    name: (identifier)
+    config: (config
+      (field name: (identifier) value: (suffixed_number (number) (unit)))
+      (field
+        name: (identifier)
+        value: (range
+          start: (suffixed_number (number) (unit))
+          end: (suffixed_number (number) (unit)))))))
+
+================================================================================
+generic body rule accepts let and declarations in any body-bearing kind
+================================================================================
+
+glyph nine (codepoint: U+0039, advance: glyphs.six.advance) {
+  component (glyph: six, transform: (rotate(180deg), translate(1, 2)))
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (declaration
+    name: (identifier)
+    config: (config
+      (field name: (identifier) value: (codepoint_integer))
+      (field
+        name: (identifier)
+        value: (member_expression
+          object: (member_expression object: (namespace) property: (identifier))
+          property: (identifier))))
+    body: (body
+      (declaration
+        config: (config
+          (field name: (identifier) value: (identifier))
+          (field
+            name: (identifier)
+            value: (tuple
+              (call_expression function: (identifier) (argument_list (suffixed_number (number) (unit))))
+              (call_expression function: (identifier) (argument_list (number) (number))))))))))

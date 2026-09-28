@@ -1,0 +1,140 @@
+================================================================================
+group and kern (no body, font-wide declarations)
+================================================================================
+
+group upper (glyphs: [A, B, C])
+kern (left: A, right: V, by: -20)
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (declaration
+    name: (identifier)
+    config: (config (field name: (identifier) value: (list (identifier) (identifier) (identifier)))))
+  (declaration
+    config: (config
+      (field name: (identifier) value: (identifier))
+      (field name: (identifier) value: (identifier))
+      (field name: (identifier) value: (unary_expression operand: (number))))))
+
+================================================================================
+anchor, in a glyph body
+================================================================================
+
+glyph six {
+  anchor top (at: (10, 20))
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (declaration
+    name: (identifier)
+    body: (body
+      (declaration
+        name: (identifier)
+        config: (config (field name: (identifier) value: (tuple (number) (number))))))))
+
+================================================================================
+quad and cube segments, with and without an omitted control point
+================================================================================
+
+path p (stroke: stem) {
+  start (at: a)
+  quad (to: b, c: ctrl)
+  quad (to: c)
+  cube (c1: c1, c2: c2, to: d)
+  cube (c2: c3, to: e)
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (declaration
+    name: (identifier)
+    config: (config (field name: (identifier) value: (identifier)))
+    body: (body
+      (declaration config: (config (field name: (identifier) value: (identifier))))
+      (declaration
+        config: (config
+          (field name: (identifier) value: (identifier))
+          (field name: (identifier) value: (identifier))))
+      (declaration config: (config (field name: (identifier) value: (identifier))))
+      (declaration
+        config: (config
+          (field name: (identifier) value: (identifier))
+          (field name: (identifier) value: (identifier))
+          (field name: (identifier) value: (identifier))))
+      (declaration
+        config: (config
+          (field name: (identifier) value: (identifier))
+          (field name: (identifier) value: (identifier)))))))
+
+================================================================================
+arc, centre mode and radii mode
+================================================================================
+
+path p (stroke: stem) {
+  start (at: a)
+  arc (center: c, to: b, sweep: "cw")
+  arc (rx: 5, ry: 10, to: d, sweep: "ccw", large: true)
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (declaration
+    name: (identifier)
+    config: (config (field name: (identifier) value: (identifier)))
+    body: (body
+      (declaration config: (config (field name: (identifier) value: (identifier))))
+      (declaration
+        config: (config
+          (field name: (identifier) value: (identifier))
+          (field name: (identifier) value: (identifier))
+          (field name: (identifier) value: (string))))
+      (declaration
+        config: (config
+          (field name: (identifier) value: (number))
+          (field name: (identifier) value: (number))
+          (field name: (identifier) value: (identifier))
+          (field name: (identifier) value: (string))
+          (field name: (identifier) value: (boolean)))))))
+
+================================================================================
+close, at most once and last, no name/config/body
+================================================================================
+
+path p (stroke: stem, fill: true) {
+  start (at: a)
+  line (to: b)
+  close
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (declaration
+    name: (identifier)
+    config: (config
+      (field name: (identifier) value: (identifier))
+      (field name: (identifier) value: (boolean)))
+    body: (body
+      (declaration config: (config (field name: (identifier) value: (identifier))))
+      (declaration config: (config (field name: (identifier) value: (identifier))))
+      (declaration))))
+
+================================================================================
+a path with `follows` instead of a body
+================================================================================
+
+path p (follows: base, stroke: hair)
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (declaration
+    name: (identifier)
+    config: (config
+      (field name: (identifier) value: (identifier))
+      (field name: (identifier) value: (identifier)))))

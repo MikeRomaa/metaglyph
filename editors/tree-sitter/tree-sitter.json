@@ -1,0 +1,25 @@
+{
+  "grammars": [
+    {
+      "name": "metaglyph",
+      "camelcase": "Metaglyph",
+      "scope": "source.metaglyph",
+      "path": ".",
+      "file-types": ["mg"],
+      "highlights": "queries/highlights.scm",
+      "injection-regex": "^metaglyph$"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "Apache-2.0",
+    "authors": [
+      {
+        "name": "Michael Romashov"
+      }
+    ],
+    "links": {
+      "repository": "https://github.com/mikeromashov/metaglyph"
+    }
+  }
+}

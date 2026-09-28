@@ -1,0 +1,143 @@
+================================================================================
+`font` as a top-level declaration keyword vs a namespace root
+================================================================================
+
+font (name: "x", em: 1000)
+let a = font.em;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (declaration config: (config (field name: (identifier) value: (string)) (field name: (identifier) value: (number))))
+  (let_statement name: (identifier) value: (member_expression object: (namespace) property: (identifier))))
+
+================================================================================
+`glyph` as a declaration keyword, a namespace root, and a field name -- all three roles in one file
+================================================================================
+
+glyph six (advance: glyph.bbox.x1) {
+  component (glyph: six, transform: identity)
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (declaration
+    name: (identifier)
+    config: (config
+      (field
+        name: (identifier)
+        value: (member_expression
+          object: (member_expression object: (namespace) property: (identifier))
+          property: (identifier))))
+    body: (body
+      (declaration
+        config: (config
+          (field name: (identifier) value: (identifier))
+          (field name: (identifier) value: (constant)))))))
+
+================================================================================
+`instance` as a declaration keyword vs a namespace root
+================================================================================
+
+instance Bold (stem: 160)
+let a = instance.slant;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (declaration name: (identifier) config: (config (field name: (identifier) value: (number))))
+  (let_statement name: (identifier) value: (member_expression object: (namespace) property: (identifier))))
+
+================================================================================
+`glyphs` is a namespace root only, never a declaration keyword
+================================================================================
+
+let a = glyphs.six.advance;
+let b = glyphs.six.bbox;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    value: (member_expression
+      object: (member_expression object: (namespace) property: (identifier))
+      property: (identifier)))
+  (let_statement
+    name: (identifier)
+    value: (member_expression
+      object: (member_expression object: (namespace) property: (identifier))
+      property: (identifier))))
+
+================================================================================
+`math` is a namespace root only, never a declaration keyword
+================================================================================
+
+let a = math.pi * r^2;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    value: (binary_expression
+      left: (member_expression object: (namespace) property: (identifier))
+      right: (binary_expression left: (identifier) right: (number)))))
+
+================================================================================
+`line` is only ever a segment keyword, never a namespace root or field name
+================================================================================
+
+path p (stroke: stem) {
+  start (at: a)
+  line (to: b)
+  line (to: c)
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (declaration
+    name: (identifier)
+    config: (config (field name: (identifier) value: (identifier)))
+    body: (body
+      (declaration config: (config (field name: (identifier) value: (identifier))))
+      (declaration config: (config (field name: (identifier) value: (identifier))))
+      (declaration config: (config (field name: (identifier) value: (identifier)))))))
+
+================================================================================
+enum values reuse words that are not reserved (spec 5.4): `butt`, `round`, `top`, `cw` as identifiers
+================================================================================
+
+let round = 1;
+let top = 2;
+let cw = 3;
+let butt = round + top + cw;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement name: (identifier) value: (number))
+  (let_statement name: (identifier) value: (number))
+  (let_statement name: (identifier) value: (number))
+  (let_statement
+    name: (identifier)
+    value: (binary_expression
+      left: (binary_expression left: (identifier) right: (identifier))
+      right: (identifier))))
+
+================================================================================
+function names are not reserved: call position and value position resolve separately (spec 5.11)
+================================================================================
+
+let sqrt = 2;
+let a = sqrt(sqrt);
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement name: (identifier) value: (number))
+  (let_statement
+    name: (identifier)
+    value: (call_expression function: (identifier) (argument_list (identifier)))))

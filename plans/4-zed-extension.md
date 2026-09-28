@@ -19,7 +19,7 @@ This is not spec plan 5 (the editor projection layer, spec §9). There is no can
 
 | Decision | Choice | Consequence |
 |---|---|---|
-| Highlighting source | **A separate Tree-sitter grammar**, `tree-sitter-metaglyph` | Zed highlights, indents, and builds outlines only from Tree-sitter. The rowan parser (plan 3, M1) stays canonical; the Tree-sitter grammar is a second parser for display only and never feeds the compiler. Drift between the two is caught by a parity test (Z1), not by review. |
+| Highlighting source | **A separate Tree-sitter grammar**, `editors/tree-sitter` | Zed highlights, indents, and builds outlines only from Tree-sitter. The rowan parser (plan 3, M1) stays canonical; the Tree-sitter grammar is a second parser for display only and never feeds the compiler. Drift between the two is caught by a parity test (Z1), not by review. |
 | Language server | **`mg lsp`, a subcommand of the existing `mg` binary**, in a new `mg-lsp` crate | One binary to build, release, and version. The server calls `mg-syntax`, `mg-hir`, and `mg-eval` in-process, so its diagnostics are exactly the compiler's. |
 | LSP framework | **`lsp-server` + `lsp-types`** (synchronous, from rust-analyzer) | No async runtime. Metaglyph files are small and analysis is fast; a main loop with a debounce and a cancel flag is enough. |
 | Text sync | **Full-document sync** | Each change reparses the whole file. Files are a few thousand lines at most, so incremental sync buys nothing yet. |
@@ -38,7 +38,7 @@ editors/zed/                     the extension (its own Cargo project, excluded 
   languages/metaglyph/
     config.toml
     highlights.scm  brackets.scm  indents.scm  outline.scm  textobjects.scm
-tree-sitter-metaglyph/           the grammar
+editors/tree-sitter/             the grammar
   grammar.js
   src/                           generated parser.c, committed (Zed builds from it)
   test/corpus/*.txt              parse-tree tests
@@ -48,7 +48,7 @@ crates/mg-lsp/                   the server, wired into mg-cli as `mg lsp`
 
 The root `Cargo.toml` adds `exclude = ["editors/zed"]`: the extension compiles to WebAssembly with different dependencies and must not join the workspace build.
 
-`extension.toml` points at the grammar in the same repository with `repository`, `rev`, and `path = "tree-sitter-metaglyph"`. During development, `repository = "file:///…"` avoids pushing a commit for every grammar change.
+`extension.toml` points at the grammar in the same repository with `repository`, `rev`, and `path = "editors/tree-sitter"`. During development, `repository = "file:///…"` avoids pushing a commit for every grammar change.
 
 ---
 
@@ -284,7 +284,7 @@ plan 3 M3/M4 → L3
 Run from Git Bash:
 
 ```
-cd tree-sitter-metaglyph && tree-sitter generate && tree-sitter test
+cd editors/tree-sitter && tree-sitter generate && tree-sitter test
 tree-sitter parse ../samples/*.mg --quiet                     # no ERROR nodes
 cargo test -p mg-lsp                                         # stdio round-trip tests: open sample, assert diagnostics/definition/hover/completion
 ```

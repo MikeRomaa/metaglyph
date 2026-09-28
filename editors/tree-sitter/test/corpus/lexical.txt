@@ -1,0 +1,138 @@
+================================================================================
+comment is an extra, not a node in declarations
+================================================================================
+
+// a leading comment
+font (name: "x", em: 1000) // trailing comment
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (comment)
+  (declaration
+    config: (config
+      (field name: (identifier) value: (string))
+      (field name: (identifier) value: (number))))
+  (comment))
+
+================================================================================
+number, unsigned decimal
+================================================================================
+
+let a = 100;
+let b = 0.5;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement name: (identifier) value: (number))
+  (let_statement name: (identifier) value: (number)))
+
+================================================================================
+suffixed number, no space before the suffix
+================================================================================
+
+let a = 152deg;
+let b = 1rad;
+let c = 1em;
+let d = 50%;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement name: (identifier) value: (suffixed_number (number) (unit)))
+  (let_statement name: (identifier) value: (suffixed_number (number) (unit)))
+  (let_statement name: (identifier) value: (suffixed_number (number) (unit)))
+  (let_statement name: (identifier) value: (suffixed_number (number) (unit))))
+
+================================================================================
+a number followed by a space and a suffix word is two expressions, not one
+================================================================================
+
+let a = min(2, deg);
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement
+    name: (identifier)
+    value: (call_expression
+      function: (identifier)
+      (argument_list (number) (identifier)))))
+
+================================================================================
+hex integer
+================================================================================
+
+let a = 0x41;
+let b = 0XFF;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement name: (identifier) value: (hex_integer))
+  (let_statement name: (identifier) value: (hex_integer)))
+
+================================================================================
+codepoint integer
+================================================================================
+
+let a = U+0041;
+let b = u+10ffff;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement name: (identifier) value: (codepoint_integer))
+  (let_statement name: (identifier) value: (codepoint_integer)))
+
+================================================================================
+character literal, plain and escaped
+================================================================================
+
+let a = 'A';
+let b = '\'';
+let c = '\\';
+let d = '\n';
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement name: (identifier) value: (character_literal))
+  (let_statement name: (identifier) value: (character_literal (escape_sequence)))
+  (let_statement name: (identifier) value: (character_literal (escape_sequence)))
+  (let_statement name: (identifier) value: (character_literal (escape_sequence))))
+
+================================================================================
+string, plain and escaped
+================================================================================
+
+let a = "plain text";
+let b = "a \"quote\" and a \\backslash\\ and \n \t";
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement name: (identifier) value: (string))
+  (let_statement
+    name: (identifier)
+    value: (string
+      (escape_sequence)
+      (escape_sequence)
+      (escape_sequence)
+      (escape_sequence)
+      (escape_sequence)
+      (escape_sequence))))
+
+================================================================================
+boolean
+================================================================================
+
+let a = true;
+let b = false;
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_statement name: (identifier) value: (boolean))
+  (let_statement name: (identifier) value: (boolean)))

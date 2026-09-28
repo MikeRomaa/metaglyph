@@ -1,2 +1,4 @@
 **/target
 **/node_modules
+/editors/zed/extension.wasm
+/editors/zed/grammars
