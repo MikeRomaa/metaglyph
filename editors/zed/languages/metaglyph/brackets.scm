@@ -1,0 +1,5 @@
+("(" @open ")" @close)
+("{" @open "}" @close)
+("[" @open "]" @close)
+(string "\"" @open "\"" @close)
+(character_literal "'" @open "'" @close)

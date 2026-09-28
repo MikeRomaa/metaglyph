@@ -6,7 +6,7 @@
       "scope": "source.metaglyph",
       "path": ".",
       "file-types": ["mg"],
-      "highlights": "queries/highlights.scm",
+      "highlights": "../zed/languages/metaglyph/highlights.scm",
       "injection-regex": "^metaglyph$"
     }
   ],
