@@ -401,3 +401,26 @@ glyph A (advance: 10) {{
     // and the crossing is at x = 5).
     assert_eq!(hits, vec![0.5]);
 }
+
+#[test]
+fn a_cancelled_evaluation_stops_between_nodes() {
+    let source = format!("{PREAMBLE}\nlet a = 1;\nlet b = a + 1;\nlet c = b + 1;\n");
+    let hir = lower(&source);
+    let instance = regular(&hir);
+
+    assert!(mg_eval::evaluate_cancellable(&hir, instance, &|| true).is_none());
+
+    // Cancelled partway: after two nodes have been checked.
+    let checks = std::cell::Cell::new(0);
+    let partway = mg_eval::evaluate_cancellable(&hir, instance, &|| {
+        checks.set(checks.get() + 1);
+        checks.get() > 2
+    });
+    assert!(partway.is_none());
+    assert_eq!(checks.get(), 3);
+
+    // Never cancelled: the same values as `evaluate`.
+    let (_, full) = mg_eval::evaluate(&hir, instance);
+    let (_, uncancelled) = mg_eval::evaluate_cancellable(&hir, instance, &|| false).unwrap();
+    assert_eq!(full.values, uncancelled.values);
+}

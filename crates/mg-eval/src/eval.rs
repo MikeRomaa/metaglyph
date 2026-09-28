@@ -34,11 +34,29 @@ pub struct EvalOutcome {
 /// plan M3: cross-glyph references resolve per instance glyph set).
 pub fn evaluate(hir: &Hir, instance: &InstanceDecl) -> (Graph, EvalOutcome) {
     let graph = graph::build(hir, instance);
-    let outcome = run(hir, instance, &graph);
+    let outcome = run(hir, instance, &graph, &|| false).expect("never cancelled");
     (graph, outcome)
 }
 
-fn run(hir: &Hir, instance: &InstanceDecl, graph: &Graph) -> EvalOutcome {
+/// [`evaluate`], abandoned as soon as `cancelled` returns `true`. It is
+/// checked between graph nodes, so an editor can drop a stale evaluation
+/// the moment a new edit arrives (plan 4, L3). `None` when cancelled.
+pub fn evaluate_cancellable(
+    hir: &Hir,
+    instance: &InstanceDecl,
+    cancelled: &dyn Fn() -> bool,
+) -> Option<(Graph, EvalOutcome)> {
+    let graph = graph::build(hir, instance);
+    let outcome = run(hir, instance, &graph, cancelled)?;
+    Some((graph, outcome))
+}
+
+fn run(
+    hir: &Hir,
+    instance: &InstanceDecl,
+    graph: &Graph,
+    cancelled: &dyn Fn() -> bool,
+) -> Option<EvalOutcome> {
     let TopoOutcome { sorted, remaining } = toposort::topo_sort(graph);
     let mut values: IndexMap<NodeId, Value> = IndexMap::new();
     let mut failed: IndexSet<NodeId> = IndexSet::new();
@@ -51,6 +69,9 @@ fn run(hir: &Hir, instance: &InstanceDecl, graph: &Graph) -> EvalOutcome {
     }
 
     for node in &sorted {
+        if cancelled() {
+            return None;
+        }
         eval_node(
             hir,
             instance,
@@ -62,11 +83,11 @@ fn run(hir: &Hir, instance: &InstanceDecl, graph: &Graph) -> EvalOutcome {
         );
     }
 
-    EvalOutcome {
+    Some(EvalOutcome {
         values,
         failed,
         diagnostics,
-    }
+    })
 }
 
 fn eval_node(

@@ -3,6 +3,8 @@
 
 #![allow(dead_code)] // Each test file uses a different subset.
 
+use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::str::FromStr;
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -26,6 +28,10 @@ pub struct Client {
     connection: Connection,
     server: Option<JoinHandle<ServerResult>>,
     next_id: i32,
+    /// Notifications that arrived while waiting for a response. The
+    /// server publishes a second time once evaluation completes (plan 4,
+    /// L3), at a moment no test controls, so every read goes through here.
+    notifications: RefCell<VecDeque<Notification>>,
 }
 
 impl Client {
@@ -65,6 +71,7 @@ impl Client {
             connection: client,
             server: Some(handle),
             next_id: 0,
+            notifications: RefCell::new(VecDeque::new()),
         };
         let params = InitializeParams {
             capabilities,
@@ -82,12 +89,15 @@ impl Client {
         let id = RequestId::from(self.next_id);
         let request = Request::new(id.clone(), method.to_string(), params);
         self.connection.sender.send(request.into()).unwrap();
-        match self.recv() {
-            Message::Response(response) => {
-                assert_eq!(response.id, id);
-                response
+        loop {
+            match self.recv() {
+                Message::Response(response) => {
+                    assert_eq!(response.id, id);
+                    return response;
+                }
+                Message::Notification(n) => self.notifications.borrow_mut().push_back(n),
+                other => panic!("expected a response, got {other:?}"),
             }
-            other => panic!("expected a response, got {other:?}"),
         }
     }
 
@@ -103,13 +113,36 @@ impl Client {
             .expect("the server answers")
     }
 
+    /// The next `publishDiagnostics`, buffered or new.
     pub fn diagnostics(&self) -> PublishDiagnosticsParams {
-        match self.recv() {
-            Message::Notification(n) if n.method == PublishDiagnostics::METHOD => {
-                serde_json::from_value(n.params).unwrap()
+        let notification = match self.notifications.borrow_mut().pop_front() {
+            Some(n) => n,
+            None => match self.recv() {
+                Message::Notification(n) => n,
+                other => panic!("expected publishDiagnostics, got {other:?}"),
+            },
+        };
+        assert_eq!(notification.method, PublishDiagnostics::METHOD);
+        serde_json::from_value(notification.params).unwrap()
+    }
+
+    /// The next `publishDiagnostics` for `uri` at `version`, skipping any
+    /// for other documents or versions — such as a late evaluation
+    /// publish for the version before.
+    pub fn diagnostics_for(&self, uri: &Uri, version: i32) -> PublishDiagnosticsParams {
+        loop {
+            let published = self.diagnostics();
+            if published.uri == *uri && published.version == Some(version) {
+                return published;
             }
-            other => panic!("expected publishDiagnostics, got {other:?}"),
         }
+    }
+
+    /// The publish that joins `version`'s evaluation diagnostics to its
+    /// static ones: the next one for that version after `open`/`change`
+    /// consumed the first.
+    pub fn evaluated(&self, uri: &Uri, version: i32) -> PublishDiagnosticsParams {
+        self.diagnostics_for(uri, version)
     }
 
     pub fn open(&self, uri: &Uri, text: &str) -> PublishDiagnosticsParams {
@@ -124,7 +157,7 @@ impl Client {
                 ),
             },
         );
-        self.diagnostics()
+        self.diagnostics_for(uri, 1)
     }
 
     pub fn change(&self, uri: &Uri, version: i32, text: &str) -> PublishDiagnosticsParams {
@@ -139,7 +172,7 @@ impl Client {
                 }],
             },
         );
-        self.diagnostics()
+        self.diagnostics_for(uri, version)
     }
 
     /// `shutdown` then `exit`; the server thread must finish cleanly.

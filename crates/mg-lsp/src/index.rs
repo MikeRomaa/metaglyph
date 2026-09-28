@@ -202,28 +202,27 @@ impl Index {
             .position(|g| g.decl.range.contains(&offset))
     }
 
-    /// Where `def` is declared: its name token, or the whole declaration
-    /// when it has none.
+    /// Where `def` is declared: its name token.
     pub fn definition(&self, def: &Def) -> Option<Range<usize>> {
-        let find = |decls: &[Decl], name: &str| {
-            decls
-                .iter()
-                .find(|d| d.name == name)
-                .map(|d| d.name_range.clone())
-        };
+        self.decl(def).map(|d| d.name_range.clone())
+    }
+
+    /// `def`'s declaration.
+    pub fn decl(&self, def: &Def) -> Option<&Decl> {
+        fn find<'a>(decls: &'a [Decl], name: &str) -> Option<&'a Decl> {
+            decls.iter().find(|d| d.name == name)
+        }
         match def {
             Def::TopLevel(name) => find(&self.params, name)
                 .or_else(|| find(&self.metrics, name))
                 .or_else(|| find(&self.lets, name)),
-            Def::Glyph(name) => self
-                .default_glyph(name)
-                .map(|g| self.glyphs[g].decl.name_range.clone()),
+            Def::Glyph(name) => self.default_glyph(name).map(|g| &self.glyphs[g].decl),
             Def::Group(name) => find(&self.groups, name),
             Def::GlyphSet(set) => self
                 .glyphs
                 .iter()
                 .find(|g| g.glyphset.as_deref() == Some(set))
-                .map(|g| g.decl.name_range.clone()),
+                .map(|g| &g.decl),
             Def::GlyphLocal { glyph, name } => {
                 let glyph = self.glyphs.get(*glyph)?;
                 find(&glyph.lets, name)
@@ -234,7 +233,6 @@ impl Index {
                             .iter()
                             .filter_map(|p| p.decl.as_ref())
                             .find(|d| d.name == *name)
-                            .map(|d| d.name_range.clone())
                     })
             }
             Def::Segment { glyph, path, name } => {

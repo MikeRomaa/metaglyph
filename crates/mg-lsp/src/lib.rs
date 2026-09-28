@@ -5,10 +5,13 @@
 //! So far: the protocol lifecycle, a document store with full-document
 //! sync, and position-encoding negotiation (L0); every diagnostic
 //! `mg check` reports, document symbols, go-to-definition, and references
-//! (L1).
+//! (L1); completion and static hover (L2); and evaluation off the
+//! keystroke path, with per-instance diagnostics and evaluated values in
+//! hover (L3).
 
 pub mod completion;
 pub mod diagnostics;
+pub mod evaluation;
 pub mod hover;
 pub mod index;
 pub mod line_index;

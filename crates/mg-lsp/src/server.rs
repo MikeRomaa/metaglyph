@@ -6,6 +6,8 @@
 //! and analysis is fast, so one thread handling one message at a time is
 //! enough.
 
+use std::time::{Duration, Instant};
+
 use indexmap::IndexMap;
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, Response};
 use lsp_types::notification::{
@@ -28,10 +30,14 @@ use mg_syntax::ast::AstNode;
 use mg_syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
 
 use crate::diagnostics;
+use crate::evaluation::{self, InstanceResult};
 use crate::index::Index;
 use crate::line_index::{Encoding, LineIndex};
 use crate::types::NameTypes;
 use crate::{completion, hover, symbols};
+
+/// How long edits must pause before evaluation starts (plan 4, L3).
+const EVALUATION_DELAY: Duration = Duration::from_millis(300);
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 
@@ -57,6 +63,7 @@ fn notification_params<P: serde::de::DeserializeOwned>(notification: Notificatio
 /// One open document (full-document sync) and everything derived from
 /// its text, recomputed on each change.
 struct Document {
+    uri: Uri,
     text: String,
     version: i32,
     lines: LineIndex,
@@ -66,17 +73,23 @@ struct Document {
     /// From this version's type check, or carried over from the last
     /// version that had one (see `crate::types`).
     types: NameTypes,
+    /// This version's HIR, when stages one and two found no errors —
+    /// the only versions that are evaluated (plan 4, L3).
+    hir: Option<mg_hir::Hir>,
+    /// This version's evaluation, once it has run to completion.
+    evaluation: Option<Vec<InstanceResult>>,
 }
 
 impl Document {
-    fn new(text: String, version: i32, previous: Option<NameTypes>) -> Self {
+    fn new(uri: Uri, text: String, version: i32, previous: Option<NameTypes>) -> Self {
         let lines = LineIndex::new(&text);
-        let (root, diagnostics, types) = analyse(&text);
+        let (root, diagnostics, types, hir) = analyse(&text);
         let types = types.or(previous).unwrap_or_default();
         let file = mg_syntax::ast::SourceFile::cast(root.clone())
             .expect("SOURCE_FILE always casts from a parse's root node");
         let index = Index::new(&file);
         Self {
+            uri,
             text,
             version,
             lines,
@@ -84,7 +97,14 @@ impl Document {
             index,
             diagnostics,
             types,
+            hir,
+            evaluation: None,
         }
+    }
+
+    /// Whether this version still needs evaluating.
+    fn awaits_evaluation(&self) -> bool {
+        self.hir.is_some() && self.evaluation.is_none()
     }
 
     fn offset(&self, position: Position, encoding: Encoding) -> usize {
@@ -113,12 +133,20 @@ impl Document {
 /// Like `mg check`, stage two is skipped after a syntax error: recovery
 /// can misplace whole declarations, and lowering them would only restate
 /// the same typo in unrelated-looking ways. The name types come back only
-/// when stage two ran.
-fn analyse(text: &str) -> (SyntaxNode, Vec<mg_diag::Diagnostic>, Option<NameTypes>) {
+/// when stage two ran, and the HIR only when neither stage found an error.
+fn analyse(
+    text: &str,
+) -> (
+    SyntaxNode,
+    Vec<mg_diag::Diagnostic>,
+    Option<NameTypes>,
+    Option<mg_hir::Hir>,
+) {
     let parsed = mg_syntax::parse(text);
     let root = parsed.syntax();
     let mut diagnostics = parsed.diagnostics.clone();
     let mut types = None;
+    let mut clean_hir = None;
     if diagnostics
         .iter()
         .all(|d| d.severity != mg_diag::Severity::Error)
@@ -129,8 +157,14 @@ fn analyse(text: &str) -> (SyntaxNode, Vec<mg_diag::Diagnostic>, Option<NameType
         diagnostics.extend(hir_diagnostics);
         diagnostics.extend(mg_font::build::check_codepoints(&hir));
         types = Some(NameTypes::from_hir(&hir));
+        if diagnostics
+            .iter()
+            .all(|d| d.severity != mg_diag::Severity::Error)
+        {
+            clean_hir = Some(hir);
+        }
     }
-    (root, diagnostics, types)
+    (root, diagnostics, types, clean_hir)
 }
 
 struct Server {
@@ -140,6 +174,9 @@ struct Server {
     snippets: bool,
     /// Keyed by URI string, in open order.
     documents: IndexMap<String, Document>,
+    /// When the next evaluation may start: set [`EVALUATION_DELAY`] after
+    /// each edit, and cleared once nothing awaits evaluation.
+    evaluate_at: Option<Instant>,
 }
 
 /// UTF-8 when the client offers it, since that is what rowan's offsets
@@ -200,13 +237,33 @@ pub fn main_loop(connection: Connection) -> Result<(), Error> {
         encoding,
         snippets,
         documents: IndexMap::new(),
+        evaluate_at: None,
     };
     server.run()
 }
 
 impl Server {
+    /// Handles messages, and evaluates documents whenever the client has
+    /// been quiet since `evaluate_at`.
     fn run(&mut self) -> Result<(), Error> {
-        while let Ok(message) = self.connection.receiver.recv() {
+        loop {
+            let message = match self.evaluate_at {
+                None => match self.connection.receiver.recv() {
+                    Ok(message) => message,
+                    Err(_) => return Ok(()),
+                },
+                Some(at) => {
+                    let wait = at.saturating_duration_since(Instant::now());
+                    match self.connection.receiver.recv_timeout(wait) {
+                        Ok(message) => message,
+                        Err(err) if err.is_timeout() => {
+                            self.evaluate_pending()?;
+                            continue;
+                        }
+                        Err(_) => return Ok(()),
+                    }
+                }
+            };
             match message {
                 Message::Request(request) => {
                     if self.connection.handle_shutdown(&request)? {
@@ -218,6 +275,33 @@ impl Server {
                 Message::Response(_) => {}
             }
         }
+    }
+
+    /// Evaluates every document awaiting it, publishing each one's
+    /// diagnostics as it completes. Any incoming message cancels the run:
+    /// the document stays pending, and evaluation resumes as soon as the
+    /// client is quiet again — after the full delay if the message was an
+    /// edit, since that resets `evaluate_at`.
+    fn evaluate_pending(&mut self) -> Result<(), Error> {
+        let receiver = self.connection.receiver.clone();
+        let cancelled = || !receiver.is_empty();
+        let pending: Vec<String> = self
+            .documents
+            .iter()
+            .filter(|(_, d)| d.awaits_evaluation())
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in pending {
+            let document = &self.documents[&key];
+            let hir = document.hir.as_ref().expect("awaiting evaluation");
+            let Some(results) = evaluation::evaluate(hir, &cancelled) else {
+                return Ok(());
+            };
+            let uri = document.uri.clone();
+            self.documents[&key].evaluation = Some(results);
+            self.publish(&uri)?;
+        }
+        self.evaluate_at = None;
         Ok(())
     }
 
@@ -307,7 +391,18 @@ impl Server {
             types: &document.types,
             offset: document.offset(position, self.encoding),
         };
-        let (value, span) = hover::hover(&ctx)?;
+        let (mut value, span) = hover::hover(&ctx)?;
+
+        // A name's evaluated value in each instance, once this version has
+        // been evaluated.
+        if let Some(results) = &document.evaluation
+            && let Some(token) = document.ident_at(ctx.offset)
+            && let Some(def) = document.index.resolve(&token)
+            && let Some(values) = evaluation::hover_values(&document.index, results, &def)
+        {
+            value.push_str("\n\n---\n\n");
+            value.push_str(&values);
+        }
         Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
@@ -360,9 +455,10 @@ impl Server {
                 let doc = params.text_document;
                 let key = doc.uri.as_str().to_string();
                 let previous = self.documents.get(&key).map(|d| d.types.clone());
-                self.documents
-                    .insert(key, Document::new(doc.text, doc.version, previous));
+                let document = Document::new(doc.uri.clone(), doc.text, doc.version, previous);
+                self.documents.insert(key, document);
                 self.publish(&doc.uri)?;
+                self.schedule_evaluation();
             }
             DidChangeTextDocument::METHOD => {
                 let Some(params) =
@@ -374,11 +470,15 @@ impl Server {
                 if let Some(change) = params.content_changes.into_iter().last() {
                     let uri = params.text_document.uri;
                     let previous = self.documents.get(uri.as_str()).map(|d| d.types.clone());
-                    self.documents.insert(
-                        uri.as_str().to_string(),
-                        Document::new(change.text, params.text_document.version, previous),
+                    let document = Document::new(
+                        uri.clone(),
+                        change.text,
+                        params.text_document.version,
+                        previous,
                     );
+                    self.documents.insert(uri.as_str().to_string(), document);
                     self.publish(&uri)?;
+                    self.schedule_evaluation();
                 }
             }
             DidCloseTextDocument::METHOD => {
@@ -397,14 +497,27 @@ impl Server {
         Ok(())
     }
 
-    /// Publishes `uri`'s diagnostics, all stages in one notification.
+    /// Evaluation starts once the client has been quiet for
+    /// [`EVALUATION_DELAY`] after this edit.
+    fn schedule_evaluation(&mut self) {
+        self.evaluate_at = Some(Instant::now() + EVALUATION_DELAY);
+    }
+
+    /// Publishes `uri`'s diagnostics, all stages in one notification: the
+    /// static ones at once, joined by the evaluation's when it completes.
     fn publish(&self, uri: &Uri) -> Result<(), Error> {
         let Some(document) = self.documents.get(uri.as_str()) else {
             return Ok(());
         };
+        let evaluated = document
+            .evaluation
+            .as_deref()
+            .map(evaluation::diagnostics)
+            .unwrap_or_default();
         let lsp_diagnostics = document
             .diagnostics
             .iter()
+            .chain(&evaluated)
             .map(|d| diagnostics::to_lsp(d, uri, &document.text, &document.lines, self.encoding))
             .collect();
         self.send_diagnostics(uri.clone(), lsp_diagnostics, Some(document.version))
