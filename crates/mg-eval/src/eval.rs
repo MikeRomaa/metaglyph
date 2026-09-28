@@ -149,9 +149,12 @@ fn compute_node(
             eval_expr(&mut ctx, expr_of(&anchor.at))
         }
         NodeId::GlyphAdvance(glyph_name) => {
-            let glyph = effective_glyph(hir, instance, glyph_name);
             let mut ctx = EvalCtx::new(hir, instance, Some(glyph_name), values, diagnostics);
-            eval_expr(&mut ctx, expr_of(&glyph.advance))
+            eval_glyph_advance(&mut ctx, glyph_name).map(Value::Num)
+        }
+        NodeId::GlyphShift(glyph_name) => {
+            let mut ctx = EvalCtx::new(hir, instance, Some(glyph_name), values, diagnostics);
+            eval_glyph_shift(&mut ctx, glyph_name).map(Value::Num)
         }
         NodeId::Kern(i) => {
             let kern = &hir.kerns[*i];
@@ -490,7 +493,7 @@ fn eval_member(ctx: &mut EvalCtx, member: &ast::MemberExpr) -> Result<Value, ()>
                     .current_glyph
                     .expect("mg-hir only allows `glyph.*` inside a glyph body")
                     .to_string();
-                return eval_glyph_member(ctx, &glyph_name, field, member);
+                return eval_glyph_member(ctx, &glyph_name, field, member, false);
             }
             _ => {}
         }
@@ -501,7 +504,7 @@ fn eval_member(ctx: &mut EvalCtx, member: &ast::MemberExpr) -> Result<Value, ()>
         && root.token().as_ref().map(|t| t.text()) == Some("glyphs")
         && let Some(glyph_name_token) = inner.member_token()
     {
-        return eval_glyph_member(ctx, glyph_name_token.text(), field, member);
+        return eval_glyph_member(ctx, glyph_name_token.text(), field, member, true);
     }
 
     let receiver_value = eval_expr(ctx, &receiver)?;
@@ -577,20 +580,33 @@ fn eval_instance_member(ctx: &EvalCtx, field: &str) -> Value {
     }
 }
 
+/// `glyph.<field>` or, with `placed`, `glyphs.<name>.<field>`. A glyph
+/// reads its own `bbox` and anchors in authored coordinates; another
+/// glyph's are placed, its shift added (spec §5.10).
 fn eval_glyph_member(
     ctx: &mut EvalCtx,
     glyph_name: &str,
     field: &str,
     member: &ast::MemberExpr,
+    placed: bool,
 ) -> Result<Value, ()> {
+    let shift = |ctx: &EvalCtx| {
+        if placed {
+            ctx.value_of(&NodeId::GlyphShift(glyph_name.to_string()))
+                .as_num()
+                .expect("GlyphShift always evaluates to a Value::Num")
+        } else {
+            0.0
+        }
+    };
     match field {
         "advance" => Ok(ctx.value_of(&NodeId::GlyphAdvance(glyph_name.to_string()))),
         "bbox" => match ctx.value_of(&NodeId::GlyphBbox(glyph_name.to_string())) {
-            Value::NoInk => ctx.fail(
+            Value::Rect(rect) => Ok(Value::Rect(rect.translate_x(shift(ctx)))),
+            _ => ctx.fail(
                 mg_syntax::trimmed_range(member.syntax()),
                 EvalError::GlyphHasNoInk,
             ),
-            rect => Ok(rect),
         },
         "name" => Ok(Value::String(glyph_name.to_string())),
         "codepoints" => {
@@ -606,10 +622,14 @@ fn eval_glyph_member(
         anchor_name => {
             let glyph = effective_glyph(ctx.hir, ctx.instance, glyph_name);
             if glyph.anchors.contains_key(anchor_name) {
-                Ok(ctx.value_of(&NodeId::Anchor(
-                    glyph_name.to_string(),
-                    anchor_name.to_string(),
-                )))
+                let at = ctx
+                    .value_of(&NodeId::Anchor(
+                        glyph_name.to_string(),
+                        anchor_name.to_string(),
+                    ))
+                    .as_pair()
+                    .expect("mg-hir already type-checked an anchor's `at` as a pair");
+                Ok(Value::Pair(Point::new(at.x + shift(ctx), at.y)))
             } else {
                 unreachable!("mg-hir already type-checked this member access")
             }
@@ -976,6 +996,13 @@ fn eval_glyph_bbox(
         let Some(target_rect) = target_bbox.as_rect() else {
             continue;
         };
+        // The target is drawn placed (spec §10.1).
+        let target_shift = ctx
+            .values
+            .get(&NodeId::GlyphShift(target.clone()))
+            .and_then(Value::as_num)
+            .expect("a component's target glyph shift is a dependency");
+        let target_rect = target_rect.translate_x(target_shift);
 
         let affine = component_affine(&mut ctx, component)?;
 
@@ -984,6 +1011,66 @@ fn eval_glyph_bbox(
     }
 
     Ok(union.map_or(Value::NoInk, Value::Rect))
+}
+
+/// The glyph's ink in authored coordinates, for spacing derived from it
+/// (spec §12.1). A glyph with no ink has no sidebearings; the failure is
+/// reported on `bearing`, the field that asked for them.
+fn spacing_ink(ctx: &mut EvalCtx, glyph_name: &str, bearing: &ast::Expr) -> Result<Rect, ()> {
+    match ctx.value_of(&NodeId::GlyphBbox(glyph_name.to_string())) {
+        Value::Rect(rect) => Ok(rect),
+        _ => ctx
+            .fail(
+                mg_syntax::trimmed_range(bearing.syntax()),
+                EvalError::GlyphHasNoInk,
+            )
+            .map(|_| unreachable!("`fail` always returns `Err`")),
+    }
+}
+
+/// The advance (spec §12.1): declared, or derived from the bearings and
+/// the ink width. `rsb` defaults to `lsb`.
+fn eval_glyph_advance(ctx: &mut EvalCtx, glyph_name: &str) -> Result<f64, ()> {
+    let glyph = effective_glyph(ctx.hir, ctx.instance, glyph_name);
+    if let Some(advance) = &glyph.advance {
+        return value_num(ctx, advance);
+    }
+    match (&glyph.lsb, &glyph.rsb) {
+        (Some(lsb), rsb) => {
+            let ink = spacing_ink(ctx, glyph_name, lsb)?;
+            let left = value_num(ctx, lsb)?;
+            let right = match rsb {
+                Some(rsb) => value_num(ctx, rsb)?,
+                None => left,
+            };
+            Ok(left + ink.width() + right)
+        }
+        (None, Some(rsb)) => {
+            let ink = spacing_ink(ctx, glyph_name, rsb)?;
+            Ok(ink.x1 + value_num(ctx, rsb)?)
+        }
+        (None, None) => unreachable!("mg-hir requires one of `advance`, `lsb`, `rsb`"),
+    }
+}
+
+/// The horizontal shift from authored to placed coordinates (spec §12.1):
+/// whatever puts the ink's left edge at `lsb`, or its right edge `rsb`
+/// short of a declared `advance`; otherwise zero.
+fn eval_glyph_shift(ctx: &mut EvalCtx, glyph_name: &str) -> Result<f64, ()> {
+    let glyph = effective_glyph(ctx.hir, ctx.instance, glyph_name);
+    if let Some(lsb) = &glyph.lsb {
+        let ink = spacing_ink(ctx, glyph_name, lsb)?;
+        return Ok(value_num(ctx, lsb)? - ink.x0);
+    }
+    if let (Some(rsb), Some(_)) = (&glyph.rsb, &glyph.advance) {
+        let ink = spacing_ink(ctx, glyph_name, rsb)?;
+        let advance = ctx
+            .value_of(&NodeId::GlyphAdvance(glyph_name.to_string()))
+            .as_num()
+            .expect("GlyphAdvance always evaluates to a Value::Num");
+        return Ok(advance - value_num(ctx, rsb)? - ink.x1);
+    }
+    Ok(0.0)
 }
 
 fn union_rect(a: Rect, b: Rect) -> Rect {
@@ -1079,7 +1166,7 @@ fn node_span(hir: &Hir, node: &NodeId) -> Range<usize> {
             }
         }
         NodeId::GlyphLocal(glyph, name) => &hir.glyphs[&(glyph.clone(), None)].lets[name].syntax,
-        NodeId::GlyphAdvance(glyph) | NodeId::GlyphBbox(glyph) => {
+        NodeId::GlyphAdvance(glyph) | NodeId::GlyphShift(glyph) | NodeId::GlyphBbox(glyph) => {
             &hir.glyphs[&(glyph.clone(), None)].syntax
         }
         NodeId::PathRealized(glyph, i) | NodeId::PathBbox(glyph, i) => {

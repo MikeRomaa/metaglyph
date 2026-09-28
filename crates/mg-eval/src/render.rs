@@ -115,8 +115,17 @@ pub fn glyph_outline(
         }
     }
 
+    // Everything below is placed (spec §12.1): the glyph's own ink moves
+    // by its shift, and so does every component, on top of its placement.
+    // A failed shift leaves a preview in authored coordinates.
+    let shift = values
+        .get(&NodeId::GlyphShift(glyph_name.to_string()))
+        .and_then(Value::as_num)
+        .map_or(Affine::IDENTITY, |dx| Affine::translate((dx, 0.0)));
+
     for contour in &mut outline.contours {
         mg_geom::winding::orient_for_glyf(&mut contour.path, contour.role);
+        contour.path.apply_affine(shift);
     }
 
     if !failed.contains(&NodeId::GlyphBbox(glyph_name.to_string())) {
@@ -133,7 +142,7 @@ pub fn glyph_outline(
             };
             outline.components.push(PlacedComponent {
                 glyph: target.clone(),
-                transform,
+                transform: shift * transform,
             });
         }
     }

@@ -165,7 +165,24 @@ pub const GLYPH_FIELDS: &[FieldSchema] = &[
         ),
         &["glyphset"],
     ),
-    field("advance", true, "num", "The advance width."),
+    field(
+        "advance",
+        false,
+        "num",
+        "The advance width. Declare one or two of `advance`, `lsb`, `rsb`.",
+    ),
+    field(
+        "lsb",
+        false,
+        "num",
+        "The left sidebearing, measured from the ink; the ink is shifted to meet it. Declare one or two of `advance`, `lsb`, `rsb`.",
+    ),
+    field(
+        "rsb",
+        false,
+        "num",
+        "The right sidebearing, measured from the ink. Declare one or two of `advance`, `lsb`, `rsb`.",
+    ),
     with_mutex(
         field(
             "glyphset",

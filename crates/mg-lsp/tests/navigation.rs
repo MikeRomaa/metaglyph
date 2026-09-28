@@ -406,12 +406,7 @@ fn builtins_and_namespaces_resolve_to_nothing() {
     let (mut client, _) = Client::start(None);
     let file = uri("sans.mg");
     client.open(&file, SAMPLE);
-    for (needle, into) in [
-        ("polar(", 0),
-        ("glyph.bbox", 0),
-        ("glyphs.six", 0),
-        ("font (", 0),
-    ] {
+    for (needle, into) in [("polar(", 0), ("glyphs.six", 0), ("font (", 0)] {
         assert!(
             definition(&mut client, &file, position_of(SAMPLE, needle, 0, into)).is_none(),
             "{needle:?}"

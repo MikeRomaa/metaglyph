@@ -273,10 +273,14 @@ A param may not be named `slant`, `glyphset`, `styleName`, `weightClass`, or `wi
 | Field | Type | |
 |---|---|---|
 | `codepoint` | `int` \| `int*` | optional; constant expression; each value in `0`–`0x10FFFF`; illegal when `glyphset` is present |
-| `advance` | `num` | required |
+| `advance` | `num` | optional; see below |
+| `lsb` | `num` | optional; the left sidebearing; see below |
+| `rsb` | `num` | optional; the right sidebearing; see below |
 | `glyphset` | identifier | optional |
 
 Body contains `let`, `path`, `anchor`, `component`.
+
+A glyph declares one or two of `advance`, `lsb`, `rsb`. Declaring none, or all three, is an error. Together they fix the glyph's advance and a horizontal **shift** applied to its ink (§12.1).
 
 A glyph without `glyphset` belongs to the **default set**. A glyph with `glyphset: S` is the alternate definition, in set `S`, of the default-set glyph with the same name. That default-set glyph must exist, and the alternate takes its codepoints. A name has at most one definition per set. A glyph set exists if and only if at least one glyph names it.
 
@@ -434,9 +438,11 @@ Extent is not a function. `.bbox` is a member on a `path`, on `glyph`, and on `g
 | `glyph.name` | `string` | |
 | `glyph.codepoints` | `int*` | |
 | `glyph.advance` | `num` | |
-| `glyph.bbox` | `rect` | Tight bounds of all ink from this glyph's rendering paths and components. A domain error on a glyph with no ink |
+| `glyph.bbox` | `rect` | Tight bounds of all ink from this glyph's rendering paths and components, in authored coordinates. A domain error on a glyph with no ink |
 
-**`glyphs.<name>.*`** — another glyph: exactly `.advance`, `.bbox`, and its declared anchors. It resolves to the glyph the current instance builds under that name (the glyph-set alternate when one is selected). A glyph's `let`s and paths are not externally visible.
+Inside a glyph, everything — paths, `let`s, its own anchors, `glyph.bbox` — is in **authored coordinates**, before the §12.1 shift.
+
+**`glyphs.<name>.*`** — another glyph: exactly `.advance`, `.bbox`, and its declared anchors. It resolves to the glyph the current instance builds under that name (the glyph-set alternate when one is selected). A glyph's `let`s and paths are not externally visible. `.bbox` and anchors read this way are in that glyph's **placed coordinates**: authored coordinates plus its shift, relative to its own origin.
 
 **`instance.*`:** `instance.name` (`string`) · `instance.slant` (`num`)
 
@@ -617,7 +623,7 @@ A slab serif is a second path, a short path with its own `stroke` overlapping th
 **Flat tops and apexes** come from an overlapping path:
 
 ```
-glyph A (codepoint: U+0041, advance: glyph.bbox.x1 + sidebear) {
+glyph A (codepoint: U+0041, rsb: sidebear) {
   let apexY = capHeight.y - stem/2;
 
   path legL (stroke: stem) { start (at: (xL, apexY)) line (to: footL) }
@@ -803,9 +809,11 @@ glyph eacute (codepoint: U+00E9, advance: glyphs.e.advance) {
 
 Placement may be an expression over the referenced glyph's `advance`, `bbox`, and declared anchors, so accents re-centre when weight changes.
 
+A component draws the referenced glyph's placed outline (§5.10), with its shift already applied, transformed by `M`. Its ink counts towards the host's `glyph.bbox` in the host's authored coordinates. The host's own shift `h` then applies to it as to any other ink, so the component is emitted with transform `T·M`, where `T` = `translate(h, 0)`.
+
 Component references must be acyclic, and nesting depth is at most `COMPONENT_DEPTH` = 5. Violations are export errors.
 
-Under an instance `slant` with shear `S`, a component with transform `M` is emitted with transform `S·M·S⁻¹`, so that the composite equals the slanted decomposed outline.
+Under an instance `slant` with shear `S`, the component is emitted with transform `S·T·M·S⁻¹`, so that the composite equals the slanted decomposed outline.
 
 A component is emitted as a `glyf` composite when its transform's 2×2 part fits F2Dot14 (each entry in [−2, 2)); its offset is rounded per §10.4. Otherwise it is decomposed. CFF output always decomposes.
 
@@ -882,11 +890,31 @@ TrueType output carries no glyph instructions, no `cvt`, `fpgm`, or `prep`. It c
 
 ### 12.1 Advance widths and sidebearings
 
-Paths are centrelines, so a stroke's ink extends `stroke/2` past them. Paths are authored in final position: the glyph's leftmost ink sits at the intended left sidebearing. The right sidebearing is set by the advance:
+Paths are centrelines, so a stroke's ink extends `stroke/2` past them. Sidebearings are measured from ink, `glyph.bbox`, not from centrelines.
+
+A glyph's horizontal spacing comes down to two numbers: its advance, and a horizontal **shift** `h` added to every x coordinate of its ink. The ink width, `glyph.bbox.width`, is measured from the outline and never declared. The glyph's one or two declared fields (§5.6) determine both numbers. With `b` = `glyph.bbox`:
+
+| Declared | Shift `h` | Advance |
+|---|---|---|
+| `advance` | `0` | `advance` |
+| `rsb` | `0` | `b.x1 + rsb` |
+| `lsb` | `lsb − b.x0` | `lsb + b.width + lsb` |
+| `lsb`, `rsb` | `lsb − b.x0` | `lsb + b.width + rsb` |
+| `advance`, `lsb` | `lsb − b.x0` | `advance` |
+| `advance`, `rsb` | `advance − rsb − b.x1` | `advance` |
+
+When `h` is `0`, the paths are already in final position: `advance` alone keeps the ink exactly where it was authored, and `rsb` alone sets the right sidebearing from the ink as authored. `lsb` alone gives equal sidebearings.
 
 ```
-advance: glyph.bbox.x1 + sidebear
+glyph O (codepoint: U+004F, rsb: sidebear) { … }   // left ink authored at sidebear
+glyph o (codepoint: U+006F, lsb: sidebear) { … }   // authored anywhere; equal bearings
+glyph A (codepoint: U+0041, advance: cell,         // monospace: ink centred in the cell
+         lsb: (cell - glyph.bbox.width) / 2) { … }
 ```
+
+`glyph.bbox` is in authored coordinates (§5.10), so `lsb` and `rsb` expressions may read it without a cycle. `glyph.advance` is readable too. An `lsb` or `rsb` that reads it when the advance is derived from that same field is a cycle (§13).
+
+The editor shows a glyph in authored coordinates, and draws its origin and advance guides at `x = −h` and `x = advance − h`. A drag is therefore never inverted through the shift: the ink stays put and the frame moves.
 
 `hmtx` left sidebearings are read from the final quantized outline.
 
@@ -937,7 +965,7 @@ instance Italic    (slant: 11deg, glyphset: Italic)
 
 Each instance is a full independent build.
 
-**Slant.** An instance's `slant` θ applies the shear `(x, y) → (x + y·tan θ, y)` to every outline after winding normalization (§3). Positive θ leans right. `glyph.bbox` and `advance` are evaluated before the shear. The shear sets:
+**Slant.** An instance's `slant` θ applies the shear `(x, y) → (x + y·tan θ, y)` to every outline after winding normalization (§3). Positive θ leans right. `glyph.bbox`, `advance`, and the §12.1 shift are evaluated, and the shift applied, before the shear. The shear sets:
 - `post.italicAngle` = −θ in degrees
 - `hhea.caretSlopeRise` = `font.em`, and `hhea.caretSlopeRun` = `round(font.em · tan θ)`
 
@@ -964,7 +992,7 @@ Every diagnostic names a source location, an entity, and where possible a fix. D
 |---|---|
 | Syntax | Unexpected token; unclosed block; malformed segment declaration; malformed range; hex integer above 2^53; codepoint above `U+10FFFF`; character literal empty, holding more than one scalar value, or with an unknown escape (§5.1) |
 | Type | `pair` where `num` expected; `path` argument to a scalar function; `.bbox` on a value that has no extent; a mixed tuple; non-integral value in an `int` field |
-| Field validation | Unknown field; unknown enum value, with the legal set enumerated; missing required field; mutually exclusive fields both present; a field illegal in its position (§5.7); non-constant expression where one is required; param default or instance override outside `range`; param named after an instance field; alternate glyph with no default glyph, or with `codepoint`; `codepoint` value outside `0`–`0x10FFFF`; unknown glyph set |
+| Field validation | Unknown field; unknown enum value, with the legal set enumerated; missing required field; mutually exclusive fields both present; a field illegal in its position (§5.7); non-constant expression where one is required; param default or instance override outside `range`; param named after an instance field; alternate glyph with no default glyph, or with `codepoint`; `codepoint` value outside `0`–`0x10FFFF`; unknown glyph set; a glyph declaring none, or all three, of `advance`, `lsb`, `rsb` |
 | Name resolution | Unresolved identifier with scope and near-miss suggestions; duplicate definition; shadowing a top-level name; reserved word as a declaration name; anchor named `advance` or `bbox` |
 | Cycle | Circular definition, reported as the full cycle path with file and line per hop, plus a suggested edge to break (§4.3) |
 | Domain | `sqrt` of a negative; division by zero; `asin`/`acos` out of range; `meet` on parallel lines; path parameter out of domain; `minOf`/`maxOf` of an empty list; `.bbox` of a glyph with no ink |
@@ -1053,7 +1081,7 @@ Conventions used throughout (the language does not enforce them):
 - `w` is a glyph's centreline extent.
 - `ox` is the centreline x of a stroke whose left ink edge sits at `sidebear`.
 - A stroke whose outer edge must touch a metric is centred half a stroke inside it: `capHeight.y - hair/2` for a flat bar, `figHeight.ink - stem/2` for a round top.
-- Every glyph's advance is `glyph.bbox.x1 + sidebear` (§12.1).
+- Every glyph but `nine` declares `rsb: sidebear`, with its left ink authored at `sidebear` (§12.1).
 
 ```
 // ══ Metaglyph Sans ═══════════════════════════════════════════════════
@@ -1087,7 +1115,7 @@ instance Condensed (capW: 520, figW: 470, widthClass: 3)
 
 // ══ Capitals ═════════════════════════════════════════════════════════
 
-glyph A (codepoint: U+0041, advance: glyph.bbox.x1 + sidebear) {
+glyph A (codepoint: U+0041, rsb: sidebear) {
     let w     = capW;
     let apexY = capHeight.y - stem/2;
     let al    = (ox + w/2 - stem/2, apexY);
@@ -1109,7 +1137,7 @@ glyph A (codepoint: U+0041, advance: glyph.bbox.x1 + sidebear) {
     }
 }
 
-glyph B (codepoint: U+0042, advance: glyph.bbox.x1 + sidebear) {
+glyph B (codepoint: U+0042, rsb: sidebear) {
     let w   = capW * 0.88;
     let sx  = ox;
     let top = capHeight.y;
@@ -1133,7 +1161,7 @@ glyph B (codepoint: U+0042, advance: glyph.bbox.x1 + sidebear) {
     }
 }
 
-glyph C (codepoint: U+0043, advance: glyph.bbox.x1 + sidebear) {
+glyph C (codepoint: U+0043, rsb: sidebear) {
     let w   = capW;
     let cy  = capHeight.y / 2;
     let hk  = w * 0.18;                              // terminal handle length
@@ -1154,7 +1182,7 @@ glyph C (codepoint: U+0043, advance: glyph.bbox.x1 + sidebear) {
     }
 }
 
-glyph D (codepoint: U+0044, advance: glyph.bbox.x1 + sidebear) {
+glyph D (codepoint: U+0044, rsb: sidebear) {
     let w   = capW * 0.94;
     let sx  = ox;
     let top = capHeight.y;
@@ -1170,7 +1198,7 @@ glyph D (codepoint: U+0044, advance: glyph.bbox.x1 + sidebear) {
     }
 }
 
-glyph E (codepoint: U+0045, advance: glyph.bbox.x1 + sidebear) {
+glyph E (codepoint: U+0045, rsb: sidebear) {
     let w   = capW * 0.80;
     let top = capHeight.y;
 
@@ -1192,7 +1220,7 @@ glyph E (codepoint: U+0045, advance: glyph.bbox.x1 + sidebear) {
     }
 }
 
-glyph F (codepoint: U+0046, advance: glyph.bbox.x1 + sidebear) {
+glyph F (codepoint: U+0046, rsb: sidebear) {
     let w   = capW * 0.76;
     let top = capHeight.y;
 
@@ -1212,7 +1240,7 @@ glyph F (codepoint: U+0046, advance: glyph.bbox.x1 + sidebear) {
 
 // ══ Figures ══════════════════════════════════════════════════════════
 
-glyph zero (codepoint: U+0030, advance: glyph.bbox.x1 + sidebear) {
+glyph zero (codepoint: U+0030, rsb: sidebear) {
     let w   = figW * 0.86;
     let cy  = figHeight.y / 2;
     let ctr = (ox + w/2, cy);
@@ -1228,7 +1256,7 @@ glyph zero (codepoint: U+0030, advance: glyph.bbox.x1 + sidebear) {
     }
 }
 
-glyph one (codepoint: U+0031, advance: glyph.bbox.x1 + sidebear) {
+glyph one (codepoint: U+0031, rsb: sidebear) {
     let w   = figW * 0.54;
     let sx  = sidebear + hair/2 + w * 0.46;
     let top = figHeight.y;
@@ -1243,7 +1271,7 @@ glyph one (codepoint: U+0031, advance: glyph.bbox.x1 + sidebear) {
     }
 }
 
-glyph two (codepoint: U+0032, advance: glyph.bbox.x1 + sidebear) {
+glyph two (codepoint: U+0032, rsb: sidebear) {
     let w    = figW;
     let top  = figHeight.y;
     let turn = (ox + w * 0.93, top * 0.66);
@@ -1263,7 +1291,7 @@ glyph two (codepoint: U+0032, advance: glyph.bbox.x1 + sidebear) {
     }
 }
 
-glyph three (codepoint: U+0033, advance: glyph.bbox.x1 + sidebear) {
+glyph three (codepoint: U+0033, rsb: sidebear) {
     let w   = figW * 0.90;
     let top = figHeight.y;
     let mid = (ox + w * 0.44, top * 0.52);           // where the two bowls meet
@@ -1283,7 +1311,7 @@ glyph three (codepoint: U+0033, advance: glyph.bbox.x1 + sidebear) {
     }
 }
 
-glyph four (codepoint: U+0034, advance: glyph.bbox.x1 + sidebear) {
+glyph four (codepoint: U+0034, rsb: sidebear) {
     let w    = figW;
     let top  = figHeight.y;
     let barY = top * 0.28;
@@ -1303,7 +1331,7 @@ glyph four (codepoint: U+0034, advance: glyph.bbox.x1 + sidebear) {
     }
 }
 
-glyph five (codepoint: U+0035, advance: glyph.bbox.x1 + sidebear) {
+glyph five (codepoint: U+0035, rsb: sidebear) {
     let w    = figW * 0.88;
     let top  = figHeight.y;
     let neck = (ox, top * 0.56);
@@ -1323,7 +1351,7 @@ glyph five (codepoint: U+0035, advance: glyph.bbox.x1 + sidebear) {
     }
 }
 
-glyph six (codepoint: U+0036, advance: glyph.bbox.x1 + sidebear) {
+glyph six (codepoint: U+0036, rsb: sidebear) {
     let w  = figW * 0.88;
     let cy = figHeight.y * 0.30;
     let by = cy * 2;
@@ -1347,7 +1375,7 @@ glyph six (codepoint: U+0036, advance: glyph.bbox.x1 + sidebear) {
     }
 }
 
-glyph seven (codepoint: U+0037, advance: glyph.bbox.x1 + sidebear) {
+glyph seven (codepoint: U+0037, rsb: sidebear) {
     let w   = figW * 0.92;
     let top = figHeight.y;
 
@@ -1361,7 +1389,7 @@ glyph seven (codepoint: U+0037, advance: glyph.bbox.x1 + sidebear) {
     }
 }
 
-glyph eight (codepoint: U+0038, advance: glyph.bbox.x1 + sidebear) {
+glyph eight (codepoint: U+0038, rsb: sidebear) {
     let w     = figW * 0.86;
     let waist = figHeight.y * 0.53;
     let uw    = w * 0.84;

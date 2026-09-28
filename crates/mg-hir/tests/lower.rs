@@ -634,3 +634,21 @@ fn caps_unknown_value_is_an_error() {
     let (_, diagnostics) = lower(src);
     assert!(codes(&diagnostics).contains(&"MG0402"), "{diagnostics:#?}");
 }
+
+#[test]
+fn a_glyph_takes_at_most_two_of_advance_lsb_rsb() {
+    let src = r#"
+        font (name: "T", em: 1000)
+        metric baseline (y: 0, align: "bottom")
+        metric xHeight (y: 500)
+        metric capHeight (y: 700)
+        metric ascender (y: 740)
+        metric descender (y: -200)
+        glyph A (advance: 300, lsb: 10) {}
+        glyph B (lsb: 10) {}
+        glyph C (rsb: 10) {}
+        glyph D (advance: 300, lsb: 10, rsb: 10) {}
+    "#;
+    let (_, diagnostics) = lower(src);
+    assert_eq!(codes(&diagnostics), vec!["MG0404"], "{diagnostics:#?}");
+}

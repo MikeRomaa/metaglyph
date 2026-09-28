@@ -11,8 +11,10 @@ error[MG0401]: `glyph` has no field `advnace`
   = help: did you mean `advance`?
 
 
-error[MG0403]: `glyph` is missing required field `advance`
+error[MG0403]: `glyph` needs one or two of `advance`, `lsb`, `rsb`
   ┌─ unknown_field.mg:7:1
   │
 7 │ glyph A (advnace: 1) {}
-  │ ^^^^^^^^^^^^^^^^^^^^^^^ missing `advance`
+  │ ^^^^^^^^^^^^^^^^^^^^^^^ no spacing given
+  │
+  = help: `rsb: sidebear` keeps the ink where it is drawn

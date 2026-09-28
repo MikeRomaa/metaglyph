@@ -19,6 +19,9 @@ pub enum NodeId {
     TopLevel(String),
     GlyphLocal(String, String),
     GlyphAdvance(String),
+    /// The horizontal shift from a glyph's authored coordinates to its
+    /// placed ones (spec §12.1).
+    GlyphShift(String),
     GlyphBbox(String),
     PathRealized(String, usize),
     PathBbox(String, usize),
@@ -32,6 +35,7 @@ impl std::fmt::Display for NodeId {
             NodeId::TopLevel(name) => write!(f, "{name}"),
             NodeId::GlyphLocal(glyph, name) => write!(f, "{glyph}.{name}"),
             NodeId::GlyphAdvance(glyph) => write!(f, "{glyph}.advance"),
+            NodeId::GlyphShift(glyph) => write!(f, "{glyph}.shift"),
             NodeId::GlyphBbox(glyph) => write!(f, "{glyph}.bbox"),
             NodeId::PathRealized(glyph, i) => write!(f, "{glyph}.path[{i}]"),
             NodeId::PathBbox(glyph, i) => write!(f, "{glyph}.path[{i}].bbox"),
@@ -96,7 +100,7 @@ fn span_start(node: &SyntaxNode) -> usize {
 }
 
 /// Builds the full dependency graph for one instance: every top-level
-/// param/metric/let, every glyph's locals/advance/bbox/paths/anchors, and
+/// param/metric/let, every glyph's locals/advance/shift/bbox/paths/anchors, and
 /// every kern.
 pub fn build(hir: &Hir, instance: &InstanceDecl) -> Graph {
     let mut graph = Graph::new();
@@ -193,14 +197,38 @@ fn build_glyph(
         );
     }
 
+    // Spec §12.1: a declared `advance` is its own expression; otherwise
+    // it is derived from the bearings and the ink. The shift is zero
+    // unless `lsb` is given, or `rsb` alongside `advance`.
+    let bbox_node = NodeId::GlyphBbox(name.to_string());
     let mut advance_deps = Vec::new();
     if let Some(advance) = &glyph.advance {
         collect_refs(advance, hir, instance, Some(name), &mut advance_deps);
+    } else {
+        for bearing in [&glyph.lsb, &glyph.rsb].into_iter().flatten() {
+            collect_refs(bearing, hir, instance, Some(name), &mut advance_deps);
+        }
+        advance_deps.push(bbox_node.clone());
     }
     graph.insert(
         NodeId::GlyphAdvance(name.to_string()),
         span_start(&glyph.syntax),
         advance_deps,
+    );
+
+    let mut shift_deps = Vec::new();
+    if let Some(lsb) = &glyph.lsb {
+        collect_refs(lsb, hir, instance, Some(name), &mut shift_deps);
+        shift_deps.push(bbox_node);
+    } else if let (Some(rsb), Some(_)) = (&glyph.rsb, &glyph.advance) {
+        collect_refs(rsb, hir, instance, Some(name), &mut shift_deps);
+        shift_deps.push(bbox_node);
+        shift_deps.push(NodeId::GlyphAdvance(name.to_string()));
+    }
+    graph.insert(
+        NodeId::GlyphShift(name.to_string()),
+        span_start(&glyph.syntax),
+        shift_deps,
     );
 
     let mut bbox_deps = Vec::new();
@@ -257,7 +285,9 @@ fn collect_component_bbox_deps(
     if let Some(target) = &component.glyph
         && effective_glyph(hir, instance, target).is_some()
     {
+        // The target is drawn placed (spec §10.1), so its shift counts too.
         deps.push(NodeId::GlyphBbox(target.clone()));
+        deps.push(NodeId::GlyphShift(target.clone()));
     }
     if let Some(offset) = &component.offset {
         collect_refs(offset, hir, instance, Some(current_glyph), deps);
@@ -411,15 +441,21 @@ fn collect_member_refs(
         && let Some(glyph_name_token) = inner.member_token()
         && let Some(field_token) = member.member_token()
     {
+        // `bbox` and anchors read from outside are placed (spec §5.10),
+        // so they also depend on that glyph's shift.
         let glyph_name = glyph_name_token.text();
         match field_token.text() {
             "advance" => deps.push(NodeId::GlyphAdvance(glyph_name.to_string())),
-            "bbox" => deps.push(NodeId::GlyphBbox(glyph_name.to_string())),
+            "bbox" => {
+                deps.push(NodeId::GlyphBbox(glyph_name.to_string()));
+                deps.push(NodeId::GlyphShift(glyph_name.to_string()));
+            }
             anchor => {
                 if effective_glyph(hir, instance, glyph_name)
                     .is_some_and(|g| g.anchors.contains_key(anchor))
                 {
                     deps.push(NodeId::Anchor(glyph_name.to_string(), anchor.to_string()));
+                    deps.push(NodeId::GlyphShift(glyph_name.to_string()));
                 }
             }
         }

@@ -142,10 +142,11 @@ Every error in spec §13's "field validation", "name resolution", "type", and "p
 `mg dump-graph` prints the graph, and permuting statements within a scope provably changes nothing.
 
 - **`Value`** is an enum over the spec §5.5 types, built on kurbo (`Point`, `Vec2`, `Affine`, `BezPath`) plus our own `Line`, `Zone`, and `Rect`.
-- **Graph nodes are bindings**, not every subexpression: `TopLevel(name)`, `GlyphLocal(glyph, name)`, `GlyphAdvance(glyph)`, `GlyphBbox(glyph)`, `PathRealized(glyph, path)`, `PathBbox(glyph, path)`, `Anchor(glyph, name)`, `Kern(index)`. Anonymous subexpressions evaluate inline inside their node.
-- **`glyph.bbox` depends on every rendering path and component of the glyph.** That dependency makes `advance: glyph.bbox.x1 + sidebear` work, and turns a path reading `glyph.advance` into a detected cycle rather than a hang.
+- **Graph nodes are bindings**, not every subexpression: `TopLevel(name)`, `GlyphLocal(glyph, name)`, `GlyphAdvance(glyph)`, `GlyphShift(glyph)`, `GlyphBbox(glyph)`, `PathRealized(glyph, path)`, `PathBbox(glyph, path)`, `Anchor(glyph, name)`, `Kern(index)`. Anonymous subexpressions evaluate inline inside their node.
+- **`glyph.bbox` depends on every rendering path and component of the glyph**, in authored coordinates. That dependency makes `rsb: sidebear` and `lsb: (cell - glyph.bbox.width) / 2` work, and turns a path reading `glyph.advance` into a detected cycle rather than a hang.
+- **`GlyphAdvance` and `GlyphShift`** follow the spec §12.1 table, from whichever one or two of `advance` / `lsb` / `rsb` the glyph declares. A declared `advance` depends only on its own expression; a derived one, and any non-zero shift, depend on `GlyphBbox`. Keeping them separate is what lets `advance: s, lsb: (glyph.advance - glyph.bbox.width) / 2` evaluate without a cycle.
 - **`PathBbox` and `GlyphBbox` call into `mg-geom`**: skeleton bounds for construction paths, stroked or filled bounds for rendering paths. Until M4 lands, `mg-geom::stroke` returns an error. M3's tests therefore cover graphs without rendering-path `.bbox`, and the full sample first evaluates at the end of M4.
-- Cross-glyph edges only to `glyphs.X.{advance,bbox,<anchor>}`, resolved per instance glyph set.
+- Cross-glyph edges only to `glyphs.X.{advance,bbox,<anchor>}`, resolved per instance glyph set. `bbox` and anchors read this way are placed (shift added), so they also depend on X's `GlyphShift`.
 - **Kahn's algorithm with a min-heap keyed on declaration index** (spec §14). When nodes remain unsorted, recover an actual cycle by DFS with a parent stack. Report every hop with file and line, plus the break hint (spec §4.3).
 - **Failure containment (spec §4.6):** a failed node marks its downstream nodes failed; everything else still evaluates. A failed top-level node reports once. A build with any error writes nothing.
 - Full spec §5.9 construction library, mostly thin wrappers over kurbo. Angles are radians; suffixes convert at lowering. Path queries use the `[0, n]` parameter domain of spec §5.9.
@@ -213,7 +214,7 @@ The named tolerance constants live in one module, not as magic numbers at use si
 - **Glyphs** via `write_fonts::tables::glyf::SimpleGlyph` from an all-quadratic `BezPath`. Confirm that write-fonts omits implied on-curve points; if it does not, omit exact midpoints before handing the path over. Set `OVERLAP_SIMPLE` on every simple glyph and `OVERLAP_COMPOUND` on every composite.
 - **Components (spec §10.1):** a `glyf` composite when the conjugated 2×2 fits F2Dot14, decomposed otherwise. Acyclic check; depth limit 5.
 - **`cmap`:** format 4 for the BMP, plus format 12 when any codepoint exceeds U+FFFF, with (3,1)/(0,3) and (3,10)/(0,4). Check what the write-fonts `Cmap` constructor emits, and build the subtables by hand if it differs.
-- **Metrics** per the spec §12.1 table. `hmtx` left sidebearings come from the final outline.
+- **Metrics** per the spec §12.1 table. The shift is applied to the outline before slant; composites get `translate(shift, 0)` prepended to their transform (spec §10.1). `hmtx` left sidebearings come from the final outline.
 - `.notdef` at glyph ID 0, then declaration order; `post` 2.0 carrying names with `italicAngle`; `hhea` caret slope from slant. `maxp`/int16 limit checks are export errors (spec §10.5).
 - **`gasp`** per spec §11.4. No `cvt`, `fpgm`, or `prep`.
 - **`name`, `OS/2` weight/width class and `fsSelection`, `head.macStyle`** per the spec §12.3 naming table.

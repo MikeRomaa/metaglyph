@@ -423,8 +423,12 @@ fn a_field_name_shows_its_schema_entry() {
     assert!(text.contains("default `\"butt\"`"), "{text}");
     assert!(text.contains("`\"square\"`"), "{text}");
 
-    let text = hover_sample("advance:", 0, 1).unwrap();
-    assert!(text.contains("Required."), "{text}");
+    let text = hover_sample("rsb:", 0, 1).unwrap();
+    assert!(text.contains("rsb: num"), "{text}");
+    assert!(
+        text.contains("one or two of `advance`, `lsb`, `rsb`"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -449,7 +453,7 @@ fn literals_show_their_converted_values() {
 fn members_and_constants_show_their_types() {
     let text = hover_sample("capHeight.y", 0, 10).unwrap();
     assert!(text.contains("capHeight.y: num"), "{text}");
-    let text = hover_sample("glyph.bbox", 0, 7).unwrap();
+    let text = hover_marked(&with_glyphs("glyph C (advance: glyph.bb|ox.x1) {}")).unwrap();
     assert!(text.contains("glyph.bbox: rect"), "{text}");
     let text = hover_marked(&with_glyphs("let e = font.e|m;")).unwrap();
     assert!(text.contains("font.em: num"), "{text}");

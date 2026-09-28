@@ -34,6 +34,15 @@ impl Rect {
         Point::new((self.x0 + self.x1) / 2.0, (self.y0 + self.y1) / 2.0)
     }
 
+    pub fn translate_x(&self, dx: f64) -> Rect {
+        Rect {
+            x0: self.x0 + dx,
+            y0: self.y0,
+            x1: self.x1 + dx,
+            y1: self.y1,
+        }
+    }
+
     pub fn union_pt(&self, p: Point) -> Rect {
         Rect {
             x0: self.x0.min(p.x),

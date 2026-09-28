@@ -585,6 +585,9 @@ fn lower_glyph(
 
     let glyphset = expect_ident_field(&fields, "glyphset", diagnostics).map(|(name, _)| name);
     let advance = fields.get("advance").and_then(|f| f.value());
+    let lsb = fields.get("lsb").and_then(|f| f.value());
+    let rsb = fields.get("rsb").and_then(|f| f.value());
+    check_spacing_fields(&fields, glyph_node.syntax(), diagnostics);
     let codepoint_expr = fields.get("codepoint").and_then(|f| f.value());
     let codepoints = codepoint_expr
         .as_ref()
@@ -718,12 +721,50 @@ fn lower_glyph(
             codepoint_expr,
             codepoints,
             advance,
+            lsb,
+            rsb,
             lets,
             paths,
             anchors,
             components,
         },
     ))
+}
+
+/// Spec §5.6: a glyph declares one or two of `advance`, `lsb`, `rsb`.
+/// "At least one" and "at most two" span three fields, which the field
+/// table's per-field `required`/`mutex` can't express.
+fn check_spacing_fields(
+    fields: &IndexMap<String, ast::Field>,
+    glyph_syntax: &SyntaxNode,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let declared: Vec<&str> = ["advance", "lsb", "rsb"]
+        .into_iter()
+        .filter(|name| fields.contains_key(*name))
+        .collect();
+    match declared.len() {
+        0 => diagnostics.push(
+            Diagnostic::error(
+                codes::MISSING_REQUIRED_FIELD,
+                "`glyph` needs one or two of `advance`, `lsb`, `rsb`",
+                Label::new(schema::trimmed_span(glyph_syntax), "no spacing given"),
+            )
+            .with_help("`rsb: sidebear` keeps the ink where it is drawn"),
+        ),
+        3 => {
+            let span: Range<usize> = fields["rsb"].syntax().text_range().into();
+            diagnostics.push(
+                Diagnostic::error(
+                    codes::MUTUALLY_EXCLUSIVE_FIELDS,
+                    "`advance`, `lsb`, and `rsb` cannot all be given",
+                    Label::new(span, "any two fix the third"),
+                )
+                .with_help("remove one of them; the glyph's ink width decides it"),
+            );
+        }
+        _ => {}
+    }
 }
 
 /// `codepoint` (spec §5.6): an `int` or `int*` field, each value a
@@ -1481,7 +1522,14 @@ fn typecheck_glyph(hir: &mut Hir, key: &GlyphKey, diagnostics: &mut Vec<Diagnost
     let Some(glyph) = hir.glyphs.get(key) else {
         return;
     };
-    let advance = glyph.advance.clone();
+    let spacing: Vec<(ast::Expr, &str)> = [
+        (&glyph.advance, "`advance`"),
+        (&glyph.lsb, "`lsb`"),
+        (&glyph.rsb, "`rsb`"),
+    ]
+    .into_iter()
+    .filter_map(|(expr, what)| expr.clone().map(|e| (e, what)))
+    .collect();
     let let_names: Vec<String> = glyph.lets.keys().cloned().collect();
     let anchor_ats: Vec<Option<ast::Expr>> = glyph.anchors.values().map(|a| a.at.clone()).collect();
     let component_fields: Vec<ComponentExprs> = glyph
@@ -1522,10 +1570,10 @@ fn typecheck_glyph(hir: &mut Hir, key: &GlyphKey, diagnostics: &mut Vec<Diagnost
         type_check::glyph_local_type(&mut ctx, key, name);
     }
 
-    if let Some(advance) = &advance {
+    for (expr, what) in &spacing {
         let mut ctx = Ctx::new(hir, diagnostics);
         ctx.current_glyph = Some(key.clone());
-        expect_type(&mut ctx, advance, Type::Num, "`advance`");
+        expect_type(&mut ctx, expr, Type::Num, what);
     }
 
     for at in anchor_ats.iter().flatten() {

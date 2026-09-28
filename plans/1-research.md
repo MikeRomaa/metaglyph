@@ -363,8 +363,8 @@ Only the built-in attributes of the `font` directive, **not** params, metrics, o
 |---|---|---|
 | `glyph.name` | `string` | |
 | `glyph.codepoints` | `list<int>` | |
-| `glyph.advance` | `num` | The resolved `advance` config value |
-| `glyph.bbox` | `rect` | Bounds of all ink from this glyph's rendering paths — the one place the language needs a name for "all of it" (§13.1) |
+| `glyph.advance` | `num` | The resolved advance: declared, or derived from `lsb` / `rsb` (§13.1) |
+| `glyph.bbox` | `rect` | Bounds of all ink from this glyph's rendering paths, in authored coordinates (before the §13.1 shift) — the one place the language needs a name for "all of it" (§13.1) |
 
 Reading `glyph.advance` from a path, while `advance` is itself defined from that path, is a cycle — caught and reported by §5.3 like any other.
 
@@ -1009,15 +1009,23 @@ If a glyph's paths span centreline `x ∈ [0, w]` with width `stem`, its **ink**
 - `advance: w + 2 * sidebear` measures bearings from centrelines. The *visible* sidebearing is `sidebear − stem/2`, and the glyph has ink at negative x, overlapping its neighbour.
 - `advance: glyph.bbox.width + 2 * sidebear` measures from ink, which is what a designer means by a sidebearing.
 
-**Use the ink model.** And because the glyph origin is `x = 0` with no automatic shift, paths must be authored in final position — the leftmost ink at `x = sidebear`, which for a stem starting the glyph means its centreline sits at `sidebear + stem/2`.
+**Use the ink model.**
 
-The spec's form is `advance: glyph.bbox.x1 + sidebear`. With paths authored so the left ink sits at `sidebear`, this makes the right bearing exact even when the left edge lands slightly off, as it does on a diagonal foot.
+#### `advance`, `lsb`, `rsb`
+
+The first design had a single `advance` field and no automatic shift, so paths had to be authored in final position: the leftmost ink at `x = sidebear`, which for a stem starting the glyph means its centreline sits at `sidebear + stem/2`. The right bearing came from `advance: glyph.bbox.x1 + sidebear`.
+
+That cannot centre ink in a fixed advance, which is what every glyph of a monospace font needs. A glyph's horizontal spacing comes down to two numbers: the advance and a horizontal shift of the ink. The ink width is measured, so it is not a field. The spec (§12.1) therefore takes three optional fields, `advance`, `lsb`, `rsb`, of which a glyph declares one or two:
 
 ```
-advance: glyph.bbox.x1 + sidebear
+glyph E (…, rsb: sidebear)                                  // authored in place, as before
+glyph o (…, lsb: sidebear)                                  // equal bearings
+glyph A (…, advance: cell, lsb: (cell - glyph.bbox.width) / 2)   // monospace, centred
 ```
 
-**Alternative not taken:** an `lsb:` glyph field with an automatic horizontal shift, so paths could be authored from any origin and the compiler would place `bbox.x0` at `lsb`. It would remove the `ox` offset from every x coordinate in the sample. The cost is a second, implicit transform between source coordinates and output coordinates, which the editor would have to invert on every drag and every displayed coordinate.
+A monospace `auto` value for centring was considered and rejected. The explicit expression is longer, but it adds no keyword.
+
+**The editor objection.** An automatic shift was first rejected because it adds a second transform between source and output coordinates, which the editor would have to invert on every drag and every displayed coordinate. The resolution is to never show output coordinates for the glyph being edited. The canvas stays in authored coordinates and draws the origin and advance guides at `−shift` and `advance − shift`. The ink stays put and the frame moves, so a drag still rewrites an authored literal directly. Other glyphs are read in placed coordinates (`glyphs.X.bbox`, anchors, components), so accent placement is unaffected.
 
 `glyph.bbox` is the bounds of all ink from this glyph's rendering paths (§6.5). This is the one place the language needs a name for "all of it," because spacing is inherently about the whole glyph rather than any one path.
 
@@ -1188,7 +1196,7 @@ The sample is what made that first trade legible: written out, none of these six
 Two more the sample forced into the open:
 
 - **Top-level `let` had nowhere to live.** The sample originally wrapped params, metrics, and lets in a block, which left "where does a file-scope `let` go" unanswered. Resolved in §6.1: there is **no wrapper block at all** — `font`, `param`, `metric`, and `let` are top-level directives, and everything declared there is referenced **bare**, with shadowing forbidden so each bare name has exactly one binding. Two things fall out: the `font.` prefix disappears from every expression (a real readability win at ~100 occurrences in this sample alone), and files compose by concatenation, so a face can span several files with no include mechanism. The cost is that a glyph can no longer name a path after a param — hence `path upright` rather than `path stem`.
-- **The spacing model was unspecified, and the sample had it wrong.** `advance: w + 2*sidebear` measures bearings from *centrelines*, so every glyph was under-spaced by a stem width and had ink hanging left of its origin. §13.1 now mandates the ink model — first as `advance: glyph.bbox.width + 2*sidebear`, later refined to `glyph.bbox.x1 + sidebear` — with paths authored in final position. This is the clearest case in the whole exercise of a sample catching a real error rather than a missing feature.
+- **The spacing model was unspecified, and the sample had it wrong.** `advance: w + 2*sidebear` measures bearings from *centrelines*, so every glyph was under-spaced by a stem width and had ink hanging left of its origin. §13.1 now mandates the ink model — first as `advance: glyph.bbox.width + 2*sidebear`, later refined to `glyph.bbox.x1 + sidebear` — with paths authored in final position. This is the clearest case in the whole exercise of a sample catching a real error rather than a missing feature. A monospace sample later showed that authoring in final position cannot centre ink, and `advance` gained optional `lsb` / `rsb` companions with an automatic horizontal shift.
 
 One observation that needed recording rather than fixing:
 

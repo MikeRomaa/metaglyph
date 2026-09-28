@@ -2,8 +2,10 @@
 source: crates/mg-hir/tests/diagnostics.rs
 expression: rendered
 ---
-error[MG0403]: `glyph` is missing required field `advance`
+error[MG0403]: `glyph` needs one or two of `advance`, `lsb`, `rsb`
   ┌─ missing_required_field.mg:7:1
   │
 7 │ glyph A () {}
-  │ ^^^^^^^^^^^^^ missing `advance`
+  │ ^^^^^^^^^^^^^ no spacing given
+  │
+  = help: `rsb: sidebear` keeps the ink where it is drawn

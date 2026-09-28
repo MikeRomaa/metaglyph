@@ -424,3 +424,158 @@ fn a_cancelled_evaluation_stops_between_nodes() {
     let (_, uncancelled) = mg_eval::evaluate_cancellable(&hir, instance, &|| false).unwrap();
     assert_eq!(full.values, uncancelled.values);
 }
+
+/// A filled 100×100 square with its left edge at x = 10.
+const SQUARE: &str = r#"
+  path box (fill: true) {
+    start (at: (10, 0))
+    line (to: (110, 0))
+    line (to: (110, 100))
+    line (to: (10, 100))
+    close
+  }
+"#;
+
+/// `(advance, shift)` for glyph `A` declared with `spacing`.
+fn spacing_of(spacing: &str) -> (f64, f64) {
+    let source = format!("{PREAMBLE}\nglyph A ({spacing}) {{{SQUARE}}}\n");
+    let hir = lower(&source);
+    let (_, outcome) = mg_eval::evaluate(&hir, regular(&hir));
+    assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
+    (
+        num(&outcome.values, NodeId::GlyphAdvance("A".into())),
+        num(&outcome.values, NodeId::GlyphShift("A".into())),
+    )
+}
+
+#[test]
+fn spacing_fields_set_advance_and_shift() {
+    // Spec §12.1's table, on ink spanning x = 10..110.
+    assert_eq!(spacing_of("advance: 300"), (300.0, 0.0));
+    assert_eq!(spacing_of("rsb: 30"), (140.0, 0.0));
+    assert_eq!(spacing_of("lsb: 20"), (140.0, 10.0));
+    assert_eq!(spacing_of("lsb: 20, rsb: 50"), (170.0, 10.0));
+    assert_eq!(spacing_of("advance: 300, lsb: 20"), (300.0, 10.0));
+    assert_eq!(spacing_of("advance: 200, rsb: 50"), (200.0, 40.0));
+}
+
+#[test]
+fn monospace_centring_reads_its_own_advance() {
+    assert_eq!(
+        spacing_of("advance: 300, lsb: (glyph.advance - glyph.bbox.width) / 2"),
+        (300.0, 90.0)
+    );
+}
+
+#[test]
+fn a_bearing_derived_from_the_advance_it_derives_is_a_cycle() {
+    let source = format!("{PREAMBLE}\nglyph A (lsb: glyph.advance / 4) {{{SQUARE}}}\n");
+    let hir = lower(&source);
+    let (_, outcome) = mg_eval::evaluate(&hir, regular(&hir));
+    assert!(
+        outcome
+            .diagnostics
+            .iter()
+            .any(|d| d.code.as_str() == "MG0601"),
+        "{:#?}",
+        outcome.diagnostics
+    );
+}
+
+#[test]
+fn a_bearing_on_an_inkless_glyph_is_a_domain_error() {
+    let source = format!("{PREAMBLE}\nglyph space (rsb: 200) {{}}\n");
+    let hir = lower(&source);
+    let (_, outcome) = mg_eval::evaluate(&hir, regular(&hir));
+    assert!(
+        outcome
+            .failed
+            .contains(&NodeId::GlyphAdvance("space".into()))
+    );
+    assert!(
+        outcome
+            .diagnostics
+            .iter()
+            .any(|d| d.code == mg_diag::codes::GLYPH_HAS_NO_INK),
+        "{:#?}",
+        outcome.diagnostics
+    );
+}
+
+#[test]
+fn other_glyphs_are_read_placed_and_the_own_glyph_authored() {
+    let source = format!(
+        r#"{PREAMBLE}
+glyph A (lsb: 20) {{{SQUARE}
+  anchor top (at: (60, 100))
+  anchor own (at: (glyph.bbox.x0, top.x))
+}}
+glyph B (advance: 10) {{
+  anchor a (at: (glyphs.A.bbox.x0, glyphs.A.top.x))
+}}
+glyph C (rsb: 0) {{
+  component (glyph: A)
+}}
+"#
+    );
+    let hir = lower(&source);
+    let (_, outcome) = mg_eval::evaluate(&hir, regular(&hir));
+    assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
+
+    let pair = |glyph: &str, anchor: &str| {
+        let p = outcome.values[&NodeId::Anchor(glyph.into(), anchor.into())]
+            .as_pair()
+            .unwrap();
+        (p.x, p.y)
+    };
+    // `A` is shifted by 10: inside it nothing moves; from `B` everything has.
+    assert_eq!(pair("A", "own"), (10.0, 60.0));
+    assert_eq!(pair("B", "a"), (20.0, 70.0));
+
+    // `C` draws `A` placed, so its own ink starts at 20.
+    let c = outcome.values[&NodeId::GlyphBbox("C".into())]
+        .as_rect()
+        .unwrap();
+    assert_eq!((c.x0, c.x1), (20.0, 120.0));
+    assert_eq!(
+        num(&outcome.values, NodeId::GlyphAdvance("C".into())),
+        120.0
+    );
+}
+
+#[test]
+fn outlines_are_placed() {
+    use kurbo::Shape;
+
+    let source = format!(
+        r#"{PREAMBLE}
+glyph A (lsb: 20) {{{SQUARE}}}
+glyph C (lsb: 0) {{
+  component (glyph: A, offset: (5, 0))
+}}
+"#
+    );
+    let hir = lower(&source);
+    let instance = regular(&hir);
+    let (_, outcome) = mg_eval::evaluate(&hir, instance);
+    assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
+
+    let outline = |name: &str| {
+        mg_eval::glyph_outline(
+            &hir,
+            instance,
+            name,
+            &outcome.values,
+            &outcome.failed,
+            &mut Vec::new(),
+        )
+    };
+    let a = outline("A");
+    let bounds = a.contours[0].path.bounding_box();
+    assert_eq!((bounds.x0, bounds.x1), (20.0, 120.0));
+
+    // `C`'s authored ink is `A` placed (20..120) plus the offset: 25..125.
+    // `lsb: 0` shifts it by -25 on top of the offset.
+    let c = outline("C");
+    assert_eq!(c.components[0].transform.translation().x, 5.0 - 25.0);
+}

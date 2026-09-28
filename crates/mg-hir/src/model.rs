@@ -92,6 +92,10 @@ pub struct GlyphDecl {
     pub codepoint_expr: Option<ast::Expr>,
     pub codepoints: Vec<u32>,
     pub advance: Option<ast::Expr>,
+    /// The left and right sidebearings (spec §12.1). With `advance`, a
+    /// glyph declares one or two of the three.
+    pub lsb: Option<ast::Expr>,
+    pub rsb: Option<ast::Expr>,
     pub lets: IndexMap<String, LetDecl>,
     /// Declaration order (paths may be anonymous, so this cannot be an
     /// `IndexMap` keyed by name; see [`stable_id`](mg_syntax::stable_id)
