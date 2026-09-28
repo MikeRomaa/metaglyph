@@ -674,7 +674,7 @@ fn eval_path_realized(
 
     let raw_start = mg_geom::skeleton::RawStart { at: start_point };
     // spec §14: `ARC_TOLERANCE` = `0.01 · font.em / 1000`.
-    let arc_tolerance = ctx.hir.font.em.map_or(0.0, |em| 0.01 * em as f64 / 1000.0);
+    let arc_tolerance = tolerances(ctx.hir).arc;
     match mg_geom::skeleton::realize(&raw_start, &raw_segments, path.closed, arc_tolerance) {
         Ok(skeleton) => Ok(Value::Path(skeleton)),
         Err(err) => {
@@ -724,11 +724,9 @@ fn eval_path_bbox(
     ))
 }
 
-/// The `OFFSET_TOLERANCE`-scale numerics have no bearing on skeleton
-/// realization's own `ARC_TOLERANCE` (spec §14); each stage gets its own
-/// constant scaled the same way (`k · font.em / 1000`).
-fn spec_tolerance(hir: &Hir, k: f64) -> f64 {
-    hir.font.em.map_or(0.0, |em| k * em as f64 / 1000.0)
+/// Spec §14's em-scaled tolerances for this font.
+pub(crate) fn tolerances(hir: &Hir) -> mg_geom::tolerance::Tolerances {
+    mg_geom::tolerance::Tolerances::for_em(hir.font.em.map_or(0.0, |em| em as f64))
 }
 
 /// Every contour a rendering path produces (spec §6.4–§6.5), with its
@@ -795,7 +793,7 @@ pub fn render_path(
         let mut ctx = EvalCtx::new(hir, instance, Some(glyph_name), values, diagnostics);
         let width = value_num(&mut ctx, stroke_expr)?;
         let spec = build_stroke_spec(path, width);
-        let offset_tolerance = spec_tolerance(hir, 0.05);
+        let offset_tolerance = tolerances(hir).offset;
         match mg_geom::stroke::stroke_path(skeleton, path.closed, &spec, offset_tolerance) {
             Ok(mut stroke_contours) => contours.append(&mut stroke_contours),
             Err(err) => {

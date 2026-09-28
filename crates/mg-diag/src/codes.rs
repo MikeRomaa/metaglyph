@@ -140,3 +140,9 @@ pub const SELF_INTERSECTING_FILL: Code = Code::new("MG0619");
 /// 180° reversal also has no crossing, but is a legitimate shape, not this
 /// error.
 pub const INNER_CORNER_NO_CROSSING: Code = Code::new("MG0620");
+
+// -- MG08xx: export (mg-font) ---------------------------------------------
+
+/// A filled contour that was simple before quantization crosses itself
+/// after it (spec §10.4 step 4).
+pub const QUANTIZED_FILL_SELF_INTERSECTS: Code = Code::new("MG0801");

@@ -48,6 +48,10 @@ enum Command {
         glyph: String,
         #[arg(long)]
         instance: Option<String>,
+        /// Show the outline as compiled: slanted, with extrema, as
+        /// quadratics, zone-snapped, and rounded to integers.
+        #[arg(long)]
+        prepared: bool,
     },
     /// Print the evaluation dependency graph.
     DumpGraph {
@@ -66,7 +70,8 @@ fn main() -> ExitCode {
             files,
             glyph,
             instance,
-        } => cmd_svg(&files, &glyph, instance.as_deref()),
+            prepared,
+        } => cmd_svg(&files, &glyph, instance.as_deref(), prepared),
         Command::DumpGraph { files, instance } => cmd_dump_graph(&files, instance.as_deref()),
     }
 }
@@ -175,7 +180,12 @@ fn cmd_fmt(files: &[PathBuf]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn cmd_svg(files: &[PathBuf], glyph_name: &str, instance_name: Option<&str>) -> ExitCode {
+fn cmd_svg(
+    files: &[PathBuf],
+    glyph_name: &str,
+    instance_name: Option<&str>,
+    prepared: bool,
+) -> ExitCode {
     let code = require_files(files);
     if code != ExitCode::SUCCESS {
         return code;
@@ -234,6 +244,27 @@ fn cmd_svg(files: &[PathBuf], glyph_name: &str, instance_name: Option<&str>) -> 
 
     let (_, outcome) = mg_eval::evaluate(&hir, instance);
 
+    if prepared {
+        let (glyphs, prepare_diagnostics) = mg_font::prepare_font(&hir, instance, &outcome);
+        for diagnostic in outcome.diagnostics.iter().chain(&prepare_diagnostics) {
+            print_diagnostic(&mut stderr, diagnostic, &filename, &source);
+        }
+        let mut contours = Vec::new();
+        decompose_prepared(
+            &glyphs,
+            glyph_name,
+            kurbo::Affine::IDENTITY,
+            0,
+            &mut contours,
+        );
+        println!("{}", render_svg(&contours));
+        return if outcome.diagnostics.is_empty() && prepare_diagnostics.is_empty() {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        };
+    }
+
     let mut render_diagnostics = Vec::new();
     let contours = mg_eval::render_glyph(
         &hir,
@@ -261,6 +292,38 @@ fn cmd_svg(files: &[PathBuf], glyph_name: &str, instance_name: Option<&str>) -> 
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
+    }
+}
+
+/// `glyph_name`'s prepared contours with every component's own placed
+/// in, for previewing. Roles no longer matter by this stage, since
+/// winding was fixed before slant, so every contour counts as outer for
+/// [`render_svg`].
+fn decompose_prepared(
+    glyphs: &indexmap::IndexMap<String, mg_font::PreparedGlyph>,
+    glyph_name: &str,
+    transform: kurbo::Affine,
+    depth: usize,
+    out: &mut Vec<(kurbo::BezPath, mg_geom::winding::ContourRole)>,
+) {
+    let Some(glyph) = glyphs.get(glyph_name) else {
+        return;
+    };
+    if depth >= mg_geom::tolerance::COMPONENT_DEPTH {
+        return;
+    }
+    for contour in &glyph.contours {
+        let path = transform * mg_font::outline::to_bezpath(contour);
+        out.push((path, mg_geom::winding::ContourRole::Outer));
+    }
+    for component in &glyph.components {
+        decompose_prepared(
+            glyphs,
+            &component.glyph,
+            transform * component.transform,
+            depth + 1,
+            out,
+        );
     }
 }
 

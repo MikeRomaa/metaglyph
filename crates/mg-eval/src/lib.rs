@@ -13,4 +13,4 @@ pub mod value;
 
 pub use eval::{EvalOutcome, dirty_closure, evaluate, reevaluate};
 pub use graph::{Graph, NodeId};
-pub use render::render_glyph;
+pub use render::{GlyphOutline, OutlineContour, PlacedComponent, glyph_outline, render_glyph};

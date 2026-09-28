@@ -19,4 +19,5 @@ pub mod fill;
 pub mod intersect;
 pub mod skeleton;
 pub mod stroke;
+pub mod tolerance;
 pub mod winding;

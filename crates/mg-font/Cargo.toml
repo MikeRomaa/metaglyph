@@ -11,6 +11,8 @@ mg-syntax = { workspace = true }
 mg-hir = { workspace = true }
 mg-geom = { workspace = true }
 mg-eval = { workspace = true }
+indexmap = { workspace = true }
+kurbo = { workspace = true }
 write-fonts = { workspace = true }
 
 [dev-dependencies]

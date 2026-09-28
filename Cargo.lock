@@ -391,6 +391,7 @@ name = "mg-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "indexmap",
  "insta",
  "kurbo",
  "mg-diag",
@@ -426,6 +427,8 @@ dependencies = [
 name = "mg-font"
 version = "0.1.0"
 dependencies = [
+ "indexmap",
+ "kurbo",
  "mg-diag",
  "mg-eval",
  "mg-geom",

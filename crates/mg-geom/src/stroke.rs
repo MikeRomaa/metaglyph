@@ -22,6 +22,7 @@ use kurbo::{BezPath, Line, ParamCurve, PathEl, PathSeg, Point, Vec2};
 use crate::curvature::{self, CurvatureViolation};
 use crate::intersect;
 use crate::skeleton::{self, Skeleton, Sweep};
+use crate::tolerance::MITER_LIMIT;
 use crate::winding::{self, ContourRole};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,9 +143,6 @@ pub fn stroke_path(
 
     Ok(result)
 }
-
-/// The `glyf`/generic tie-breaker for stroking joins (spec §14): `4`.
-const MITER_LIMIT: f64 = 4.0;
 
 /// Splits a `kurbo::stroke` output into its separate closed subpaths (one
 /// per `MoveTo`).

@@ -28,47 +28,79 @@ pub fn fill_contour(skeleton: &Skeleton) -> BezPath {
 const ENDPOINT_EPSILON: f64 = 1e-6;
 
 /// Checks `skeleton` — already known closed, since `fill` requires it —
-/// for self-intersection (spec §8.3): every pair of its own underlying
-/// segments, excluding each adjacent pair's shared joint (and the
-/// wraparound pair, first against last, which shares the start point).
+/// for self-intersection (spec §8.3), reporting each crossing in spec
+/// §5.9 path-query parameters.
 pub fn check_self_intersection(
     skeleton: &Skeleton,
     tolerance: f64,
 ) -> Result<(), SelfIntersection> {
     let pieces: Vec<PathSeg> = skeleton::segments(&skeleton.path);
-    let n = pieces.len();
-    let mut crossings = Vec::new();
-
-    for i in 0..n {
-        for j in (i + 1)..n {
-            let shared_joint = if j == i + 1 {
-                Some((1.0, 0.0))
-            } else if i == 0 && j == n - 1 {
-                Some((0.0, 1.0))
-            } else {
-                None
-            };
-
-            for hit in intersect::segment_intersections(pieces[i], pieces[j], tolerance) {
-                if let Some((at_a, at_b)) = shared_joint
-                    && (hit.t_a - at_a).abs() < ENDPOINT_EPSILON
-                    && (hit.t_b - at_b).abs() < ENDPOINT_EPSILON
-                {
-                    continue;
-                }
-                crossings.push((
-                    skeleton::piece_to_authored_param(skeleton, i, hit.t_a),
-                    skeleton::piece_to_authored_param(skeleton, j, hit.t_b),
-                ));
-            }
-        }
-    }
+    let crossings: Vec<(f64, f64)> = contour_self_intersections(&pieces, tolerance)
+        .into_iter()
+        .map(|hit| {
+            (
+                skeleton::piece_to_authored_param(skeleton, hit.a, hit.t_a),
+                skeleton::piece_to_authored_param(skeleton, hit.b, hit.t_b),
+            )
+        })
+        .collect();
 
     if crossings.is_empty() {
         Ok(())
     } else {
         Err(SelfIntersection { crossings })
     }
+}
+
+/// One crossing between two pieces `a < b` of a closed contour, as each
+/// piece's index and its own local `t`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PieceCrossing {
+    pub a: usize,
+    pub t_a: f64,
+    pub b: usize,
+    pub t_b: f64,
+}
+
+/// Every crossing among the pieces of one closed contour (spec §8.3):
+/// every pair, excluding each adjacent pair's shared joint — including
+/// the wraparound pair, last against first, which shares the start
+/// point. Shared by the realized-skeleton check above and `mg-font`'s
+/// re-check of a filled contour after quantization (spec §10.4).
+pub fn contour_self_intersections(pieces: &[PathSeg], tolerance: f64) -> Vec<PieceCrossing> {
+    let n = pieces.len();
+    let mut crossings = Vec::new();
+
+    for i in 0..n {
+        for j in (i + 1)..n {
+            // Each entry is `(t on piece i, t on piece j)` at a joint the
+            // two share. A two-piece contour shares both.
+            let mut shared_joints: Vec<(f64, f64)> = Vec::new();
+            if j == i + 1 {
+                shared_joints.push((1.0, 0.0));
+            }
+            if i == 0 && j == n - 1 {
+                shared_joints.push((0.0, 1.0));
+            }
+
+            for hit in intersect::segment_intersections(pieces[i], pieces[j], tolerance) {
+                let at_joint = shared_joints.iter().any(|&(at_a, at_b)| {
+                    (hit.t_a - at_a).abs() < ENDPOINT_EPSILON
+                        && (hit.t_b - at_b).abs() < ENDPOINT_EPSILON
+                });
+                if !at_joint {
+                    crossings.push(PieceCrossing {
+                        a: i,
+                        t_a: hit.t_a,
+                        b: j,
+                        t_b: hit.t_b,
+                    });
+                }
+            }
+        }
+    }
+
+    crossings
 }
 
 #[cfg(test)]
