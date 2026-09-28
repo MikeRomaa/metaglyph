@@ -7,6 +7,7 @@ members = [
     "crates/mg-geom",
     "crates/mg-eval",
     "crates/mg-font",
+    "crates/mg-lsp",
     "crates/mg-cli",
 ]
 exclude = ["editors/zed"]
@@ -23,13 +24,17 @@ mg-hir = { path = "crates/mg-hir" }
 mg-geom = { path = "crates/mg-geom" }
 mg-eval = { path = "crates/mg-eval" }
 mg-font = { path = "crates/mg-font" }
+mg-lsp = { path = "crates/mg-lsp" }
 
 clap = { version = "4.6.7", features = ["derive"] }
 codespan-reporting = "0.13.1"
 indexmap = "2.14.2"
 kurbo = "0.13.1"
+lsp-server = "0.10.0"
+lsp-types = "0.97.0"
 read-fonts = "0.44.0"
 rowan = "0.17.0"
+serde_json = "1"
 skrifa = "0.47.0"
 write-fonts = "0.53.0"
 

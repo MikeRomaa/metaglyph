@@ -16,9 +16,12 @@ mg-hir = { workspace = true }
 mg-geom = { workspace = true }
 mg-eval = { workspace = true }
 mg-font = { workspace = true }
+mg-lsp = { workspace = true }
 clap = { workspace = true }
 indexmap = { workspace = true }
 kurbo = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
+lsp-server = { workspace = true }
+serde_json = { workspace = true }

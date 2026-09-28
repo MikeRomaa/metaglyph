@@ -58,6 +58,8 @@ enum Command {
         #[arg(long)]
         prepared: bool,
     },
+    /// Run the language server on stdin/stdout.
+    Lsp,
     /// Print the evaluation dependency graph.
     DumpGraph {
         files: Vec<PathBuf>,
@@ -82,6 +84,13 @@ fn main() -> ExitCode {
             prepared,
         } => cmd_svg(&files, &glyph, instance.as_deref(), prepared),
         Command::DumpGraph { files, instance } => cmd_dump_graph(&files, instance.as_deref()),
+        Command::Lsp => match mg_lsp::run_stdio() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("error: language server: {err}");
+                ExitCode::FAILURE
+            }
+        },
     }
 }
 
