@@ -1,0 +1,18 @@
+id = "metaglyph"
+name = "Metaglyph"
+version = "0.1.0"
+schema_version = 1
+authors = ["Michael Romashov"]
+description = "Syntax highlighting and language server support for Metaglyph (.mg) font sources."
+repository = "https://github.com/mikeromashov/metaglyph"
+
+# Dev: file:// avoids pushing a commit for every grammar change (plan 4, Z0).
+# Swap to the GitHub repository + a pinned rev before publishing (plan 4, R).
+[grammars.metaglyph]
+repository = "file:///C:/Users/miker/Documents/Projects/metaglyph"
+rev = "main"
+path = "tree-sitter-metaglyph"
+
+[language_servers.metaglyph]
+name = "Metaglyph Language Server"
+languages = ["Metaglyph"]

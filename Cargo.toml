@@ -9,6 +9,7 @@ members = [
     "crates/mg-font",
     "crates/mg-cli",
 ]
+exclude = ["editors/zed"]
 
 [workspace.package]
 edition = "2024"

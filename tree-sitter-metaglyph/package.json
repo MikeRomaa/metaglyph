@@ -1,0 +1,10 @@
+{
+  "name": "",
+  "version": "",
+  "devDependencies": {
+    "tree-sitter-cli": "0.27.0"
+  },
+  "allowScripts": {
+    "tree-sitter-cli@0.27.0": true
+  }
+}
