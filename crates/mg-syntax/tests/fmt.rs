@@ -1,4 +1,4 @@
-use mg_syntax::fmt::format;
+use mg_syntax::fmt::{FormatError, format, format_checked};
 
 fn assert_idempotent(source: &str) {
     let once = format(source);
@@ -37,9 +37,9 @@ fn collapses_multiple_blank_lines_to_one() {
     assert_eq!(out, "let x = 1;\n\nlet y = 2;\n");
 }
 
-/// Bodies always break onto multiple lines when non-empty: the formatter
-/// regenerates layout from structure rather than preserving whether the
-/// source kept a short body on one line.
+/// Bodies always break onto multiple lines when non-empty, indented four
+/// spaces per level: the formatter regenerates layout from structure
+/// rather than preserving whether the source kept a short body on one line.
 #[test]
 fn reindents_nested_glyph_body() {
     let out = format(
@@ -47,7 +47,7 @@ fn reindents_nested_glyph_body() {
     );
     assert_eq!(
         out,
-        "glyph A (advance: 1) {\n  let w = 1;\n  path p (stroke: 1) {\n    start (at: w)\n    line (to: w)\n  }\n}\n"
+        "glyph A (advance: 1) {\n    let w = 1;\n    path p (stroke: 1) {\n        start (at: w)\n        line (to: w)\n    }\n}\n"
     );
 }
 
@@ -58,6 +58,32 @@ fn reindents_nested_glyph_body() {
 fn preserves_blank_line_after_leading_comment_on_first_item() {
     let out = format("// header\n\nfont (name: \"x\", em: 1000)\n");
     assert_eq!(out, "// header\n\nfont (name: \"x\", em: 1000)\n");
+}
+
+#[test]
+fn checked_formatting_matches_plain_formatting_when_nothing_is_lost() {
+    let sample = include_str!("../../../samples/metaglyph-sans.mg");
+    assert_eq!(format_checked(sample), Ok(format(sample)));
+    let messy = "let x=1; // note\n\n\n// lead\nlet y = x*2;\n";
+    assert_eq!(format_checked(messy), Ok(format(messy)));
+}
+
+#[test]
+fn checked_formatting_declines_a_file_with_syntax_errors() {
+    assert_eq!(
+        format_checked("glyph A (advance: 1 {}\n"),
+        Err(FormatError::SyntaxErrors)
+    );
+}
+
+/// The module's known gap: a comment between two config fields has no
+/// place in the regenerated one-line config. The checked formatter must
+/// refuse rather than drop it.
+#[test]
+fn checked_formatting_declines_rather_than_drop_a_comment() {
+    let source = "param stem (\n  default: 100, // the regular weight\n  range: 20..260,\n)\n";
+    assert!(!format(source).contains("regular weight"));
+    assert_eq!(format_checked(source), Err(FormatError::WouldLoseText));
 }
 
 #[test]

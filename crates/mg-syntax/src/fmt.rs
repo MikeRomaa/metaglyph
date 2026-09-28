@@ -26,6 +26,60 @@ pub fn format(source: &str) -> String {
     out
 }
 
+/// Why [`format_checked`] declined to format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FormatError {
+    /// The source has syntax errors; formatting around `ERROR` nodes is
+    /// partial-text tolerance, which this formatter does not attempt.
+    SyntaxErrors,
+    /// The output would not keep every token and comment of the source —
+    /// for instance a comment between two config fields, which
+    /// [`format`] cannot yet place (see this module's known gap).
+    WouldLoseText,
+}
+
+/// [`format`], for callers that apply the result unattended (an editor's
+/// format-on-save): it declines rather than return output that drops or
+/// changes anything but whitespace. Checked by reparsing the output and
+/// comparing its significant tokens and its comments with the source's.
+pub fn format_checked(source: &str) -> Result<String, FormatError> {
+    let parsed = crate::parse(source);
+    if parsed
+        .diagnostics
+        .iter()
+        .any(|d| d.severity == mg_diag::Severity::Error)
+    {
+        return Err(FormatError::SyntaxErrors);
+    }
+    let output = format(source);
+    // Everything but whitespace and a trailing comma (one right before a
+    // closing bracket), which the formatter normalizes away.
+    let text_of = |root: &SyntaxNode| -> Vec<(SyntaxKind, String)> {
+        let tokens: Vec<(SyntaxKind, String)> = root
+            .descendants_with_tokens()
+            .filter_map(|e| e.into_token())
+            .filter(|t| t.kind() != WHITESPACE)
+            .map(|t| (t.kind(), t.text().trim_end().to_string()))
+            .collect();
+        let significant_after = |i: usize| tokens[i + 1..].iter().find(|(k, _)| *k != COMMENT);
+        tokens
+            .iter()
+            .enumerate()
+            .filter(|&(i, (kind, _))| {
+                *kind != COMMA
+                    || !significant_after(i)
+                        .is_some_and(|(next, _)| matches!(next, R_PAREN | R_BRACKET | R_BRACE))
+            })
+            .map(|(_, token)| token.clone())
+            .collect()
+    };
+    if text_of(&parsed.syntax()) == text_of(&crate::parse(&output).syntax()) {
+        Ok(output)
+    } else {
+        Err(FormatError::WouldLoseText)
+    }
+}
+
 fn push_indent(out: &mut String, indent: usize) {
     for _ in 0..indent {
         out.push_str("    ");

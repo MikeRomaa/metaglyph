@@ -113,6 +113,14 @@ impl Client {
             .expect("the server answers")
     }
 
+    /// Removes and returns the first buffered notification with `method`
+    /// — one that arrived while a request was waiting for its response.
+    pub fn take_notification(&self, method: &str) -> Option<Notification> {
+        let mut buffered = self.notifications.borrow_mut();
+        let index = buffered.iter().position(|n| n.method == method)?;
+        buffered.remove(index)
+    }
+
     /// The next `publishDiagnostics`, buffered or new.
     pub fn diagnostics(&self) -> PublishDiagnosticsParams {
         let notification = match self.notifications.borrow_mut().pop_front() {

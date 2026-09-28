@@ -15,16 +15,16 @@ use lsp_types::notification::{
     Notification as NotificationTrait, PublishDiagnostics,
 };
 use lsp_types::request::{
-    Completion, DocumentSymbolRequest, GotoDefinition, HoverRequest, References,
+    Completion, DocumentSymbolRequest, Formatting, GotoDefinition, HoverRequest, References,
     Request as RequestTrait,
 };
 use lsp_types::{
-    CompletionOptions, CompletionParams, CompletionResponse, DocumentSymbolParams,
-    DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents,
-    HoverParams, HoverProviderCapability, InitializeParams, InitializeResult, Location,
-    MarkupContent, MarkupKind, OneOf, Position, PositionEncodingKind, PublishDiagnosticsParams,
-    ReferenceParams, ServerCapabilities, ServerInfo, TextDocumentSyncCapability,
-    TextDocumentSyncKind, Uri,
+    CompletionOptions, CompletionParams, CompletionResponse, DocumentFormattingParams,
+    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
+    Hover, HoverContents, HoverParams, HoverProviderCapability, InitializeParams, InitializeResult,
+    Location, MarkupContent, MarkupKind, MessageType, OneOf, Position, PositionEncodingKind,
+    PublishDiagnosticsParams, ReferenceParams, ServerCapabilities, ServerInfo, ShowMessageParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri,
 };
 use mg_syntax::ast::AstNode;
 use mg_syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
@@ -219,6 +219,7 @@ pub fn main_loop(connection: Connection) -> Result<(), Error> {
             definition_provider: Some(OneOf::Left(true)),
             references_provider: Some(OneOf::Left(true)),
             hover_provider: Some(HoverProviderCapability::Simple(true)),
+            document_formatting_provider: Some(OneOf::Left(true)),
             completion_provider: Some(CompletionOptions {
                 trigger_characters: Some(vec![".".into(), "\"".into()]),
                 ..Default::default()
@@ -335,6 +336,8 @@ impl Server {
                 let at = p.text_document_position_params;
                 json(self.hover(&at.text_document.uri, at.position))
             }),
+            Formatting::METHOD => serde_json::from_value(params)
+                .map(|p: DocumentFormattingParams| json(self.format(&p.text_document.uri))),
             _ => {
                 let response = Response::new_err(
                     id,
@@ -368,6 +371,44 @@ impl Server {
             &document.index,
             &ctx,
         )))
+    }
+
+    /// `textDocument/formatting` (plan 4, L4): one whole-document edit
+    /// from `mg fmt`, or none. The client's tab size and spacing options
+    /// are ignored — `mg fmt` is canonical. No edits for a file with
+    /// syntax errors, and none — with a message saying why — when
+    /// formatting would lose a comment (see
+    /// `mg_syntax::fmt::format_checked`): format-on-save must never
+    /// delete text.
+    fn format(&self, uri: &Uri) -> Option<Vec<TextEdit>> {
+        use mg_syntax::fmt::{FormatError, format_checked};
+
+        let document = self.documents.get(uri.as_str())?;
+        match format_checked(&document.text) {
+            Ok(formatted) if formatted == document.text => Some(Vec::new()),
+            Ok(formatted) => {
+                let whole = document.range(&(0..document.text.len()), self.encoding);
+                Some(vec![TextEdit::new(whole, formatted)])
+            }
+            Err(FormatError::SyntaxErrors) => Some(Vec::new()),
+            Err(FormatError::WouldLoseText) => {
+                let params = ShowMessageParams {
+                    typ: MessageType::WARNING,
+                    message: "mg fmt: not formatting, because the result would change more \
+                              than whitespace — typically a comment inside a `( … )` config, \
+                              which the formatter can't place yet. Move it above the \
+                              declaration."
+                        .to_string(),
+                };
+                let notification = Notification::new(
+                    <lsp_types::notification::ShowMessage as NotificationTrait>::METHOD.to_string(),
+                    params,
+                );
+                // Losing the message is harmless; the edit list is still empty.
+                let _ = self.connection.sender.send(notification.into());
+                Some(Vec::new())
+            }
+        }
     }
 
     fn completion(&self, uri: &Uri, position: Position) -> Option<CompletionResponse> {

@@ -61,7 +61,7 @@ Estimates assume one developer who knows the spec. **Z-milestones need only the 
 - `extension.toml`: `id = "metaglyph"`, name, version, `schema_version = 1`, authors, description, repository, and a license file (the Zed extension registry requires one).
 - `languages/metaglyph/config.toml`:
   - `name = "Metaglyph"`, `grammar = "metaglyph"`, `path_suffixes = ["mg"]`
-  - `line_comments = ["// "]`, `tab_size = 2` (the Appendix A convention)
+  - `line_comments = ["// "]`, `tab_size = 4` (the Appendix A convention, and what `mg fmt` writes)
   - bracket pairs `()` `{}` `[]` `""` auto-closing; `''` auto-closing only outside strings and comments
 - Install via **zed: install dev extension**; confirm `.mg` files get the language in the status bar.
 - Pin the `zed_extension_api` version and record it. Check the docs for that version's trait signatures before Z3.

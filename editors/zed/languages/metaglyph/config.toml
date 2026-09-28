@@ -2,7 +2,7 @@ name = "Metaglyph"
 grammar = "metaglyph"
 path_suffixes = ["mg"]
 line_comments = ["// "]
-tab_size = 2
+tab_size = 4
 
 brackets = [
   { start = "(", end = ")", close = true, newline = true },

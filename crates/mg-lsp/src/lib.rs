@@ -7,7 +7,7 @@
 //! `mg check` reports, document symbols, go-to-definition, and references
 //! (L1); completion and static hover (L2); and evaluation off the
 //! keystroke path, with per-instance diagnostics and evaluated values in
-//! hover (L3).
+//! hover (L3); and whole-document formatting by `mg fmt` (L4).
 
 pub mod completion;
 pub mod diagnostics;
