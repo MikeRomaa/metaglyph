@@ -857,8 +857,8 @@ fn parse_join(s: &str) -> mg_geom::stroke::JoinKind {
 }
 
 /// Where a stroke-stage error's diagnostic should point: a curvature
-/// violation names its own segment (spec §7.2: "Report... the segment,
-/// the parameter interval"), everything else the whole path.
+/// violation or an unresolved inner corner names its own segment (spec
+/// §7.2/§7.4), everything else the whole path.
 fn stroke_error_to_eval(
     path: &mg_hir::model::PathDecl,
     err: mg_geom::stroke::StrokeError,
@@ -881,6 +881,14 @@ fn stroke_error_to_eval(
                     segment_index: violation.segment_index,
                     local_t: violation.local_t,
                 },
+            )
+        }
+        mg_geom::stroke::StrokeError::InnerCornerNoCrossing { segment_index } => {
+            // `+ 1` skips `start`, matching `corners()`'s own indexing.
+            let segment = &path.segments[segment_index + 1];
+            (
+                mg_syntax::trimmed_range(&segment.syntax),
+                EvalError::InnerCornerNoCrossing { segment_index },
             )
         }
     }
@@ -998,6 +1006,7 @@ fn diagnostic_for(span: Range<usize>, err: EvalError) -> Diagnostic {
         EvalError::NonPositiveStroke => codes::NON_POSITIVE_STROKE,
         EvalError::CurvatureLimitExceeded { .. } => codes::CURVATURE_LIMIT_EXCEEDED,
         EvalError::SelfIntersectingFill { .. } => codes::SELF_INTERSECTING_FILL,
+        EvalError::InnerCornerNoCrossing { .. } => codes::INNER_CORNER_NO_CROSSING,
     };
     let diagnostic = Diagnostic::error(code, err.to_string(), Label::new(span, "here"));
     match err {

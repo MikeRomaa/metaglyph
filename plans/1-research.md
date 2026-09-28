@@ -799,7 +799,7 @@ Offset generation walks the path once producing the left boundary, once producin
 
 **Zero intersections, zero region representation, no sweep line, no winding classification.** Caps and joins must therefore live *inside* the offset generator. This is not merely an optimization: with no region operators in the language (§1.1), there is no region layer to build them on top of.
 
-Joins are the same shape of operation at an interior point: `bevel` is one segment, `round` is one arc, and `miter` is the **only treatment anywhere in the cap/join system needing an intersection** — a single curve–curve solve between two *known adjacent* boundary pieces, plus the limit check with fallback to `bevel`.
+Joins are the same shape of operation at an interior point: `bevel` is one segment, `round` is one arc, and `miter` needs a single curve–curve solve between two *known adjacent* boundary pieces, plus the limit check with fallback to `bevel`. The **inner side of every corner** needs one more solve of the same kind: the two inner boundary pieces are cut at their crossing nearest the corner and meet there (spec §7.4). These are the only intersections in the cap/join system. Both are local, between two known pieces, never a search.
 
 **Degenerate cases to specify:**
 
@@ -829,7 +829,9 @@ With `trim`, `union`, and `difference` gone from the language (§1.1), four thin
 
 A stroke's offset folds back when `stroke` exceeds twice the curvature radius on the inner side (§8.2). The choice was between resolving that loop in this stage and refusing it.
 
-**A correction to an earlier claim.** Curvature is not the only way a stroke outline overlaps itself. The inner side of every corner, a skeleton that crosses itself, and two parts of one path passing within `stroke` of each other all produce self-overlapping outlines regardless of curvature. Those are benign: filled with nonzero winding, the outline renders exactly the stroke's ink, so the spec ships them as-is (spec §7.4). The curvature error is therefore a design judgement that a folded curve is a broken letterform, not a precondition for correct rendering.
+**A correction to an earlier claim.** Curvature is not the only way a stroke outline overlaps itself. A skeleton that crosses itself, and two non-adjacent parts of one path passing within `stroke` of each other, both produce self-overlapping outlines regardless of curvature. Those are benign: filled with nonzero winding, the outline renders exactly the stroke's ink, so the spec ships them as-is (spec §7.4). The curvature error is therefore a design judgement that a folded curve is a broken letterform, not a precondition for correct rendering.
+
+**Inner corners are the exception, and are resolved.** The inner side of a corner used to be in the benign list too. It is now trimmed: the two inner boundary pieces are cut at their crossing nearest the corner, so each path is one clean outline with no loop inside its turns. This is cheap because it is local, one curve–curve solve between two known adjacent pieces, like `miter` (§8.3). It is not overlap removal. When the crossing falls outside the two adjacent segments (a sharp turn beside a segment too short for its stroke), or does not exist (an exact 180° reversal), it is an error rather than a search across segments, on the same judgement as the curvature error: a stroke that swallows a whole segment is a broken letterform.
 
 The alternative is to **detect the condition analytically before generating any geometry and make it an error.** The check is cheap — compare `stroke/2` against the curvature radius along the path — and it needs no intersection code at all.
 

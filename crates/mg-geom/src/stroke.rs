@@ -8,12 +8,19 @@
 //!   in place") — every corner is `Join::Bevel`'s straight chord unless
 //!   overwritten, so a path stays one seamless outline with no overlaid
 //!   join shapes,
+//! - the inner-corner trim (spec §7.4): unlike the outer side, kurbo
+//!   never joins the inner side at all — it just runs each adjacent
+//!   segment's own inner offset past the corner and connects them with a
+//!   raw chord, which is exactly the self-overlapping "spike" spec §7.4
+//!   now forbids. This cuts both offsets at their own crossing nearest
+//!   the corner instead, so the inner side meets at one point,
 //! - assigning each output contour its role (spec §8.1), which kurbo's
 //!   subpath emission order does not track.
 
-use kurbo::{BezPath, Line, ParamCurve, PathEl, Point, Vec2};
+use kurbo::{BezPath, Line, ParamCurve, PathEl, PathSeg, Point, Vec2};
 
 use crate::curvature::{self, CurvatureViolation};
+use crate::intersect;
 use crate::skeleton::{self, Skeleton, Sweep};
 use crate::winding::{self, ContourRole};
 
@@ -63,6 +70,14 @@ pub enum StrokeError {
     /// `stroke` is not greater than zero (spec §7.3).
     NonPositiveStroke,
     Curvature(CurvatureViolation),
+    /// A corner's inner offsets don't cross within its two adjacent
+    /// segments (spec §7.4): a sharp turn beside a segment too short for
+    /// the stroke. `segment_index` is the drawn segment the corner ends.
+    /// A 180° reversal also has no crossing, but is a legitimate shape,
+    /// not this error.
+    InnerCornerNoCrossing {
+        segment_index: usize,
+    },
 }
 
 /// Strokes `skeleton` per `spec` (spec §6.4, §7), returning every output
@@ -122,6 +137,7 @@ pub fn stroke_path(
             .find(|&&(index, _)| index == corner.segment_index)
             .map_or(spec.default_join, |&(_, join)| join);
         splice_join(&mut result, &corner, join, r, offset_tolerance);
+        trim_inner_corner(&mut result, &corner, r, offset_tolerance)?;
     }
 
     Ok(result)
@@ -220,6 +236,12 @@ fn outer_offset(t: Vec2, turn: f64) -> Vec2 {
     } else {
         left_normal
     }
+}
+
+/// The inward unit normal at a tangent `t` — the mirror image of
+/// [`outer_offset`], on the concave side of the turn (spec §7.4).
+fn inner_offset(t: Vec2, turn: f64) -> Vec2 {
+    -outer_offset(t, turn)
 }
 
 /// Rewrites `corner`'s join in place (spec plan M4's "join splicing"):
@@ -355,11 +377,155 @@ fn splice_chord(
     true
 }
 
+/// Trims `corner`'s inner offsets to meet at one point (spec §7.4): finds
+/// the raw chord kurbo drew straight across from the incoming segment's
+/// inner offset to the outgoing segment's, cuts each of those two
+/// *adjacent* pieces at their own crossing nearest the corner, and drops
+/// the chord — the two trimmed pieces now meet exactly where they cross.
+///
+/// Like [`splice_join`], a corner whose tangents only differ at
+/// floating-point noise may have no raw chord to find at all (kurbo
+/// already treated it as continuous); that's not an error, there's
+/// nothing to trim. Tangents exactly opposite (a 180° reversal — the only
+/// way `corner`'s own cross product can be zero here, since `corners()`
+/// already excludes the same-direction, non-corner case) leave the two
+/// inner offsets exactly parallel: a stroke doubling straight back on
+/// itself is a legitimate shape, not an error, so that's left as-is too,
+/// checked before ever searching for a crossing. It *is* an error — spec
+/// §7.4's — when a crossing exists but falls outside one of the two
+/// adjacent segments' own span: a sharp (non-reversing) turn beside a
+/// segment too short for the stroke to fit inside.
+fn trim_inner_corner(
+    contours: &mut [(BezPath, ContourRole)],
+    corner: &Corner,
+    r: f64,
+    tolerance: f64,
+) -> Result<(), StrokeError> {
+    let turn = corner.incoming.cross(corner.outgoing);
+    if turn.abs() < 1e-9 {
+        return Ok(());
+    }
+    let p_a = corner.vertex + inner_offset(corner.incoming, turn) * r;
+    let p_b = corner.vertex + inner_offset(corner.outgoing, turn) * r;
+
+    for (contour, _) in contours.iter_mut() {
+        match try_trim_inner_chord(contour, p_a, p_b, corner.vertex, tolerance) {
+            InnerTrim::NotFound => continue,
+            InnerTrim::Trimmed => return Ok(()),
+            InnerTrim::NoCrossing => {
+                return Err(StrokeError::InnerCornerNoCrossing {
+                    segment_index: corner.segment_index,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+enum InnerTrim {
+    /// No raw chord between `p_a` and `p_b` in this contour at all.
+    NotFound,
+    /// Found the chord, and the two adjacent pieces cross within their
+    /// own span — trimmed and spliced in.
+    Trimmed,
+    /// Found the chord, but the two adjacent pieces never cross within
+    /// their own span (spec §7.4 error).
+    NoCrossing,
+}
+
+/// Locates the raw inner chord between `p_a` and `p_b` in `contour`, and
+/// — if found — the underlying pieces immediately before and after it
+/// (wrapping around a closed contour's own seam when the chord sits at
+/// either end of the element list). Those two pieces are exactly the
+/// incoming and outgoing segments' own inner offsets, without kurbo's
+/// unwanted straight connector between them.
+fn try_trim_inner_chord(
+    contour: &mut BezPath,
+    p_a: Point,
+    p_b: Point,
+    vertex: Point,
+    tolerance: f64,
+) -> InnerTrim {
+    let segs: Vec<PathSeg> = contour.segments().collect();
+    let n = segs.len();
+    if n < 3 {
+        return InnerTrim::NotFound;
+    }
+
+    let Some(chord_index) = (0..n).find(|&i| match segs[i] {
+        PathSeg::Line(l) => {
+            (l.p0.distance(p_a) <= tolerance && l.p1.distance(p_b) <= tolerance)
+                || (l.p0.distance(p_b) <= tolerance && l.p1.distance(p_a) <= tolerance)
+        }
+        _ => false,
+    }) else {
+        return InnerTrim::NotFound;
+    };
+
+    let prev_index = (chord_index + n - 1) % n;
+    let next_index = (chord_index + 1) % n;
+    let prev = segs[prev_index];
+    let next = segs[next_index];
+
+    let Some((t_prev, t_next)) = nearest_crossing(prev, next, vertex, tolerance) else {
+        return InnerTrim::NoCrossing;
+    };
+    let trimmed_prev = prev.subsegment(0.0..t_prev);
+    let trimmed_next = next.subsegment(t_next..1.0);
+
+    let mut new_segs = Vec::with_capacity(n - 1);
+    if prev_index < next_index {
+        // The chord sits strictly between two other pieces (the common
+        // case): keep everything before `prev`, splice in the trimmed
+        // pair, keep everything after `next`.
+        new_segs.extend_from_slice(&segs[..prev_index]);
+        new_segs.push(trimmed_prev);
+        new_segs.push(trimmed_next);
+        new_segs.extend_from_slice(&segs[(next_index + 1)..]);
+    } else {
+        // The chord sits at one end of the element list, wrapping around
+        // a closed contour's own seam (`chord_index` is 0 or `n - 1`):
+        // rotate so the trimmed pair sits at the new seam instead.
+        new_segs.push(trimmed_next);
+        new_segs.extend_from_slice(&segs[(next_index + 1)..prev_index]);
+        new_segs.push(trimmed_prev);
+    }
+
+    *contour = BezPath::from_path_segments(new_segs.into_iter());
+    InnerTrim::Trimmed
+}
+
+/// Among `prev` and `next`'s crossings (line–line directly, curves via
+/// [`intersect::segment_intersections`]) that actually lie within both
+/// pieces' own `[0, 1]` span, the one closest to `vertex` — spec §7.4's
+/// "crossing nearest the corner". `None` when no crossing lies within
+/// both spans at all (spec §7.4's error case: the true crossing needs
+/// more of a piece than it has).
+fn nearest_crossing(
+    prev: PathSeg,
+    next: PathSeg,
+    vertex: Point,
+    tolerance: f64,
+) -> Option<(f64, f64)> {
+    const SPAN_EPSILON: f64 = 1e-6;
+    intersect::segment_intersections(prev, next, tolerance)
+        .into_iter()
+        .filter(|c| {
+            (-SPAN_EPSILON..=1.0 + SPAN_EPSILON).contains(&c.t_a)
+                && (-SPAN_EPSILON..=1.0 + SPAN_EPSILON).contains(&c.t_b)
+        })
+        .map(|c| (c.t_a.clamp(0.0, 1.0), c.t_b.clamp(0.0, 1.0)))
+        .min_by(|&(t_a1, _), &(t_a2, _)| {
+            let d1 = prev.eval(t_a1).distance(vertex);
+            let d2 = prev.eval(t_a2).distance(vertex);
+            d1.partial_cmp(&d2).expect("distances are finite")
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::skeleton::{RawSegment, RawStart};
-    use kurbo::PathSeg;
 
     const NO_ARC_TOLERANCE: f64 = 1e-9;
     const OFFSET_TOLERANCE: f64 = 0.05;
@@ -420,6 +586,48 @@ mod tests {
         let roles: Vec<ContourRole> = contours.iter().map(|(_, role)| role).copied().collect();
         assert!(roles.contains(&ContourRole::Outer));
         assert!(roles.contains(&ContourRole::Counter));
+    }
+
+    #[test]
+    fn inner_corner_trim_handles_the_closed_paths_wraparound_seam() {
+        // A closed rectangle: 3 explicit lines plus the auto-appended
+        // closing line, so 4 corners total, one of them (last segment
+        // back to the first) the wraparound seam that sits right at the
+        // element list's own boundary — exactly the case
+        // `try_trim_inner_chord`'s rotation logic exists for.
+        let start = RawStart {
+            at: Point::new(0.0, 0.0),
+        };
+        let segs = [
+            RawSegment::Line {
+                to: Point::new(10.0, 0.0),
+            },
+            RawSegment::Line {
+                to: Point::new(10.0, 10.0),
+            },
+            RawSegment::Line {
+                to: Point::new(0.0, 10.0),
+            },
+        ];
+        let skeleton = skeleton::realize(&start, &segs, true, NO_ARC_TOLERANCE).unwrap();
+        let spec = default_spec(2.0);
+        let contours = stroke_path(&skeleton, true, &spec, OFFSET_TOLERANCE).unwrap();
+
+        // The counter (inner) contour of a stroked rectangle is itself a
+        // smaller rectangle: exactly 4 line pieces if every corner
+        // (including the wraparound one) trimmed to a single point, one
+        // extra per untrimmed corner otherwise.
+        let counter = contours
+            .iter()
+            .find(|(_, role)| *role == ContourRole::Counter)
+            .map(|(path, _)| path)
+            .expect("a closed stroke has a counter contour");
+        let segs = skeleton::segments(counter);
+        assert_eq!(
+            segs.len(),
+            4,
+            "expected a clean 4-sided inner rectangle: {segs:#?}"
+        );
     }
 
     #[test]
@@ -513,6 +721,87 @@ mod tests {
                 if l.p0.distance(apex) < 1e-6 || l.p1.distance(apex) < 1e-6)),
             "expected the miter apex {apex:?} among {segs:#?}"
         );
+    }
+
+    #[test]
+    fn inner_corner_trims_to_the_exact_crossing_point() {
+        // `right_angle_skeleton`'s corner: segment 1's inner offset is
+        // the line y=1, segment 2's is x=9 (worked out by hand from
+        // `inner_offset`), crossing at (9, 1) — short of either raw
+        // endpoint (10, 1) and (9, 0) kurbo's own straight connector
+        // would otherwise run to.
+        let skeleton = right_angle_skeleton();
+        let spec = default_spec(2.0); // r = 1
+        let contours = stroke_path(&skeleton, false, &spec, OFFSET_TOLERANCE).unwrap();
+        let segs = skeleton::segments(&contours[0].0);
+
+        let crossing = Point::new(9.0, 1.0);
+        assert!(
+            segs.iter().any(|seg| matches!(seg, PathSeg::Line(l)
+                if l.p0.distance(crossing) < 1e-6 || l.p1.distance(crossing) < 1e-6)),
+            "expected the trimmed inner corner to meet at {crossing:?} among {segs:#?}"
+        );
+
+        // The untrimmed endpoints kurbo's raw connector would have used
+        // must not survive as actual path points.
+        let raw_a = Point::new(10.0, 1.0);
+        let raw_b = Point::new(9.0, 0.0);
+        assert!(
+            !segs.iter().any(|seg| matches!(seg, PathSeg::Line(l)
+                if l.p0.distance(raw_a) < 1e-9 && l.p1.distance(raw_b) < 1e-9)),
+            "the raw, untrimmed inner chord must not survive: {segs:#?}"
+        );
+    }
+
+    #[test]
+    fn inner_corner_with_no_crossing_is_an_error() {
+        // A very sharp corner where the second segment is far too short
+        // for the stroke: its inner offset can't possibly reach back to
+        // cross the first segment's inner offset within its own span.
+        let start = RawStart {
+            at: Point::new(0.0, 0.0),
+        };
+        let segs = [
+            RawSegment::Line {
+                to: Point::new(10.0, 0.0),
+            },
+            // A near-reversal (turning back the way it came) only ~3
+            // units long, against a stroke radius of 10: nowhere near
+            // enough segment for its own inner offset to reach back and
+            // cross the first segment's.
+            RawSegment::Line {
+                to: Point::new(7.0, 0.5),
+            },
+        ];
+        let skeleton = skeleton::realize(&start, &segs, false, NO_ARC_TOLERANCE).unwrap();
+        let spec = default_spec(20.0); // r = 10, well over the second segment's length
+        let result = stroke_path(&skeleton, false, &spec, OFFSET_TOLERANCE);
+        assert_eq!(
+            result,
+            Err(StrokeError::InnerCornerNoCrossing { segment_index: 0 })
+        );
+    }
+
+    #[test]
+    fn an_exact_180_degree_reversal_is_allowed_not_an_error() {
+        // A line doubling straight back on itself: the two inner offsets
+        // are exactly parallel, so there's no crossing to trim to at
+        // all — but that's a legitimate shape, not spec §7.4's error.
+        let start = RawStart {
+            at: Point::new(0.0, 0.0),
+        };
+        let segs = [
+            RawSegment::Line {
+                to: Point::new(10.0, 0.0),
+            },
+            RawSegment::Line {
+                to: Point::new(0.0, 0.0),
+            },
+        ];
+        let skeleton = skeleton::realize(&start, &segs, false, NO_ARC_TOLERANCE).unwrap();
+        let spec = default_spec(2.0);
+        // Must succeed, not return `InnerCornerNoCrossing`.
+        stroke_path(&skeleton, false, &spec, OFFSET_TOLERANCE).unwrap();
     }
 
     #[test]

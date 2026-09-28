@@ -595,6 +595,8 @@ Joins apply at every corner of the skeleton (a vertex where the incoming and out
 
 The miter limit is `MITER_LIMIT` = 4 (§14). `joinAt` overrides `joins` at the named segment's endpoint.
 
+On the inner side of a corner, the join style has no effect. The incoming and outgoing offset boundaries are each cut at their crossing nearest the corner and meet at that single point (§7.4).
+
 **Angled terminals** come from the end tangents (§6.3). The start cap is perpendicular to the first segment's departure tangent; the end cap is perpendicular to the final segment's arrival tangent. On a curve, those are set by the first and last control points:
 
 ```
@@ -678,9 +680,15 @@ This is an **error**, checked before offset generation. Report the glyph, the pa
 
 An open path whose final point coincides with its start point is valid; it is capped at both ends.
 
-### 7.4 Self-overlapping stroke outlines
+### 7.4 Inner corners and self-overlap
 
-A stroke outline may overlap itself: on the inner side of every corner, where the skeleton crosses itself, and where two parts of one path pass within `stroke` of each other. This is valid output. Filled with the nonzero rule, the outline renders exactly the stroke's ink. It is neither an error nor resolved.
+**Inner corners are resolved.** At every corner, including the closing corner of a closed path, the inner offset boundaries of the two adjacent segments are cut at their crossing nearest the corner and joined there (§6.4). The outline does not loop past itself on the inner side of a turn.
+
+The crossing must lie on the inner offsets of the two segments adjacent to the corner. It does not when the turn is sharp and an adjacent segment is too short for the stroke: the inner side would have to swallow the whole segment. This is an **error**. Report the glyph, the path, the segment the corner ends, and the instance being built.
+
+A corner whose tangents are exactly opposite (a stroke doubling straight back on itself) has no crossing either, since the two inner offsets are exactly parallel — but this is a legitimate shape, not the error above. The two offsets are left as kurbo drew them, meeting at its own raw connector rather than a resolved single point.
+
+**Other self-overlap is kept.** A stroke outline may still overlap itself where the skeleton crosses itself, and where two non-adjacent parts of one path pass within `stroke` of each other. This is valid output. Filled with the nonzero rule, the outline renders exactly the stroke's ink. It is neither an error nor resolved.
 
 ---
 
@@ -960,7 +968,7 @@ Every diagnostic names a source location, an entity, and where possible a fix. D
 | Name resolution | Unresolved identifier with scope and near-miss suggestions; duplicate definition; shadowing a top-level name; reserved word as a declaration name; anchor named `advance` or `bbox` |
 | Cycle | Circular definition, reported as the full cycle path with file and line per hop, plus a suggested edge to break (§4.3) |
 | Domain | `sqrt` of a negative; division by zero; `asin`/`acos` out of range; `meet` on parallel lines; path parameter out of domain; `minOf`/`maxOf` of an empty list; `.bbox` of a glyph with no ink |
-| Geometry | Zero-length path or segment; a centre-mode `arc` whose endpoints admit no axis-aligned ellipse about its `center`, or a radii-mode `arc` whose chord is longer than its radii can span (§6.3); `stroke` ≤ 0; curvature radius below `stroke/2` (§7.2), naming glyph, path, segment, parameter interval, and instance; a self-intersecting filled contour (§8.3) |
+| Geometry | Zero-length path or segment; a centre-mode `arc` whose endpoints admit no axis-aligned ellipse about its `center`, or a radii-mode `arc` whose chord is longer than its radii can span (§6.3); `stroke` ≤ 0; curvature radius below `stroke/2` (§7.2), naming glyph, path, segment, parameter interval, and instance; a corner whose inner offsets do not cross within its two adjacent segments (§7.4), naming glyph, path, segment, and instance; a self-intersecting filled contour (§8.3) |
 | Path structure | Every structural error of §6.3 |
 | Metrics | A missing reserved metric; `baseline.y` ≠ 0; negative `overshoot` |
 | Export | Point or contour count over `maxp` limits; coordinate out of int16 range; `kern` or `group` naming an undefined glyph; duplicate, surrogate, or noncharacter codepoint; component cycle or excessive depth; self-intersection introduced by quantization; kerning group overlap (§12.2) |

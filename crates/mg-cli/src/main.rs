@@ -271,14 +271,19 @@ fn cmd_svg(files: &[PathBuf], glyph_name: &str, instance_name: Option<&str>) -> 
 /// counter into a hole; the roles only decided *which* direction each
 /// contour got, back in `mg_eval::render_glyph`.
 fn render_svg(contours: &[(kurbo::BezPath, mg_geom::winding::ContourRole)]) -> String {
-    use kurbo::Shape;
+    use kurbo::{Affine, Shape};
+
+    // The glyph's own coordinates are y-up (spec §14); SVG is y-down, so
+    // every contour is flipped up front rather than wrapped in a `<g>`.
+    let flip = Affine::new([1.0, 0.0, 0.0, -1.0, 0.0, 0.0]);
 
     let mut bbox: Option<kurbo::Rect> = None;
     let mut data = String::new();
     for (contour, _role) in contours {
-        data.push_str(&contour.to_svg());
+        let flipped = flip * contour.clone();
+        data.push_str(&flipped.to_svg());
         data.push(' ');
-        let b = contour.bounding_box();
+        let b = flipped.bounding_box();
         bbox = Some(match bbox {
             Some(u) => u.union(b),
             None => b,
@@ -286,17 +291,12 @@ fn render_svg(contours: &[(kurbo::BezPath, mg_geom::winding::ContourRole)]) -> S
     }
     let bbox = bbox.unwrap_or(kurbo::Rect::ZERO);
 
-    // The glyph's own coordinates are y-up (spec §14); SVG is y-down, so
-    // the content is flipped inside a `<g>` and the viewBox is flipped to
-    // match, rather than negating every coordinate by hand.
     format!(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"{} {} {} {}\">\n\
-         <g transform=\"scale(1,-1)\">\n\
          <path d=\"{}\" fill=\"black\" fill-rule=\"nonzero\"/>\n\
-         </g>\n\
          </svg>",
         bbox.x0,
-        -bbox.y1,
+        bbox.y0,
         bbox.width(),
         bbox.height(),
         data.trim(),

@@ -135,3 +135,8 @@ pub const NON_POSITIVE_STROKE: Code = Code::new("MG0617");
 pub const CURVATURE_LIMIT_EXCEEDED: Code = Code::new("MG0618");
 /// A filled contour crosses itself (spec §8.3).
 pub const SELF_INTERSECTING_FILL: Code = Code::new("MG0619");
+/// A corner's inner offsets don't cross within its two adjacent segments
+/// (spec §7.4): a sharp turn beside a segment too short for the stroke. A
+/// 180° reversal also has no crossing, but is a legitimate shape, not this
+/// error.
+pub const INNER_CORNER_NO_CROSSING: Code = Code::new("MG0620");

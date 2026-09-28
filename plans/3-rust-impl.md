@@ -181,13 +181,17 @@ Every error in spec §13's "field validation", "name resolution", "type", and "p
   - `"bevel"`, or a miter past the limit: the chord stays.
 
   No extra contours are emitted: an open stroke is exactly one contour, a closed stroke exactly two. Failing to find a corner's chord is an internal error, not a silent skip. Pin the kurbo version, since the splice relies on its bevel emission; a unit test asserts the one-chord-per-corner shape so an upgrade that changes it fails loudly.
+- **Inner-corner trim (spec §7.4).** At each corner, including a closed path's wraparound corner, intersect the inner offset of the incoming segment with the inner offset of the outgoing segment: line–line directly, curves via the M3 Bézier clipping. Take the crossing nearest the corner, cut both pieces there, and drop kurbo's inner-join elements between them, so the inner side meets at that single point. The search is limited to the two adjacent segments' offset pieces.
+  - No crossing within them, for a sharp turn beside a segment too short for its stroke: the spec §7.4 error, naming glyph, path, the segment the corner ends, and instance.
+  - Tangents exactly opposite (a 180° reversal) also has no crossing, but that's a legitimate shape, not the error above — checked upfront and left untrimmed, not searched for.
+  - As with join splicing, pin the kurbo version and unit-test the inner-join shape the trim expects.
 - **Filled paths (spec §6.5) skip everything above.** A `fill` emits the realized closed skeleton as one contour.
 - **Self-intersection detection for filled contours is a hard error (spec §8.3).** Run a pairwise curve–curve test over the contour's own segments (O(n²) on small n), reusing the M3 Bézier clipping and excluding the shared endpoints of adjacent segments. A missed crossing silently drops a lobe, so the false-negative rate is what the tests measure.
 - **Contour roles (spec §8.1).**
   - kurbo returns two subpaths for a stroked closed path; the one enclosing the other is outer. Decide by point-in-contour, not by kurbo's output order.
   - Open strokes are outer.
   - Among filled contours only, a contour enclosed by an odd number of other filled contours is a counter.
-- **Winding (spec §8.2):** signed area per contour, reversed where the direction disagrees with the role; `glyf` outer is clockwise in y-up. Stroke outlines self-overlap at corners (spec §7.4), so the signed area of the whole contour decides.
+- **Winding (spec §8.2):** signed area per contour, reversed where the direction disagrees with the role; `glyf` outer is clockwise in y-up. Stroke outlines can still self-overlap where the skeleton crosses itself or passes near itself (spec §7.4), so the signed area of the whole contour decides.
 
 ### M5 — Outline preparation (3 days)
 
@@ -232,7 +236,7 @@ Per spec §15, ordered by value:
 |---|---|
 | Evaluator | proptest: permuting statements within a scope yields identical values. Cycle tests for self-reference, two-node, and long cycles, asserting the reported path *is* the cycle. Golden tests for `meet`/`mediate`/`project`/`polar`/`mirror` against hand-computed geometry. |
 | Segments | Arc pieces against a densely sampled exact ellipse, within the 90°-piece bound; quad elevation exact; reflection and `close` per spec §15.2. |
-| Stroking | Hausdorff distance against a densely sampled exact offset, at most `OFFSET_TOLERANCE`. Each spliced join against the spec §6.4 definition; every stroke yields exactly one contour (open) or two (closed). Each degenerate case of spec §7.3 produces its named error. |
+| Stroking | Hausdorff distance against a densely sampled exact offset, at most `OFFSET_TOLERANCE`. Each spliced join against the spec §6.4 definition; every stroke yields exactly one contour (open) or two (closed). Inner corners: the outline has no self-crossing near any corner, for lines and curves at a range of angles; a segment too short for its stroke at a sharp corner produces the spec §7.4 error; a 180° reversal does not. Each degenerate case of spec §7.3 produces its named error. |
 | Stroker differential | The same paths, widths, caps, and joins through `tiny-skia`'s stroker. Rasterize both and compare coverage (spec §15.4). |
 | Curvature check | Fuzz random paths against random widths; assert the check fires exactly when the exact offset folds back within a segment interior (spec §15.5). |
 | Fills and roles | A filled closed path emits its skeleton as one contour; a fill nested in a fill renders a hole; `stroke` + `fill` on one closed path renders solid, asserted by rasterizing and comparing coverage. Fuzz self-intersecting outlines and assert spec §8.3 fires on each. |
@@ -255,6 +259,7 @@ M8 grows from M0 (diagnostics corpus) and M3 (evaluator tests) onward.
 M1–M3 gate everything. M4 carries most of the correctness risk. With kurbo doing the offsetting, what remains in M4 is:
 - the curvature check
 - join splicing
+- the inner-corner trim
 - contour roles from kurbo's output
 - the fill self-intersection test
 
