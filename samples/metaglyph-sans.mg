@@ -56,36 +56,43 @@ glyph B (codepoint: U+0042, advance: glyph.bbox.x1 + sidebear) {
   let sx  = ox;
   let top = capHeight.y;
   let mid = top * 0.53;
+  let yU  = (top - stem/2 + mid) / 2;   // centre heights of the two bowls
+  let yL  = (mid + stem/2) / 2;
 
   path upright (stroke: stem) {
     start (at: (sx, top))
     line  (to: (sx, 0))
   }
   path bowlU (stroke: stem) {
-    start  (at: (sx, top - stem/2),                   dir: right)
-    spline (to: (sx + w - stem, (top - stem/2 + mid)/2), dir: down)
-    spline (to: (sx, mid),                            dir: left)
+    start (at: (sx, top - stem/2))
+    arc   (center: (sx, yU), to: (sx + w - stem, yU), sweep: "cw")
+    arc   (center: (sx, yU), to: (sx, mid),           sweep: "cw")
   }
   path bowlL (stroke: stem) {
-    start  (at: (sx, mid),                        dir: right)
-    spline (to: (sx + w - stem/2, (mid + stem/2)/2), dir: down)
-    spline (to: (sx, stem/2),                     dir: left)
+    start (at: (sx, mid))
+    arc   (center: (sx, yL), to: (sx + w - stem/2, yL), sweep: "cw")
+    arc   (center: (sx, yL), to: (sx, stem/2),          sweep: "cw")
   }
 }
 
 glyph C (codepoint: U+0043, advance: glyph.bbox.x1 + sidebear) {
-  let w  = capW;
-  let cy = capHeight.y / 2;
+  let w   = capW;
+  let cy  = capHeight.y / 2;
+  let hk  = w * 0.18;                              // terminal handle length
+  let tU  = (ox + w * 0.93, capHeight.y * 0.79);   // upper terminal
+  let tL  = (ox + w * 0.93, capHeight.y * 0.21);   // lower terminal
+  let top = (ox + w/2, capHeight.ink - stem/2);
+  let bot = (ox + w/2, baseline.ink + stem/2);
 
-  path arc (
+  path bowl (
     stroke: stem,
     caps:  { start: "butt", end: "butt" },
   ) {
-    start  (at: (ox + w * 0.93, capHeight.y * 0.79), dir: dir(152deg))
-    spline (to: (ox + w/2, capHeight.ink - stem/2),  dir: left)
-    spline (to: (ox, cy),                            dir: down)
-    spline (to: (ox + w/2, baseline.ink + stem/2),   dir: right)
-    spline (to: (ox + w * 0.93, capHeight.y * 0.21), dir: dir(28deg))
+    start (at: tU)
+    cube  (c1: polar(tU, hk, 152deg), c2: polar(top, hk, 0deg), to: top)
+    arc   (center: (ox + w/2, cy), to: (ox, cy), sweep: "ccw")
+    arc   (center: (ox + w/2, cy), to: bot,      sweep: "ccw")
+    cube  (c1: polar(bot, hk, 0deg), c2: polar(tL, hk, 208deg), to: tL)   // arrives at 28°
   }
 }
 
@@ -99,9 +106,9 @@ glyph D (codepoint: U+0044, advance: glyph.bbox.x1 + sidebear) {
     line  (to: (sx, 0))
   }
   path bowl (stroke: stem) {
-    start  (at: (sx, top - stem/2),       dir: right)
-    spline (to: (sx + w - stem/2, top/2), dir: down)
-    spline (to: (sx, stem/2),             dir: left)
+    start (at: (sx, top - stem/2))
+    arc   (center: (sx, top/2), to: (sx + w - stem/2, top/2), sweep: "cw")
+    arc   (center: (sx, top/2), to: (sx, stem/2),             sweep: "cw")
   }
 }
 
@@ -148,14 +155,17 @@ glyph F (codepoint: U+0046, advance: glyph.bbox.x1 + sidebear) {
 // ══ Figures ══════════════════════════════════════════════════════════
 
 glyph zero (codepoint: U+0030, advance: glyph.bbox.x1 + sidebear) {
-  let w  = figW * 0.86;
-  let cy = figHeight.y / 2;
+  let w   = figW * 0.86;
+  let cy  = figHeight.y / 2;
+  let ctr = (ox + w/2, cy);
+  let top = (ox + w/2, figHeight.ink - stem/2);
 
   path bowl (stroke: stem) {
-    start  (at: (ox + w/2, figHeight.ink - stem/2), dir: right)
-    spline (to: (ox + w, cy),                       dir: down)
-    spline (to: (ox + w/2, baseline.ink + stem/2),  dir: left)
-    spline (to: (ox, cy),                           dir: up)
+    start (at: top)
+    arc   (center: ctr, to: (ox + w, cy),                      sweep: "cw")
+    arc   (center: ctr, to: (ox + w/2, baseline.ink + stem/2), sweep: "cw")
+    arc   (center: ctr, to: (ox, cy),                          sweep: "cw")
+    arc   (center: ctr, to: top,                               sweep: "cw")
     close
   }
 }
@@ -180,10 +190,10 @@ glyph two (codepoint: U+0032, advance: glyph.bbox.x1 + sidebear) {
   let top  = figHeight.y;
   let turn = (ox + w * 0.93, top * 0.66);
 
-  path arc (stroke: stem) {
-    start  (at: (ox, top * 0.78),                   dir: up)
-    spline (to: (ox + w/2, figHeight.ink - stem/2), dir: right)
-    spline (to: turn,                               dir: down)
+  path bowl (stroke: stem) {
+    start (at: (ox, top * 0.78))
+    arc   (center: (ox + w/2, top * 0.78), to: (ox + w/2, figHeight.ink - stem/2), sweep: "cw")
+    arc   (center: (ox + w/2, turn.y),     to: turn,                               sweep: "cw")
   }
   path diag (stroke: stem) {
     start (at: turn)
@@ -198,17 +208,20 @@ glyph two (codepoint: U+0032, advance: glyph.bbox.x1 + sidebear) {
 glyph three (codepoint: U+0033, advance: glyph.bbox.x1 + sidebear) {
   let w   = figW * 0.90;
   let top = figHeight.y;
-  let mid = (ox + w * 0.44, top * 0.52);
+  let mid = (ox + w * 0.44, top * 0.52);           // where the two bowls meet
+  let tp  = (ox + w/2, figHeight.ink - stem/2);
+  let yU  = (tp.y + mid.y) / 2;                    // upper bowl's right extreme
 
-  path arcU (stroke: stem) {
-    start  (at: (ox, top * 0.80),                   dir: up)
-    spline (to: (ox + w/2, figHeight.ink - stem/2), dir: right)
-    spline (to: mid,                                dir: down)
+  path bowlU (stroke: stem) {
+    start (at: (ox, top * 0.80))
+    arc   (center: (tp.x, top * 0.80), to: tp,                   sweep: "cw")
+    arc   (center: (tp.x, yU),         to: (ox + w * 0.88, yU), sweep: "cw")
+    arc   (center: (mid.x, yU),        to: mid,                  sweep: "cw")
   }
-  path arcL (stroke: stem) {
-    start  (at: mid,                   dir: right)
-    spline (to: (ox + w, top * 0.26),  dir: down)
-    spline (to: (ox, top * 0.14),      dir: left)
+  path bowlL (stroke: stem) {
+    start (at: mid)
+    arc   (center: (mid.x, top * 0.26), to: (ox + w, top * 0.26), sweep: "cw")
+    arc   (center: (ox, top * 0.26),    to: (ox, top * 0.14),     sweep: "cw")
   }
 }
 
@@ -246,9 +259,9 @@ glyph five (codepoint: U+0035, advance: glyph.bbox.x1 + sidebear) {
     line  (to: neck)
   }
   path bowl (stroke: stem) {
-    start  (at: neck,                       dir: right)
-    spline (to: (sidebear + w, top * 0.28), dir: down)
-    spline (to: (sidebear, top * 0.10),     dir: left)
+    start (at: neck)
+    arc   (center: (neck.x, top * 0.28),   to: (sidebear + w, top * 0.28), sweep: "cw")
+    arc   (center: (sidebear, top * 0.28), to: (sidebear, top * 0.10),     sweep: "cw")
   }
 }
 
@@ -256,18 +269,23 @@ glyph six (codepoint: U+0036, advance: glyph.bbox.x1 + sidebear) {
   let w  = figW * 0.88;
   let cy = figHeight.y * 0.30;
   let by = cy * 2;
+  let hk = w * 0.18;                                 // terminal handle length
+  let tm = (ox + w * 0.88, figHeight.y * 0.86);      // terminal
+  let tp = (ox + w * 0.40, figHeight.ink - stem/2);
+  let bc = (ox + w/2, cy);                           // bowl centre
 
   path spine (stroke: stem) {
-    start  (at: (ox + w * 0.88, figHeight.y * 0.86),     dir: dir(160deg))
-    spline (to: (ox + w * 0.40, figHeight.ink - stem/2), dir: left)
-    spline (to: (ox, cy),                                dir: down)
+    start (at: tm)
+    cube  (c1: polar(tm, hk, 160deg), c2: polar(tp, hk, 0deg), to: tp)
+    arc   (center: (tp.x, cy), to: (ox, cy), sweep: "ccw")
   }
   path bowl (stroke: stem) {
-    start  (at: (ox, cy),                          dir: down)
-    spline (to: (ox + w/2, baseline.ink + stem/2), dir: right)
-    spline (to: (ox + w, cy),                      dir: up)
-    spline (to: (ox + w/2, by),                    dir: left)
-    close                                          // back to (ox, cy), tangent down
+    start (at: (ox, cy))
+    arc   (center: bc, to: (ox + w/2, baseline.ink + stem/2), sweep: "ccw")
+    arc   (center: bc, to: (ox + w, cy),                      sweep: "ccw")
+    arc   (center: bc, to: (ox + w/2, by),                    sweep: "ccw")
+    arc   (center: bc, to: (ox, cy),                          sweep: "ccw")
+    close
   }
 }
 
@@ -292,18 +310,24 @@ glyph eight (codepoint: U+0038, advance: glyph.bbox.x1 + sidebear) {
   let ux    = ox + (w - uw) / 2;
   let uy    = (waist + figHeight.y) / 2;
 
+  let tp    = (ox + w/2, figHeight.ink - stem/2);
+  let cU    = (ox + w/2, uy);
+  let cL    = (ox + w/2, waist/2);
+
   path bowlU (stroke: stem) {
-    start  (at: (ox + w/2, figHeight.ink - stem/2), dir: right)
-    spline (to: (ux + uw, uy),                      dir: down)
-    spline (to: (ox + w/2, waist),                  dir: left)
-    spline (to: (ux, uy),                           dir: up)
+    start (at: tp)
+    arc   (center: cU, to: (ux + uw, uy),     sweep: "cw")
+    arc   (center: cU, to: (ox + w/2, waist), sweep: "cw")
+    arc   (center: cU, to: (ux, uy),          sweep: "cw")
+    arc   (center: cU, to: tp,                sweep: "cw")
     close
   }
   path bowlL (stroke: stem) {
-    start  (at: (ox + w/2, waist),                 dir: right)
-    spline (to: (ox + w, waist/2),                 dir: down)
-    spline (to: (ox + w/2, baseline.ink + stem/2), dir: left)
-    spline (to: (ox, waist/2),                     dir: up)
+    start (at: (ox + w/2, waist))
+    arc   (center: cL, to: (ox + w, waist/2),                 sweep: "cw")
+    arc   (center: cL, to: (ox + w/2, baseline.ink + stem/2), sweep: "cw")
+    arc   (center: cL, to: (ox, waist/2),                     sweep: "cw")
+    arc   (center: cL, to: (ox + w/2, waist),                 sweep: "cw")
     close
   }
 }

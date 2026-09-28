@@ -6,7 +6,7 @@
 //! upstream, not a user-facing error; only genuine spec §13 domain
 //! errors are [`EvalError`]s.
 
-use kurbo::{Affine, Line, ParamCurve, ParamCurveArclen, ParamCurveExtrema, Point, Vec2};
+use kurbo::{Affine, Line, ParamCurve, ParamCurveArclen, Point, Vec2};
 use mg_geom::skeleton;
 
 use crate::errors::EvalError;
@@ -37,7 +37,7 @@ fn transform(v: &Value) -> Affine {
         .expect("mg-hir already type-checked this argument as `transform`")
 }
 
-fn path(v: &Value) -> &kurbo::BezPath {
+fn path(v: &Value) -> &mg_geom::skeleton::Skeleton {
     v.as_path()
         .expect("mg-hir already type-checked this argument as `path`")
 }
@@ -195,21 +195,26 @@ pub fn call(name: &str, args: &[Value]) -> Result<Value, EvalError> {
             Ok(Value::Num(skeleton::curvature_at(&seg, t)))
         }
         "arcLength" => Ok(Value::Num(skeleton::arc_length(
-            path(&args[0]),
+            &path(&args[0]).path,
             ARC_ACCURACY,
         ))),
         "pointAtLength" => Ok(Value::Pair(point_at_length(path(&args[0]), num(&args[1])))),
         "intersect" => {
-            let hits = skeleton::intersect(path(&args[0]), path(&args[1]))?;
+            let hits = skeleton::intersect(path(&args[0]), &path(&args[1]).path)?;
             Ok(Value::List(hits.into_iter().map(Value::Num).collect()))
         }
         "subpath" => {
             let (t0, t1) = (num(&args[1]), num(&args[2]));
             Ok(Value::Path(subpath(path(&args[0]), t0, t1)?))
         }
-        "reverse" => Ok(Value::Path(path(&args[0]).reverse_subpaths())),
+        "reverse" => {
+            let reversed = path(&args[0]).path.reverse_subpaths();
+            Ok(Value::Path(mg_geom::skeleton::Skeleton::from_path(
+                reversed,
+            )))
+        }
         "extrema" => Ok(Value::List(
-            path_extrema(path(&args[0]))
+            skeleton::extrema(path(&args[0]))
                 .into_iter()
                 .map(Value::Num)
                 .collect(),
@@ -281,28 +286,21 @@ fn reduce(
         .ok_or(EvalError::EmptyListReduction { function })
 }
 
-/// `t`'s segment and local parameter (spec §5.9: domain `[0, n]`,
-/// segment `i` spans `[i, i+1]`).
-fn resolve_param(bez: &kurbo::BezPath, t: f64) -> Result<(kurbo::PathSeg, f64), EvalError> {
-    let segs = skeleton::segments(bez);
-    let n = segs.len();
-    if n == 0 || t < 0.0 || t > n as f64 {
-        return Err(EvalError::PathParameterOutOfDomain {
-            param: t,
-            max: n as f64,
-        });
-    }
-    let i = if t >= n as f64 {
-        n - 1
-    } else {
-        t.floor() as usize
-    };
-    Ok((segs[i], t - i as f64))
+/// `t`'s segment and local parameter (spec §5.9 domain, over authored
+/// segments — see `mg_geom::skeleton::resolve_param`).
+fn resolve_param(
+    skeleton: &mg_geom::skeleton::Skeleton,
+    t: f64,
+) -> Result<(kurbo::PathSeg, f64), EvalError> {
+    skeleton::resolve_param(skeleton, t).map_err(|_| EvalError::PathParameterOutOfDomain {
+        param: t,
+        max: skeleton.piece_counts.len() as f64,
+    })
 }
 
-fn point_at_length(bez: &kurbo::BezPath, s: f64) -> Point {
+fn point_at_length(skeleton: &mg_geom::skeleton::Skeleton, s: f64) -> Point {
     let mut remaining = s;
-    let segs = skeleton::segments(bez);
+    let segs = skeleton::segments(&skeleton.path);
     for seg in &segs {
         let len = seg.arclen(ARC_ACCURACY);
         if remaining <= len || std::ptr::eq(seg, segs.last().unwrap()) {
@@ -311,66 +309,45 @@ fn point_at_length(bez: &kurbo::BezPath, s: f64) -> Point {
         }
         remaining -= len;
     }
-    bez.segments()
+    skeleton
+        .path
+        .segments()
         .last()
         .map(|s| s.eval(1.0))
         .unwrap_or_default()
 }
 
-fn subpath(bez: &kurbo::BezPath, t0: f64, t1: f64) -> Result<kurbo::BezPath, EvalError> {
-    let segs = skeleton::segments(bez);
-    let n = segs.len();
-    if n == 0 || t0 < 0.0 || t1 > n as f64 {
-        return Err(EvalError::PathParameterOutOfDomain {
-            param: t0.max(t1),
-            max: n as f64,
-        });
-    }
-    let mut out = kurbo::BezPath::new();
-    let (start_seg, start_t) = resolve_param(bez, t0)?;
-    let start_point = start_seg.eval(start_t);
-    out.move_to(start_point);
-
-    let i0 = t0.floor() as usize;
-    let i1 = if t1 >= n as f64 {
-        n - 1
-    } else {
-        t1.floor() as usize
+/// `subpath`'s result is a construction value with no `arc`s of its own
+/// to track (spec §5.9: "it can never render or be named by `follows`"),
+/// so it comes back as one piece per authored segment.
+fn subpath(
+    skeleton: &mg_geom::skeleton::Skeleton,
+    t0: f64,
+    t1: f64,
+) -> Result<mg_geom::skeleton::Skeleton, EvalError> {
+    let out_of_domain = || EvalError::PathParameterOutOfDomain {
+        param: t0.max(t1),
+        max: skeleton.piece_counts.len() as f64,
     };
-    for (i, seg) in segs.iter().enumerate().take(i1 + 1).skip(i0) {
-        let lo = if i == i0 { start_t } else { 0.0 };
-        let hi = if i == i1 { t1 - i as f64 } else { 1.0 };
+    let (piece0, start_t) =
+        mg_geom::skeleton::authored_param_to_piece(skeleton, t0).map_err(|_| out_of_domain())?;
+    let (piece1, end_t) =
+        mg_geom::skeleton::authored_param_to_piece(skeleton, t1).map_err(|_| out_of_domain())?;
+
+    let pieces = skeleton::segments(&skeleton.path);
+    let mut out = kurbo::BezPath::new();
+    out.move_to(pieces[piece0].eval(start_t));
+
+    for (i, seg) in pieces.iter().enumerate().take(piece1 + 1).skip(piece0) {
+        let lo = if i == piece0 { start_t } else { 0.0 };
+        let hi = if i == piece1 { end_t } else { 1.0 };
         match seg.subsegment(lo..hi) {
             kurbo::PathSeg::Line(l) => out.line_to(l.p1),
             kurbo::PathSeg::Quad(q) => out.quad_to(q.p1, q.p2),
             kurbo::PathSeg::Cubic(c) => out.curve_to(c.p1, c.p2, c.p3),
         }
     }
-    Ok(out)
-}
-
-fn path_extrema(bez: &kurbo::BezPath) -> Vec<f64> {
-    skeleton::segments(bez)
-        .iter()
-        .enumerate()
-        .flat_map(|(i, seg)| match seg {
-            kurbo::PathSeg::Line(l) => l
-                .extrema()
-                .into_iter()
-                .map(move |t| i as f64 + t)
-                .collect::<Vec<_>>(),
-            kurbo::PathSeg::Quad(q) => q
-                .extrema()
-                .into_iter()
-                .map(move |t| i as f64 + t)
-                .collect::<Vec<_>>(),
-            kurbo::PathSeg::Cubic(c) => c
-                .extrema()
-                .into_iter()
-                .map(move |t| i as f64 + t)
-                .collect::<Vec<_>>(),
-        })
-        .collect()
+    Ok(mg_geom::skeleton::Skeleton::from_path(out))
 }
 
 /// The tight skeleton bounds (spec §5.5 `path.bbox` for a construction
@@ -515,7 +492,8 @@ mod tests {
         let mut bez = kurbo::BezPath::new();
         bez.move_to((0.0, 0.0));
         bez.line_to((1.0, 0.0));
-        let result = call("pointAt", &[Value::Path(bez), Value::Num(5.0)]);
+        let path = mg_geom::skeleton::Skeleton::from_path(bez);
+        let result = call("pointAt", &[Value::Path(path), Value::Num(5.0)]);
         assert_eq!(
             result,
             Err(EvalError::PathParameterOutOfDomain {

@@ -32,7 +32,7 @@ Four mechanisms produce letterform detail. There is no cutting or subtraction.
 | Mechanism | Handles |
 |---|---|
 | Caps and joins (§6.4) | Butt / round / square ends, asymmetric ends, corner treatments |
-| The end tangents — `start`'s `dir` and the final segment's `dir` (§6.4) | Angled and sheared terminals, flat cuts on diagonals |
+| The end tangents — set by the first and last segments' control points or arc geometry (§6.4) | Angled and sheared terminals, flat cuts on diagonals |
 | Overlapping paths (§6.5) | Slab serifs, flat apexes and tops across several strokes, compound terminals |
 | `fill` on a closed path (§6.5) | Arbitrary filled geometry, including contrast within one shape |
 
@@ -190,13 +190,13 @@ Structure is never infix: there are no path operators, clause keywords, or trail
 
 May not be used as a declaration name. The list is closed.
 
-- **Declaration keywords:** `font` `param` `metric` `let` `glyph` `instance` `group` `kern` `path` `anchor` `component` `start` `line` `spline` `close`
+- **Declaration keywords:** `font` `param` `metric` `let` `glyph` `instance` `group` `kern` `path` `anchor` `component` `start` `line` `quad` `cube` `arc` `close`
 - **Built-in constants:** `up` `down` `left` `right` `identity`
 - **Literals:** `true` `false`
 - **Operator words:** `and` `or` `not`
 - **Namespace roots:** `font` `glyph` `glyphs` `instance` `math`
 
-Enum-valued fields take string literals, so `butt` `round` `square` `miter` `bevel` `top` `bottom` are not reserved and may be used as declaration names. Function names (§5.9) are not reserved; call position and value position resolve separately (§5.11).
+Enum-valued fields take string literals, so `butt` `round` `square` `miter` `bevel` `top` `bottom` `ccw` `cw` are not reserved and may be used as declaration names. Function names (§5.9) are not reserved; call position and value position resolve separately (§5.11).
 
 ### 5.5 Types
 
@@ -218,17 +218,17 @@ Types are checked statically after name resolution. Every type error is reported
 | `range` | `a..b` (§5.2); only as `param` `range:` |
 | `list<T>` | `[ a, b, c ]`, homogeneous |
 | `map<K,V>` | `{ k: v, … }`; used by `caps` and `joinAt` |
-| `(point, point)` | Tuple of two points; only as `spline` `controls:` |
 
 No value is ever partially determined.
 
-`cap`, `join`, and `align` are not distinct types. They are `string`, with the legal set enforced by the field's validator:
+`cap`, `join`, `align`, and `sweep` are not distinct types. They are `string`, with the legal set enforced by the field's validator:
 
 | Field | Legal values |
 |---|---|
 | `caps.start`, `caps.end` | `"butt"` `"round"` `"square"` |
 | `joins`, `joinAt.*` | `"miter"` `"round"` `"bevel"` |
 | `align` | `"top"` `"bottom"` |
+| `arc` `sweep` | `"ccw"` `"cw"` |
 
 Case is significant. Validation is per field, so a diagnostic enumerates the legal set: `joins: "mitre"` → *unknown join "mitre"; expected one of: miter, round, bevel*.
 
@@ -311,32 +311,44 @@ When the source declares no instance, the build uses one implicit instance, `ins
 | `joinAt` | `map<segmentName, string>` | optional. Requires `stroke` |
 | `enabled` | `bool` | optional, default `true` |
 
-Body contains `start`, `line`, `spline`, `close`. Order is significant. A path must have either a body or `follows`.
+Body contains `start`, `line`, `quad`, `cube`, `arc`, `close`. Order is significant. A path must have either a body or `follows`.
 
 `follows: p` names another path in the same glyph that has a body. The following path takes that path's skeleton exactly — its segments, its closure, and its segment names (so `joinAt` keys refer to them) — and declares its own rendering fields.
 
-**`start <name>? ( at: point, dir: pair?, curl: num? )`** — exactly one per path body, first.
-- `dir` is the departure direction of the first segment. It is illegal when the first segment is a `line` and the path is open.
-- `curl` is legal only when the path is open and the first segment is a `spline`. Default `1`; must be ≥ 0.
+The segment declarations follow SVG path data: `start` is moveto, `line` lineto, `quad` and `cube` the quadratic and cubic curveto, `arc` an elliptical arc, and `close` closepath. Each segment runs from the **current point** — the previous declaration's endpoint — to its own `to`. Its geometry is fixed by its own fields and the current point, plus, for an omitted control point, the previous segment (§6.3).
 
-**`line <name>? ( to: point )`** — `to` required. No other fields; `dir`, `fromDir`, `tension`, `controls`, and `curl` on a `line` are errors.
+**`start <name>? ( at: point )`** — exactly one per path body, first. `at` required; it sets the current point.
 
-**`spline <name>? ( … )`**
+**`line <name>? ( to: point )`** — `to` required. No other fields.
+
+**`quad <name>? ( … )`** — a quadratic Bézier.
 
 | Field | Type | |
 |---|---|---|
 | `to` | `point` | required |
-| `dir` | `pair` | optional — tangent at this segment's endpoint |
-| `fromDir` | `pair` | optional — departure direction, overriding the inherited one and making a corner. Illegal on the first segment after `start` |
-| `tension` | `num` \| `pair` | optional, default `1`; a `pair` is (departure, arrival). Every component must be ≥ 0.75 |
-| `controls` | `(point, point)` | optional; mutually exclusive with `dir`, `fromDir`, and `tension` |
-| `curl` | `num` | optional, default `1`, must be ≥ 0. Legal only on the final segment of an open path |
+| `c` | `point` | optional — the control point. Omissible only when the previous declaration is a `quad`; it is then the reflection of that quad's control point (§6.3) |
 
-**`close`** — at most one per path body, last. No name, no config, no body. It declares the path closed and appends the closing segment, a `spline` from the last endpoint back to the `start` point:
-- Its departure direction is the last declaration's endpoint tangent when that declaration is a `spline` with `dir` or `controls`; otherwise it is free.
-- Its arrival direction is `start`'s `dir` when given; otherwise it is free.
-- Free directions are determined by Hobby's algorithm over the closed cycle (§6.3).
-- When the last declaration already ends at the `start` point, the closing segment is omitted and the path is still closed. A closed polygon is therefore written with a final `line (to: <start point>)` followed by `close`.
+**`cube <name>? ( … )`** — a cubic Bézier.
+
+| Field | Type | |
+|---|---|---|
+| `to` | `point` | required |
+| `c1` | `point` | optional — the first control point. Omissible only when the previous declaration is a `cube`; it is then the reflection of that cube's `c2` (§6.3) |
+| `c2` | `point` | required — the second control point |
+
+**`arc <name>? ( … )`** — an arc of an axis-aligned ellipse (§6.3), in one of two modes. **Centre mode** declares `center`, and the radii are solved. **Radii mode** declares `rx` and `ry`, and the centre is solved. `center` is mutually exclusive with `rx` and `ry`; `rx` and `ry` require each other; one mode is required.
+
+| Field | Type | |
+|---|---|---|
+| `to` | `point` | required |
+| `sweep` | `string` | required — `"ccw"` or `"cw"`, the direction of travel from the current point to `to` about the centre (y-up) |
+| `center` | `point` | centre mode — the ellipse's centre |
+| `rx` | `num` | radii mode — the horizontal radius; must be > 0 |
+| `ry` | `num` | radii mode — the vertical radius; must be > 0 |
+| `large` | `bool` | radii mode only; optional, default `false` — selects the arc spanning more than 180° |
+
+**`close`** — at most one per path body, last. No name, no config, no body. It declares the path closed and appends the closing segment, a straight line from the last endpoint back to the `start` point.
+- When the last declaration already ends at the `start` point, the closing segment is omitted and the path is still closed. A closed curve is therefore written with a final curve segment ending at the `start` point, followed by `close`.
 
 A path is closed if and only if its body declares `close`.
 
@@ -378,7 +390,6 @@ Highest binding first; all binary operators are left-associative except `^`.
 |---|---|
 | exactly two, both `num` | `pair` |
 | two or more, all `transform` | transform sequence (a `transform`) |
-| exactly two, both `pair`, in `controls:` | `(point, point)` |
 | anything else | type error |
 
 A transform sequence composes its elements in reading order: `(rotate(180deg), translate(w, h))` rotates first, then translates. A single transform needs no parentheses.
@@ -397,7 +408,7 @@ Complete. Nothing outside this list is callable. Angle arguments and results are
 
 **Transform construction:** `translate(dx, dy)` · `rotate(θ)` (about the origin, counter-clockwise) · `scale(s)` · `scale(sx, sy)` · `slant(θ)` (`(x, y) → (x + y·tan θ, y)`) · `reflect(line)` · `apply(transform, point)→point`
 
-**Path queries.** A path with `n` segments (counting a non-omitted closing segment) has parameter domain `[0, n]`; segment `i` (0-based) spans `[i, i+1]` with its own Bézier parameter. A parameter outside the domain is a domain error. Queries read the skeleton, never the stroked outline.
+**Path queries.** A path with `n` segments (counting a non-omitted closing segment) has parameter domain `[0, n]`; segment `i` (0-based) spans `[i, i+1]` with its own Bézier parameter. An `arc` realized as `m` cubic pieces (§6.3) divides its span uniformly: piece `k` spans `[i + k/m, i + (k+1)/m]`. A parameter outside the domain is a domain error. Queries read the skeleton, never the stroked outline.
 
 `pointAt(path, t)→point` · `directionAt(path, t)→pair` (unit tangent) · `curvatureAt(path, t)→num` (signed, positive when turning counter-clockwise) · `arcLength(path)→num` · `pointAtLength(path, s)→point` (`s ∈ [0, arcLength]`) · `intersect(a, b)→num*` (parameters on `a` where `a` crosses `b`, ascending; empty when none) · `subpath(path, t0, t1)→path` · `reverse(path)→path` · `extrema(path)→num*` (parameters where `x′ = 0` or `y′ = 0`, ascending)
 
@@ -492,12 +503,13 @@ Render order does not affect appearance: overlaps are kept and nonzero winding i
 A path body is a chain of segment declarations, each naming the point it arrives at. One declaration per point.
 
 ```
-path bowl (stroke: stem) {
-  start  (at: t, dir: right)
-  spline (to: r, dir: down)
-  spline (to: b, dir: left)
-  spline (to: l, dir: up)
-  close
+path bowl (stroke: stem) {           // t, r, b, l: the top, right, bottom, left of an ellipse about ctr
+  start (at: t)
+  arc   (center: ctr, to: r, sweep: "cw")
+  arc   (center: ctr, to: b, sweep: "cw")
+  arc   (center: ctr, to: l, sweep: "cw")
+  arc   (center: ctr, to: t, sweep: "cw")
+  close                              // already at t: no closing segment
 }
 
 path upright (stroke: stem) {
@@ -507,13 +519,45 @@ path upright (stroke: stem) {
 }
 ```
 
-**Direction.**
-- `dir` is the tangent at the declaration's own endpoint.
-- A `spline`'s departure direction is, in order of precedence: its `fromDir`; the previous declaration's endpoint tangent when that declaration is a `start` or `spline` with `dir` (or a `spline` with `controls`); otherwise free.
-- A `line` neither contributes nor inherits a direction. A `spline` following a `line` therefore departs in a free direction unless it declares `fromDir`, and the joint is a corner in general.
-- With `controls: (c1, c2)`, the segment is the cubic with those control points, and its endpoint tangent is the direction from `c2` to `to`.
+**Segment geometry.** `p` is the current point.
 
-**Free directions** are determined by Hobby's algorithm: mock-curvature matching, a tridiagonal system for turning angles on open runs and a cyclic-tridiagonal system for closed paths, with `tension` (default 1) and end `curl` (default 1) as in METAFONT.
+| Kind | Geometry |
+|---|---|
+| `line` | The straight segment `p` → `to`. |
+| `quad` | The quadratic Bézier `p`, `c`, `to`. Realized as its exact degree-elevated cubic: `p`, `p + ⅔(c − p)`, `to + ⅔(c − to)`, `to`. |
+| `cube` | The cubic Bézier `p`, `c1`, `c2`, `to`. |
+| `arc` | The arc of an axis-aligned ellipse from `p` to `to`, travelling in the `sweep` direction; the ellipse is fixed by `center` or by `rx`, `ry`, and `large` (below). |
+
+**Reflection.** An omitted control point is the reflection of the previous segment's adjacent control point through `p`, as in SVG's `S` and `T` commands:
+- `cube` without `c1`: `c1 = 2·p − c2′`, where `c2′` is the previous `cube`'s `c2`.
+- `quad` without `c`: `c = 2·p − c′`, where `c′` is the previous `quad`'s control point, whether written or itself reflected.
+
+The previous declaration must be a segment of the same kind. The reflection makes the joint tangent-continuous. It is the only way one segment's geometry depends on another.
+
+**Arcs.** An arc lies on an axis-aligned ellipse with centre `C` and radii `rx`, `ry`. Each mode declares half of that and solves the other half from the two endpoints, so neither mode is over-determined.
+
+*Centre mode* (`center` declared, `C = center`). With `(dx₀, dy₀) = p − C`, `(dx₁, dy₁) = to − C`, `u = 1/rx²`, and `v = 1/ry²`, solve the linear system
+
+```
+dx₀²·u + dy₀²·v = 1
+dx₁²·u + dy₁²·v = 1
+```
+
+- When it has a unique solution with `u > 0` and `v > 0`, that is the ellipse.
+- When it is singular (determinant `dx₀²·dy₁² − dx₁²·dy₀²` of magnitude at most `1e-12 · |p − C|² · |to − C|²`), the endpoints are symmetric about an axis through `C` or about `C` itself, and they do not determine the ellipse. The arc is circular when `|p − C|` and `|to − C|` agree within `ARC_TOLERANCE` (§14), with their mean as its radius. Otherwise it is a geometry error, whose help names radii mode: a half-oval from the top of an oval to its bottom is `arc (to: b, rx: w/2, ry: h/2, sweep: "cw")`.
+- Any other case is a geometry error: no axis-aligned ellipse about `center` passes through both endpoints.
+
+*Radii mode* (`rx` and `ry` declared). This is SVG's endpoint arc (SVG 1.1 Implementation Notes F.6.5) with zero rotation. With midpoint `M = (p + to)/2`, half-chord `h = (p − to)/2`, and `h′ = (h.x/rx, h.y/ry)`, let `Λ = |h′|²`.
+
+- When `Λ > 1`, the chord is longer than the ellipse can span. If `(√Λ − 1) · max(rx, ry) ≤ ARC_TOLERANCE`, take `Λ = 1`: the chord is a diameter. Otherwise it is a geometry error; unlike SVG, the radii are never enlarged.
+- The two candidate centres are `C = M ± √((1 − Λ)/Λ) · (−rx·h′.y, ry·h′.x)`. Travelling in the `sweep` direction, one candidate's arc spans less than 180° and the other's more. `large: false` takes the first; `large: true` the second.
+- When `Λ = 1` the candidates coincide at `M`, the arc spans exactly 180°, and `large` has no effect.
+
+The arc runs from `p`'s eccentric angle to `to`'s, in the `sweep` direction, covering strictly between 0° and 360°. `to` equal to `p` is a zero-length segment (§7.3); a full ellipse takes at least two arcs. A rotated ellipse is not expressible: split it into `cube`s.
+
+The arc is realized as `m = ⌈Δ / 90°⌉` cubic pieces of equal eccentric-angle span `φ = Δ/m`, where `Δ` is the swept angle. Each piece from angle `θa` to `θb` has its control points at `E(θa) + k·E′(θa)` and `E(θb) − k·E′(θb)`, where `E` is the ellipse's parametric form, `E′` its derivative, and `k = 4/3 · tan(φ/4)`. The first piece starts at `p` and the last ends at `to` exactly, even where an endpoint lies within `ARC_TOLERANCE` of the ellipse rather than on it (the circular fallback and the diameter case); every other point comes from `E`. This realization is exact per this definition; it is not a tolerance.
+
+**Tangents.** A segment's tangent at an end is its derivative there. Where a control point coincides with that end, the tangent is the direction to the nearest distinct control or end point. A joint is smooth exactly when the incoming and outgoing tangents agree; nothing is inherited from one segment to the next except through reflection.
 
 **Naming.** A segment's name denotes its endpoint and lives in the path's segment namespace (§5.11). `joinAt` is the only field that consumes segment names.
 
@@ -522,7 +566,7 @@ path upright (stroke: stem) {
 **Structural errors:**
 - no `start`, or more than one `start`
 - a field illegal on its declaration (§5.7)
-- `fromDir` on the first segment after `start`
+- a `cube` without `c1`, or a `quad` without `c`, whose previous declaration is not a segment of the same kind
 - a `joinAt` key naming no segment
 - more than one `close`, or any declaration after `close`
 - a path with both a body and `follows`, or with neither
@@ -550,12 +594,12 @@ Joins apply at every corner of the skeleton (a vertex where the incoming and out
 
 The miter limit is `MITER_LIMIT` = 4 (§14). `joinAt` overrides `joins` at the named segment's endpoint.
 
-**Angled terminals** come from the end tangents. The start cap is perpendicular to `start`'s `dir`; the end cap is perpendicular to the final segment's `dir`:
+**Angled terminals** come from the end tangents (§6.3). The start cap is perpendicular to the first segment's departure tangent; the end cap is perpendicular to the final segment's arrival tangent. On a curve, those are set by the first and last control points:
 
 ```
 path arm (stroke: hair, caps: { end: "butt" }) {
-  start  (at: b, dir: right)
-  spline (to: t, dir: dir(70deg))
+  start (at: b)
+  cube  (c1: polar(b, k, 0deg), c2: polar(t, k, 70deg + 180deg), to: t)   // arrives at 70°
 }
 ```
 
@@ -591,18 +635,18 @@ glyph A (codepoint: U+0041, advance: glyph.bbox.x1 + sidebear) {
 
 ```
 path wedge (fill: true) {                   // wide base, rounded top
-  start  (at: (x0, 0))
-  spline (to: (xm, top), dir: right)
-  spline (to: (x1, 0),   dir: down)
-  line   (to: (x0, 0))
-  close
+  start (at: (x0, 0))
+  arc   (center: (xm, 0), to: (xm, top), sweep: "cw")
+  arc   (center: (xm, 0), to: (x1, 0),   sweep: "cw")
+  close                                     // the base: a line back to (x0, 0)
 }
 
 path ring (stroke: hair, fill: true) {      // filled, with a hairline border
-  start  (at: t, dir: right)
-  spline (to: r, dir: down)
-  spline (to: b, dir: left)
-  spline (to: l, dir: up)
+  start (at: t)
+  arc   (center: ctr, to: r, sweep: "cw")
+  arc   (center: ctr, to: b, sweep: "cw")
+  arc   (center: ctr, to: l, sweep: "cw")
+  arc   (center: ctr, to: t, sweep: "cw")
   close
 }
 ```
@@ -621,7 +665,7 @@ The stroke boundary is `p(t) ± r·n̂(t)` with `r = stroke/2`, plus the caps an
 
 ### 7.2 Curvature limit
 
-Within the interior of any skeleton segment, the curvature radius must not be smaller than `r`. Where it is, the offset on the concave side folds back. Corners between segments are not subject to this check; joins handle them. A skeleton segment whose derivative vanishes at an interior point (a cusp) also fails the check.
+Within the interior of any skeleton segment, the curvature radius must not be smaller than `r`. Where it is, the offset on the concave side folds back. Corners between segments are not subject to this check; joins handle them. The joints between an `arc`'s cubic pieces are interior to that segment and are checked. A skeleton segment whose derivative vanishes at an interior point (a cusp) also fails the check.
 
 This is an **error**, checked before offset generation. Report the glyph, the path, the segment, the parameter interval, and the instance being built.
 
@@ -689,18 +733,18 @@ Each tool that changes the design maps to a named structured edit on the syntax 
 | grid | nothing — grid snapping is a canvas setting and is not part of the source |
 
 **Shape:**
-- path tool: places points, appending `line` or `spline`
-- segment-kind toggle: `line` ↔ `spline`
-- direction, curl, and tension controls (splines only)
+- path tool: places points, appending `line`, `quad`, `cube`, or `arc`
+- segment-kind toggle: among `line`, `quad`, `cube`, and `arc`, seeding the target kind's required fields from the current geometry
+- control-point handles (`quad`, `cube`); centre, radius, sweep, and large-arc controls (`arc`), where dragging a radius handle on a centre-mode arc switches it to radii mode
 - stroke tool: sets `stroke`, which also promotes a construction path to a rendering one
 - fill toggle: sets `fill`, and appends `close` if absent
 - cap tool (three-way)
 - join tool (three-way, path-wide plus per-segment)
-- end-direction tool: sets `start`'s or the final segment's `dir`
+- end-direction tool: rewrites the first or last segment's control point adjacent to the end as `polar(endpoint, len, θ)`
 - transform and instance placement
 - component reference
 
-Every tool sets a property on a single block. Switching a segment from `spline` to `line` removes the fields `line` does not admit.
+Every tool sets a property on a single block. Switching a segment's kind removes the fields the new kind does not admit.
 
 **Relationship tools** rewrite one definition:
 
@@ -713,7 +757,7 @@ Every tool sets a property on a single block. Switching a segment from `spline` 
 | Make parallel / at angle | `let p = polar(q, len, θ);` |
 | Mirror across axis | `let p = mirror(q, axis);` |
 | Promote literal to parameter | a literal becomes a reference to a new or existing `param` |
-| Direction lock | sets `dir`, or `fromDir` to break a corner |
+| Make smooth | omits `c1` or `c` where §6.3 allows reflection; otherwise rewrites the control as `2·p − c′` from its neighbour across the joint |
 
 **Diagnostics:** dependency inspector (upstream and downstream of any value), cycle reporter, unresolved-name reporter, parameter sweep preview.
 
@@ -915,7 +959,7 @@ Every diagnostic names a source location, an entity, and where possible a fix. D
 | Name resolution | Unresolved identifier with scope and near-miss suggestions; duplicate definition; shadowing a top-level name; reserved word as a declaration name; anchor named `advance` or `bbox` |
 | Cycle | Circular definition, reported as the full cycle path with file and line per hop, plus a suggested edge to break (§4.3) |
 | Domain | `sqrt` of a negative; division by zero; `asin`/`acos` out of range; `meet` on parallel lines; path parameter out of domain; `minOf`/`maxOf` of an empty list; `.bbox` of a glyph with no ink |
-| Geometry | Zero-length path or segment; `stroke` ≤ 0; curvature radius below `stroke/2` (§7.2), naming glyph, path, segment, parameter interval, and instance; a self-intersecting filled contour (§8.3) |
+| Geometry | Zero-length path or segment; a centre-mode `arc` whose endpoints admit no axis-aligned ellipse about its `center`, or a radii-mode `arc` whose chord is longer than its radii can span (§6.3); `stroke` ≤ 0; curvature radius below `stroke/2` (§7.2), naming glyph, path, segment, parameter interval, and instance; a self-intersecting filled contour (§8.3) |
 | Path structure | Every structural error of §6.3 |
 | Metrics | A missing reserved metric; `baseline.y` ≠ 0; negative `overshoot` |
 | Export | Point or contour count over `maxp` limits; coordinate out of int16 range; `kern` or `group` naming an undefined glyph; duplicate, surrogate, or noncharacter codepoint; component cycle or excessive depth; self-intersection introduced by quantization; kerning group overlap (§12.2) |
@@ -940,6 +984,7 @@ Named constants. Tolerances scale with the em size.
 | `OFFSET_TOLERANCE` | `0.05 · font.em / 1000` |
 | `CU2QU_TOLERANCE` | `0.5 · font.em / 1000` |
 | `ZONE_SNAP_TOLERANCE` | `1 · font.em / 1000` |
+| `ARC_TOLERANCE` | `0.01 · font.em / 1000` |
 | `MITER_LIMIT` | `4` |
 | `COMPONENT_DEPTH` | `5` |
 
@@ -951,9 +996,13 @@ Named constants. Tolerances scale with the em size.
    - Property test: permuting statement order within a scope yields identical results.
    - Cycle detection covering self-reference, two-node, and long cycles, asserting the reported path is the actual cycle.
    - Golden tests on `meet` / `mediate` / `project` / `polar` / `mirror` against hand-computed geometry.
-2. **Hobby splines**
-   - Differential test against METAFONT output.
-   - Direction rules of §6.3 as separate assertions: an inherited `dir` produces a tangent-continuous joint; `fromDir` produces a corner; a `spline` after a `line` does not inherit a direction; `close` takes its tangents per §5.7.
+2. **Segments**
+   - A `quad`'s elevated cubic evaluates identically to the quadratic.
+   - An `arc`'s pieces stay within `3e-4 · max(rx, ry)` of the exact ellipse (the 90°-piece bound), checked by dense sampling; quarter, half, and three-quarter arcs in both sweeps.
+   - Centre mode: the radius solve, the circular fallback on a singular system, and the geometry errors for a non-circular singular system and for no ellipse.
+   - Radii mode: both `large` values in both sweeps pick the stated candidate centre; the exact-diameter chord (half-oval) solves within tolerance; a chord too long for the radii is an error, and a non-positive radius is an error.
+   - Reflection produces a tangent-continuous joint; an omitted control after a segment of another kind is a structural error.
+   - `close` appends a straight line, and appends nothing when the path already ends at its start.
 3. **Offsets**
    - Hausdorff distance against a densely sampled exact boundary, at most `OFFSET_TOLERANCE`.
    - Caps and joins match §6.4: `"butt"` perpendicular to the end tangent; `"square"` extended by `r`; `"round"` a semicircle of radius `r`; `"miter"` falling back to `"bevel"` past `MITER_LIMIT`; `joinAt` overriding `joins` at one vertex only.
@@ -977,7 +1026,7 @@ Acceptance test: build a typeface covering uppercase, lowercase, digits, and bas
 
 1. **DSL surface** — grammar, lexer, lossless syntax tree, AST lowering, name resolution, static type checking, stable node identity, formatter. Written against §5. Read first: per-field validation of string-valued enums (§5.5) and element-typed tuples (§5.8).
 2. **Evaluation engine** — dependency graph construction from name references, topological evaluation, cycle detection with full-path reporting, the construction library, failure containment, incremental re-evaluation. (§4, §5.9, §13)
-3. **Geometry kernel** — paths and Hobby splines, constant-width offset generation with caps and joins, the curvature check, filled contours and their self-intersection check, contour roles and winding normalization. (§6, §7, §8)
+3. **Geometry kernel** — path segments (lines, quadratic and cubic Béziers, elliptical arcs), constant-width offset generation with caps and joins, the curvature check, filled contours and their self-intersection check, contour roles and winding normalization. (§6, §7, §8)
 4. **Font compiler** — slant, extrema insertion, curve conversion, zone snapping and quantization, table assembly for TTF/OTF/WOFF2, hinting, metrics, kerning, instances. (§10, §11, §12, §14)
 5. **Editor projection layer** — structured edits per tool, inverse drag, dependency inspection, partial-text tolerance, incremental redraw. (§9)
 
@@ -1056,36 +1105,43 @@ glyph B (codepoint: U+0042, advance: glyph.bbox.x1 + sidebear) {
   let sx  = ox;
   let top = capHeight.y;
   let mid = top * 0.53;
+  let yU  = (top - stem/2 + mid) / 2;   // centre heights of the two bowls
+  let yL  = (mid + stem/2) / 2;
 
   path upright (stroke: stem) {
     start (at: (sx, top))
     line  (to: (sx, 0))
   }
   path bowlU (stroke: stem) {
-    start  (at: (sx, top - stem/2),                   dir: right)
-    spline (to: (sx + w - stem, (top - stem/2 + mid)/2), dir: down)
-    spline (to: (sx, mid),                            dir: left)
+    start (at: (sx, top - stem/2))
+    arc   (center: (sx, yU), to: (sx + w - stem, yU), sweep: "cw")
+    arc   (center: (sx, yU), to: (sx, mid),           sweep: "cw")
   }
   path bowlL (stroke: stem) {
-    start  (at: (sx, mid),                        dir: right)
-    spline (to: (sx + w - stem/2, (mid + stem/2)/2), dir: down)
-    spline (to: (sx, stem/2),                     dir: left)
+    start (at: (sx, mid))
+    arc   (center: (sx, yL), to: (sx + w - stem/2, yL), sweep: "cw")
+    arc   (center: (sx, yL), to: (sx, stem/2),          sweep: "cw")
   }
 }
 
 glyph C (codepoint: U+0043, advance: glyph.bbox.x1 + sidebear) {
-  let w  = capW;
-  let cy = capHeight.y / 2;
+  let w   = capW;
+  let cy  = capHeight.y / 2;
+  let hk  = w * 0.18;                              // terminal handle length
+  let tU  = (ox + w * 0.93, capHeight.y * 0.79);   // upper terminal
+  let tL  = (ox + w * 0.93, capHeight.y * 0.21);   // lower terminal
+  let top = (ox + w/2, capHeight.ink - stem/2);
+  let bot = (ox + w/2, baseline.ink + stem/2);
 
-  path arc (
+  path bowl (
     stroke: stem,
     caps:  { start: "butt", end: "butt" },
   ) {
-    start  (at: (ox + w * 0.93, capHeight.y * 0.79), dir: dir(152deg))
-    spline (to: (ox + w/2, capHeight.ink - stem/2),  dir: left)
-    spline (to: (ox, cy),                            dir: down)
-    spline (to: (ox + w/2, baseline.ink + stem/2),   dir: right)
-    spline (to: (ox + w * 0.93, capHeight.y * 0.21), dir: dir(28deg))
+    start (at: tU)
+    cube  (c1: polar(tU, hk, 152deg), c2: polar(top, hk, 0deg), to: top)
+    arc   (center: (ox + w/2, cy), to: (ox, cy), sweep: "ccw")
+    arc   (center: (ox + w/2, cy), to: bot,      sweep: "ccw")
+    cube  (c1: polar(bot, hk, 0deg), c2: polar(tL, hk, 208deg), to: tL)   // arrives at 28°
   }
 }
 
@@ -1099,9 +1155,9 @@ glyph D (codepoint: U+0044, advance: glyph.bbox.x1 + sidebear) {
     line  (to: (sx, 0))
   }
   path bowl (stroke: stem) {
-    start  (at: (sx, top - stem/2),       dir: right)
-    spline (to: (sx + w - stem/2, top/2), dir: down)
-    spline (to: (sx, stem/2),             dir: left)
+    start (at: (sx, top - stem/2))
+    arc   (center: (sx, top/2), to: (sx + w - stem/2, top/2), sweep: "cw")
+    arc   (center: (sx, top/2), to: (sx, stem/2),             sweep: "cw")
   }
 }
 
@@ -1148,14 +1204,17 @@ glyph F (codepoint: U+0046, advance: glyph.bbox.x1 + sidebear) {
 // ══ Figures ══════════════════════════════════════════════════════════
 
 glyph zero (codepoint: U+0030, advance: glyph.bbox.x1 + sidebear) {
-  let w  = figW * 0.86;
-  let cy = figHeight.y / 2;
+  let w   = figW * 0.86;
+  let cy  = figHeight.y / 2;
+  let ctr = (ox + w/2, cy);
+  let top = (ox + w/2, figHeight.ink - stem/2);
 
   path bowl (stroke: stem) {
-    start  (at: (ox + w/2, figHeight.ink - stem/2), dir: right)
-    spline (to: (ox + w, cy),                       dir: down)
-    spline (to: (ox + w/2, baseline.ink + stem/2),  dir: left)
-    spline (to: (ox, cy),                           dir: up)
+    start (at: top)
+    arc   (center: ctr, to: (ox + w, cy),                      sweep: "cw")
+    arc   (center: ctr, to: (ox + w/2, baseline.ink + stem/2), sweep: "cw")
+    arc   (center: ctr, to: (ox, cy),                          sweep: "cw")
+    arc   (center: ctr, to: top,                               sweep: "cw")
     close
   }
 }
@@ -1180,10 +1239,10 @@ glyph two (codepoint: U+0032, advance: glyph.bbox.x1 + sidebear) {
   let top  = figHeight.y;
   let turn = (ox + w * 0.93, top * 0.66);
 
-  path arc (stroke: stem) {
-    start  (at: (ox, top * 0.78),                   dir: up)
-    spline (to: (ox + w/2, figHeight.ink - stem/2), dir: right)
-    spline (to: turn,                               dir: down)
+  path bowl (stroke: stem) {
+    start (at: (ox, top * 0.78))
+    arc   (center: (ox + w/2, top * 0.78), to: (ox + w/2, figHeight.ink - stem/2), sweep: "cw")
+    arc   (center: (ox + w/2, turn.y),     to: turn,                               sweep: "cw")
   }
   path diag (stroke: stem) {
     start (at: turn)
@@ -1198,17 +1257,20 @@ glyph two (codepoint: U+0032, advance: glyph.bbox.x1 + sidebear) {
 glyph three (codepoint: U+0033, advance: glyph.bbox.x1 + sidebear) {
   let w   = figW * 0.90;
   let top = figHeight.y;
-  let mid = (ox + w * 0.44, top * 0.52);
+  let mid = (ox + w * 0.44, top * 0.52);           // where the two bowls meet
+  let tp  = (ox + w/2, figHeight.ink - stem/2);
+  let yU  = (tp.y + mid.y) / 2;                    // upper bowl's right extreme
 
-  path arcU (stroke: stem) {
-    start  (at: (ox, top * 0.80),                   dir: up)
-    spline (to: (ox + w/2, figHeight.ink - stem/2), dir: right)
-    spline (to: mid,                                dir: down)
+  path bowlU (stroke: stem) {
+    start (at: (ox, top * 0.80))
+    arc   (center: (tp.x, top * 0.80), to: tp,                   sweep: "cw")
+    arc   (center: (tp.x, yU),         to: (ox + w * 0.88, yU), sweep: "cw")
+    arc   (center: (mid.x, yU),        to: mid,                  sweep: "cw")
   }
-  path arcL (stroke: stem) {
-    start  (at: mid,                   dir: right)
-    spline (to: (ox + w, top * 0.26),  dir: down)
-    spline (to: (ox, top * 0.14),      dir: left)
+  path bowlL (stroke: stem) {
+    start (at: mid)
+    arc   (center: (mid.x, top * 0.26), to: (ox + w, top * 0.26), sweep: "cw")
+    arc   (center: (ox, top * 0.26),    to: (ox, top * 0.14),     sweep: "cw")
   }
 }
 
@@ -1246,9 +1308,9 @@ glyph five (codepoint: U+0035, advance: glyph.bbox.x1 + sidebear) {
     line  (to: neck)
   }
   path bowl (stroke: stem) {
-    start  (at: neck,                       dir: right)
-    spline (to: (sidebear + w, top * 0.28), dir: down)
-    spline (to: (sidebear, top * 0.10),     dir: left)
+    start (at: neck)
+    arc   (center: (neck.x, top * 0.28),   to: (sidebear + w, top * 0.28), sweep: "cw")
+    arc   (center: (sidebear, top * 0.28), to: (sidebear, top * 0.10),     sweep: "cw")
   }
 }
 
@@ -1256,18 +1318,23 @@ glyph six (codepoint: U+0036, advance: glyph.bbox.x1 + sidebear) {
   let w  = figW * 0.88;
   let cy = figHeight.y * 0.30;
   let by = cy * 2;
+  let hk = w * 0.18;                                 // terminal handle length
+  let tm = (ox + w * 0.88, figHeight.y * 0.86);      // terminal
+  let tp = (ox + w * 0.40, figHeight.ink - stem/2);
+  let bc = (ox + w/2, cy);                           // bowl centre
 
   path spine (stroke: stem) {
-    start  (at: (ox + w * 0.88, figHeight.y * 0.86),     dir: dir(160deg))
-    spline (to: (ox + w * 0.40, figHeight.ink - stem/2), dir: left)
-    spline (to: (ox, cy),                                dir: down)
+    start (at: tm)
+    cube  (c1: polar(tm, hk, 160deg), c2: polar(tp, hk, 0deg), to: tp)
+    arc   (center: (tp.x, cy), to: (ox, cy), sweep: "ccw")
   }
   path bowl (stroke: stem) {
-    start  (at: (ox, cy),                          dir: down)
-    spline (to: (ox + w/2, baseline.ink + stem/2), dir: right)
-    spline (to: (ox + w, cy),                      dir: up)
-    spline (to: (ox + w/2, by),                    dir: left)
-    close                                          // back to (ox, cy), tangent down
+    start (at: (ox, cy))
+    arc   (center: bc, to: (ox + w/2, baseline.ink + stem/2), sweep: "ccw")
+    arc   (center: bc, to: (ox + w, cy),                      sweep: "ccw")
+    arc   (center: bc, to: (ox + w/2, by),                    sweep: "ccw")
+    arc   (center: bc, to: (ox, cy),                          sweep: "ccw")
+    close
   }
 }
 
@@ -1292,18 +1359,24 @@ glyph eight (codepoint: U+0038, advance: glyph.bbox.x1 + sidebear) {
   let ux    = ox + (w - uw) / 2;
   let uy    = (waist + figHeight.y) / 2;
 
+  let tp    = (ox + w/2, figHeight.ink - stem/2);
+  let cU    = (ox + w/2, uy);
+  let cL    = (ox + w/2, waist/2);
+
   path bowlU (stroke: stem) {
-    start  (at: (ox + w/2, figHeight.ink - stem/2), dir: right)
-    spline (to: (ux + uw, uy),                      dir: down)
-    spline (to: (ox + w/2, waist),                  dir: left)
-    spline (to: (ux, uy),                           dir: up)
+    start (at: tp)
+    arc   (center: cU, to: (ux + uw, uy),     sweep: "cw")
+    arc   (center: cU, to: (ox + w/2, waist), sweep: "cw")
+    arc   (center: cU, to: (ux, uy),          sweep: "cw")
+    arc   (center: cU, to: tp,                sweep: "cw")
     close
   }
   path bowlL (stroke: stem) {
-    start  (at: (ox + w/2, waist),                 dir: right)
-    spline (to: (ox + w, waist/2),                 dir: down)
-    spline (to: (ox + w/2, baseline.ink + stem/2), dir: left)
-    spline (to: (ox, waist/2),                     dir: up)
+    start (at: (ox + w/2, waist))
+    arc   (center: cL, to: (ox + w, waist/2),                 sweep: "cw")
+    arc   (center: cL, to: (ox + w/2, baseline.ink + stem/2), sweep: "cw")
+    arc   (center: cL, to: (ox, waist/2),                     sweep: "cw")
+    arc   (center: cL, to: (ox + w/2, waist),                 sweep: "cw")
     close
   }
 }

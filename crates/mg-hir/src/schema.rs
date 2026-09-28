@@ -6,9 +6,10 @@
 //! M2: "That single table produces every field-validation error... Do not
 //! scatter these checks"). A field's *value* (type, constant-ness, enum
 //! legality) and positional rules that need sibling context (`caps`
-//! needing an open path, `curl` needing to be the final segment) are still
-//! checked where the field is used, in `crate::lower` and
-//! `crate::path_check` respectively — this table has no such context.
+//! needing an open path, an omitted `c`/`c1` needing the previous
+//! declaration to be the same kind) are still checked where the field is
+//! used, in `crate::lower` and `crate::path_check` respectively — this
+//! table has no such context.
 
 use std::ops::Range;
 
@@ -98,18 +99,25 @@ pub const PATH_FIELDS: &[FieldSchema] = &[
     field("enabled", false),
 ];
 
-pub const START_FIELDS: &[FieldSchema] =
-    &[field("at", true), field("dir", false), field("curl", false)];
+pub const START_FIELDS: &[FieldSchema] = &[field("at", true)];
 
 pub const LINE_FIELDS: &[FieldSchema] = &[field("to", true)];
 
-pub const SPLINE_FIELDS: &[FieldSchema] = &[
+pub const QUAD_FIELDS: &[FieldSchema] = &[field("to", true), field("c", false)];
+
+pub const CUBE_FIELDS: &[FieldSchema] = &[field("to", true), field("c1", false), field("c2", true)];
+
+/// `center` and `rx`/`ry` are two mutually exclusive ways to fix an
+/// `arc`'s ellipse (spec §6.3 centre mode / radii mode); at least one must
+/// be given, which `crate::lower::check_arc_mode` checks separately since
+/// this table only expresses per-field shape, not "one of these groups."
+pub const ARC_FIELDS: &[FieldSchema] = &[
     field("to", true),
-    with_mutex(field("dir", false), &["controls"]),
-    with_mutex(field("fromDir", false), &["controls"]),
-    with_mutex(field("tension", false), &["controls"]),
-    with_mutex(field("controls", false), &["dir", "fromDir", "tension"]),
-    field("curl", false),
+    field("sweep", true),
+    with_mutex(field("center", false), &["rx", "ry"]),
+    with_requires(with_mutex(field("rx", false), &["center"]), &["ry"]),
+    with_requires(with_mutex(field("ry", false), &["center"]), &["rx"]),
+    with_requires(field("large", false), &["rx"]),
 ];
 
 pub const ANCHOR_FIELDS: &[FieldSchema] = &[field("at", true)];

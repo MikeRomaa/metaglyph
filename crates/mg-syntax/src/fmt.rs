@@ -183,7 +183,7 @@ fn print_declaration(node: &SyntaxNode, indent: usize, out: &mut String) {
     match node.kind() {
         LET_STMT => print_let_stmt(node, out),
         FONT | PARAM | METRIC | GLYPH | INSTANCE | GROUP | KERN | PATH | ANCHOR | COMPONENT
-        | START | LINE | SPLINE | CLOSE => print_block(node, indent, out),
+        | START | LINE | QUAD | CUBE | ARC | CLOSE => print_block(node, indent, out),
         // Malformed input (an `ERROR` node): best-effort, lossy fallback.
         _ => out.push_str(&node.text().to_string()),
     }
@@ -215,7 +215,9 @@ fn keyword_text(kind: SyntaxKind) -> &'static str {
         COMPONENT => "component",
         START => "start",
         LINE => "line",
-        SPLINE => "spline",
+        QUAD => "quad",
+        CUBE => "cube",
+        ARC => "arc",
         CLOSE => "close",
         _ => unreachable!("print_block only called on declaration-keyword node kinds"),
     }

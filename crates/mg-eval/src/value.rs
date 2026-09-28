@@ -10,7 +10,8 @@
 //! `mg-hir` already reads a `range` field's bounds directly (see
 //! `mg_hir::model::ParamDecl::range`).
 
-use kurbo::{Affine, BezPath, Line, Point};
+use kurbo::{Affine, Line, Point};
+use mg_geom::skeleton::Skeleton;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Rect {
@@ -74,10 +75,12 @@ pub enum Value {
     Pair(Point),
     Line(Line),
     Transform(Affine),
-    /// A realized skeleton (spec plan M3's scope — see
-    /// `mg_geom::skeleton`). `subpath`/`reverse` results are the same
-    /// variant, since spec §5.9 gives them no separate type.
-    Path(BezPath),
+    /// A realized skeleton (see `mg_geom::skeleton`), plus the
+    /// authored-segment piece counts a parameter-domain query needs (spec
+    /// §5.9: an `arc` divides its span across several underlying cubic
+    /// pieces). `subpath`/`reverse` results are the same variant, since
+    /// spec §5.9 gives them no separate type.
+    Path(Skeleton),
     Rect(Rect),
     Zone(Zone),
     List(Vec<Value>),
@@ -92,7 +95,7 @@ impl std::fmt::Display for Value {
             Value::Pair(p) => write!(f, "({}, {})", p.x, p.y),
             Value::Line(l) => write!(f, "line[({}, {})-({}, {})]", l.p0.x, l.p0.y, l.p1.x, l.p1.y),
             Value::Transform(_) => write!(f, "transform"),
-            Value::Path(p) => write!(f, "path[{} segments]", p.segments().count()),
+            Value::Path(p) => write!(f, "path[{} segments]", p.piece_counts.len()),
             Value::Rect(r) => write!(f, "rect[{}, {}, {}, {}]", r.x0, r.y0, r.x1, r.y1),
             Value::Zone(z) => write!(f, "zone[y={}, ink={}]", z.y, z.ink),
             Value::List(items) => {
@@ -160,7 +163,7 @@ impl Value {
         }
     }
 
-    pub fn as_path(&self) -> Option<&BezPath> {
+    pub fn as_path(&self) -> Option<&Skeleton> {
         match self {
             Value::Path(p) => Some(p),
             _ => None,

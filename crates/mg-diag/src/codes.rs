@@ -98,6 +98,9 @@ pub const MULTIPLE_CLOSE: Code = Code::new("MG0505");
 pub const MULTIPLE_START: Code = Code::new("MG0506");
 pub const START_NOT_FIRST: Code = Code::new("MG0507");
 pub const FILL_REQUIRES_CLOSED_PATH: Code = Code::new("MG0508");
+/// A `cube` without `c1`, or a `quad` without `c`, whose previous
+/// declaration is not a segment of the same kind (spec §6.3 reflection).
+pub const INVALID_REFLECTION: Code = Code::new("MG0509");
 
 // -- MG06xx: evaluation and domain errors (mg-eval) -----------------------
 //
@@ -114,9 +117,12 @@ pub const MEET_ON_PARALLEL_LINES: Code = Code::new("MG0605");
 pub const PATH_PARAMETER_OUT_OF_DOMAIN: Code = Code::new("MG0606");
 pub const EMPTY_LIST_REDUCTION: Code = Code::new("MG0607");
 pub const GLYPH_HAS_NO_INK: Code = Code::new("MG0608");
-pub const FREE_DIRECTION_NOT_YET_IMPLEMENTED: Code = Code::new("MG0609");
+pub const NO_AXIS_ALIGNED_ELLIPSE: Code = Code::new("MG0609");
 pub const STROKING_NOT_YET_IMPLEMENTED: Code = Code::new("MG0610");
 pub const ZERO_LENGTH_SEGMENT: Code = Code::new("MG0611");
 pub const NEEDS_BEZIER_CLIPPING: Code = Code::new("MG0612");
 pub const POWER_DOMAIN_ERROR: Code = Code::new("MG0613");
 pub const ZERO_VECTOR: Code = Code::new("MG0614");
+/// A radii-mode `arc` (spec §6.3) whose chord is longer than `rx`/`ry` can
+/// span, or whose `rx`/`ry` is non-positive.
+pub const RADII_TOO_SMALL_FOR_CHORD: Code = Code::new("MG0615");

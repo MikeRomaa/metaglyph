@@ -35,7 +35,7 @@ A round-ended stroke cannot, by itself, produce a flat-sided slab serif or an ar
 | Mechanism | How | Handles |
 |---|---|---|
 | **Caps and joins** (§7.3, §8.3) — computed during the offset walk | Zero intersections for all three caps and two of three joins; `miter` needs one local curve–curve solve | Butt / round / square ends, asymmetric ends, corner treatments |
-| **Segment direction sets the cut angle** | A `"butt"` cap is perpendicular to the tangent, and `dir:` on the final segment sets that tangent — so any perpendicular-to-stroke cut is available at whatever angle you choose | Angled and sheared terminals, flat cuts on diagonals |
+| **Segment direction sets the cut angle** | A `"butt"` cap is perpendicular to the tangent, and the final segment's last control point sets that tangent — so any perpendicular-to-stroke cut is available at whatever angle you choose | Angled and sheared terminals, flat cuts on diagonals |
 | **Overlapping paths** | Overlaps are kept and nonzero winding is order-independent (§9.1), so adjacent paths fuse for free | Slab serifs, flat apexes and flat tops across several strokes, abrupt width changes, compound terminals |
 | **`fill` on a closed path** (§7.2) | The path's own outline is the contour; no offsetting, so no cap, join, or curvature limit applies to it | Anything the three above cannot reach: off-perpendicular cuts, contrast within one shape, arbitrary outlines |
 
@@ -93,7 +93,7 @@ The spec's pipeline (spec §3) refines this sketch in two places. Instance slant
 | `pair` | 2-vector. Used for points, directions, offsets. |
 | `point` | Alias for `pair` used in position contexts. No distinct semantics; keeps code readable. |
 | `transform` | Affine 2×3. Composable. |
-| `path` | Ordered chain of segments (`start`, `line`, `spline`), open or closed. Each segment names the point it arrives at and carries only the fields its own kind admits (§7.2.1). Realized as cubic Béziers. |
+| `path` | Ordered chain of SVG-style segments (`start`, `line`, `quad`, `cube`, `arc`), open or closed. Each segment names the point it arrives at and carries only the fields its own kind admits (§7.2.1). Realized as cubic Béziers. |
 | — | There is no width or profile *type*. The stroke width is a single `num` on the path, the `stroke` field (§7.3); it does not vary along a path. |
 | `cap` | End treatment for an open stroke. A **closed set of string literals**, no arguments, not user-extensible: `"butt"` (default), `"round"`, `"square"` (§7.3). Settable per end. |
 | `join` | Corner treatment where two segments meet. Likewise a string literal: `"miter"` (default), `"round"`, `"bevel"`. Settable per path and per segment. |
@@ -226,7 +226,7 @@ glyph A (codepoint: U+0041,
 
 Every bare name above is declared somewhere in the snippet — `stem`, `sidebear`, `capHeight` at top level, `w` and `apex` in the glyph. The only prefixed name is `glyph.bbox`, which is built in (§6.5).
 
-Every construct follows the same shape at every depth — `glyph`, `path`, `start`, `line`, `spline`, `param`, `metric`, `group`, `kern`, `instance`. There is no second mechanism to learn and no per-construct exception.
+Every construct follows the same shape at every depth — `glyph`, `path`, `start`, `line`, `quad`, `cube`, `arc`, `param`, `metric`, `group`, `kern`, `instance`. There is no second mechanism to learn and no per-construct exception.
 
 #### Top-level directives
 
@@ -401,7 +401,7 @@ One collision is *not* solved this way and needed a rename instead: `line` is a 
 
 #### Reserved words may not be used as declaration names
 
-**`up` `down` `left` `right` `true` `false` `and` `or` `not`, the declaration keywords, and the namespace roots are reserved** (spec §5.4). Directions stay reserved because they are genuine `pair` *values* usable in expressions — `dir: right` and `dir: dir(65deg)` are interchangeable — so they do live in the name environment, unlike the string-valued enums.
+**`up` `down` `left` `right` `true` `false` `and` `or` `not`, the declaration keywords, and the namespace roots are reserved** (spec §5.4). Directions stay reserved because they are genuine `pair` *values* usable in expressions — `right` and `dir(0deg)` are interchangeable, as in `c1: p + right * k` — so they do live in the name environment, unlike the string-valued enums.
 
 #### Summary
 
@@ -467,12 +467,14 @@ path <name> (
   joinAt:   { segmentName: <string>, … },
   enabled:  <bool>,                   // conditional rendering
 ) {
-  start  <name>? ( at: <point>, dir?, curl? )        // exactly one, first
-  line   <name>? ( to: <point> )                     // §7.2.1
-  spline <name>? ( to: <point>, dir?, fromDir?,
-                   tension?, controls?, curl? )
+  start <name>? ( at: <point> )                                // exactly one, first
+  line  <name>? ( to: <point> )                                // §7.2.1
+  quad  <name>? ( c: <point>?, to: <point> )
+  cube  <name>? ( c1: <point>?, c2: <point>, to: <point> )
+  arc   <name>? ( to: <point>, sweep: <string>,
+                  center: <point> | rx: <num>, ry: <num>, large: <bool>? )
   …                                   // order is significant
-  close                                              // at most one, last
+  close                                                        // at most one, last
 }
 ```
 
@@ -486,7 +488,7 @@ A separate stroke construct would buy two things — a skeleton that doesn't ren
 | Same skeleton at two stroke widths | two paths, one with `follows:` |
 | Filled interior | `fill: true`, with `close` |
 | Filled shape with a stroked border | both on one path |
-| Flat-cut terminal | the final segment's `dir`, or an overlapping path (§1.1) |
+| Flat-cut terminal | the final segment's last control point, or an overlapping path (§1.1) |
 | Render order | declaration order |
 | Conditional rendering | `enabled:` |
 
@@ -494,19 +496,20 @@ A separate stroke construct would buy two things — a skeleton that doesn't ren
 
 **`.bbox` disambiguation:** `p.bbox` is the bounds of *whatever the path is* — skeleton bounds for a construction path, inked bounds for a rendering path. Sidebearings want inked, and `bowl.bbox.width` gives it.
 
-It is also the only way to reach a curve's extreme. A bowl's rightmost ink lies at the spline's x-extremum, which is not in general any declared point, and `extrema(p)` cannot supply it — that returns a list of parameters and the language has no indexing (§6.4), so there is no way to evaluate the path at the one that matters.
+It is also the only way to reach a curve's extreme. A bowl's rightmost ink lies at the curve's x-extremum, which is not in general any declared point, and `extrema(p)` cannot supply it — that returns a list of parameters and the language has no indexing (§6.4), so there is no way to evaluate the path at the one that matters.
 
 ### 7.2.1 Segments, not knots
 
-A path body is a chain of **segment declarations** — `start`, then `line` and `spline` — each naming the point it *arrives at*. One declaration per point.
+A path body is a chain of **segment declarations** in the shape of SVG path data — `start` (moveto), then `line`, `quad`, `cube`, and `arc` (lineto, the two curvetos, and an elliptical arc) — each naming the point it *arrives at*. One declaration per point.
 
 ```
 path bowl (stroke: stem) {
-  start  (at: t, dir: right)
-  spline (to: r, dir: down)
-  spline (to: b, dir: left)
-  spline (to: l, dir: up)
-  close         // the closing spline left→top; both tangents already known
+  start (at: t)
+  arc   (center: ctr, to: r, sweep: "cw")
+  arc   (center: ctr, to: b, sweep: "cw")
+  arc   (center: ctr, to: l, sweep: "cw")
+  arc   (center: ctr, to: t, sweep: "cw")
+  close         // already back at t: nothing appended
 }
 
 path upright (stroke: stem) {
@@ -516,42 +519,43 @@ path upright (stroke: stem) {
 }
 ```
 
-**Why segments rather than knots.** The properties a path needs do not all belong to points. `tension` is per-segment (METAFONT even allows a different value at each end), `controls` is two handles on a segment, and the segment *type* is obviously a segment's own. Putting them on a point makes `knot (at: p, segment: line, tension: 1.2)` grammatically legal and meaningless. With segment-typed declarations, **`line` simply has no `dir`, `tension`, or `controls` field**, so the invalid state is unrepresentable rather than merely discouraged.
+**Why segments rather than knots.** The properties a path needs do not all belong to points. Control points are handles on a segment, an arc's centre and sweep describe a segment, and the segment *type* is obviously a segment's own. Putting them on a point makes `knot (at: p, segment: line, c1: q)` grammatically legal and meaningless. With segment-typed declarations, **`line` simply has no control-point field**, so the invalid state is unrepresentable rather than merely discouraged.
 
-This is also the same shape as SVG path data — moveto, lineto, curveto — which is consistent with the SVG stroke semantics of §7.3.
+This is the same shape as SVG path data — moveto, lineto, curveto, arc — which is consistent with the SVG stroke semantics of §7.3.
 
-#### Direction
+#### Explicit geometry, no inheritance
 
-`dir:` is the tangent **at the declaration's own endpoint**. A segment's *departure* direction is inherited from the previous declaration's `dir:`, so stating a tangent once makes the joint smooth — which is the common case in letterforms.
+Every segment's curve is fixed by its own fields and the current point. `quad` and `cube` name their Bézier control points; `arc` names a sweep direction and either the centre of an axis-aligned ellipse, whose radii then follow from the two endpoints, or the radii, whose centre then follows. A joint is smooth exactly when the tangents on either side agree, and a corner happens wherever they don't — at a `line` joint that means nothing is declared either way.
 
-A corner needs one extra field:
+**Arcs have two modes, and `center` excludes `rx`/`ry`.** An axis-aligned ellipse has four unknowns — centre and two radii — and the two endpoints give two equations. Each mode declares the other half, so neither is over-determined and nothing is stated twice (§5.1).
 
-```
-  spline (to: b, dir: right)
-  spline (to: c, dir: down, fromDir: up)   // arrives right at b, leaves up
-```
+- **Centre mode** is the default for letterform bowls, which are authored from a centre — the `o`'s middle, a bowl's axis — the value a designer already has in a `let`. SVG's four-way `large-arc` × `sweep` choice collapses to one `"ccw"`/`"cw"` string, because a centre fixes which ellipse. Its gap is endpoints symmetric about the centre, such as the top and bottom of an oval, which leave the radii undetermined. There it falls back to a circle when the endpoints are equidistant and is an error otherwise.
+- **Radii mode** is SVG's endpoint arc without rotation, and it covers that gap: a half-oval is `rx`, `ry`, and a diameter chord. It also reaches what centre mode cannot, such as a fillet of known radius between two points. Fixed radii admit two centres, one on each side of the chord, so this mode brings back SVG's large-arc flag as `large: bool`, default `false`. Unlike SVG, radii too small for the chord are an error rather than silently enlarged.
 
-`line` has no direction fields at all: its direction follows from its endpoints, and a corner at a line joint therefore happens with nothing declared. That removes METAFONT's `--` versus `---` distinction entirely.
+An earlier draft let a centre-mode arc also declare one radius. It was dropped because a declared radius beside a centre is redundant in the common case and needs an endpoint-on-ellipse check to catch disagreement. The two modes need that check only at their fallback edges. A rotated ellipse is not expressible as an arc — split it, or use `cube`.
 
-Where `dir` is omitted, control points come from **Hobby's algorithm** (mock-curvature matching; a tridiagonal system for turning angles, cyclic-tridiagonal for closed paths). It is a self-contained numeric routine on fully known points — it fits the directed model, and it is independently verifiable against METAFONT output (§16.2).
+**The one positional rule is reflection**, SVG's `S`/`T`: a `cube` may omit `c1` when the previous segment is a `cube`, which then takes the reflection of that cube's `c2` through the joint. `quad` does the same with `c`. It keeps a smooth chain of curves from repeating every mirrored handle. It applies only after a segment of the same kind — SVG's fallback to the current point after any other command is a silent degenerate handle, so here it is a structural error instead.
 
-**This inheritance rule is the one regression** from putting direction on a point, where `in:` and `out:` sat in a single explicit pair. It is an implicit rule an implementer can get wrong, so it is stated here and tested in §16.2.
+#### Why not Hobby splines
+
+The earlier grammar was METAFONT's: a `spline` segment took `dir`/`fromDir` tangents, `tension`, and end `curl`, and Hobby's algorithm solved for any direction left free. It was dropped:
+
+- **Non-local geometry.** A free direction is a tridiagonal (cyclic, on a closed path) solve over the whole run, so moving one point reshapes its neighbours' curves. Every explicit segment depends only on itself, and on its predecessor under reflection.
+- **An implicit inheritance rule.** A segment's departure direction came from the previous declaration's `dir`, unless a `line` intervened or `fromDir` overrode it. That rule was the grammar's one regression, and needed its own tests.
+- **An external oracle.** Verifying Hobby's curve needs METAFONT as a differential oracle. Explicit segments need only Bézier and ellipse identities.
+- **Editor mapping.** Control points are the handles every drawing tool already shows; `tension` and `curl` have no direct-manipulation equivalent.
+
+The cost is authoring effort: smooth joints and handle lengths are written, not computed. Arcs absorb most of it — nearly every letterform curve that meets axis-aligned tangents is a quarter ellipse — and `polar` places the remaining handles at a named angle and length.
 
 #### Naming and closing
 
-**Naming a segment names its endpoint.** `spline shoulder (to: r, dir: down)` makes `shoulder` the key for `joinAt` (§7.3) — and "join at `shoulder`" reads correctly, since joins occur at points. Names are genuinely optional: `joinAt` is the only thing that needs them, so most segments in practice have none. Names may not be reserved words (§6.5).
+**Naming a segment names its endpoint.** `arc shoulder (center: c, to: r, sweep: "cw")` makes `shoulder` the key for `joinAt` (§7.3) — and "join at `shoulder`" reads correctly, since joins occur at points. Names are genuinely optional: `joinAt` is the only thing that needs them, so most segments in practice have none. Names may not be reserved words (§6.5).
 
-**`close` is a body declaration, last in the chain, not a config field.** It *is* the closing segment — a `spline` from the last endpoint back to the start's point, fully determined because both tangents are already known there — so it is written where it actually occurs rather than as a header flag that silently appends one.
+**`close` is a body declaration, last in the chain, not a config field.** It *is* the closing segment — a straight line from the last endpoint back to the start's point, SVG's `Z` — so it is written where it actually occurs rather than as a header flag that silently appends one. A curved closure is written as an ordinary final segment ending at the start point.
 
 A path is closed if and only if its body declares `close`. Coincident endpoints alone do not close a path: that keeps the flag and the geometry from ever disagreeing, and it leaves a shape whose two capped ends happen to meet still expressible. Where the final declaration already ends at the start point, the closing segment is degenerate and omitted, but the path is still closed.
 
-#### Remaining fields
-
-- `tension: 1.2` symmetric, or `tension: (1.2, 0.8)` for departure and arrival separately. Splines only.
-- `controls: (c1, c2)` — explicit Bézier handles, the escape hatch when Hobby's curve is not what you want. Splines only.
-- `curl:` is meaningful only at an **open** path's two ends — on `start`, and on the final segment.
-
-Structural errors (§14): no `start`, more than one `start`, a spline-only field on a `line`, `fromDir` on the first segment after `start` (there is no inherited direction to override), a `joinAt` key naming no segment in the path, more than one `close`, and any declaration following `close`.
+Structural errors (§14): no `start`, more than one `start`, a field the declaration's kind does not admit, an omitted `c1`/`c` after a segment of another kind, a `joinAt` key naming no segment in the path, more than one `close`, and any declaration following `close`.
 
 ### 7.3 Strokes, stroke width, caps, joins
 
@@ -570,10 +574,10 @@ path arm (
   joins:  "miter",                                  // path-wide default
   joinAt: { elbow: "bevel", wrist: "round" },         // per-point overrides
 ) {
-  start  (at: a)
-  spline elbow (to: b, dir: down,  fromDir: right)
-  spline wrist (to: c, dir: right, fromDir: down)
-  spline (to: d)
+  start      (at: a)
+  line elbow (to: b)
+  line wrist (to: c)
+  cube       (c1: polar(c, k, 0deg), c2: polar(d, k, 90deg), to: d)
 }
 ```
 
@@ -599,18 +603,18 @@ The **miter limit is a named implementation constant** (4, the SVG default), not
 
 Since the implicit pen is a circle, there is no "untreated envelope" case to name: a circular pen's own boundary at an endpoint *is* a semicircle, so what would have been `natural` is simply `"round"`. That is why SVG never needed the concept, and why it is absent here.
 
-#### Angled terminals come from the final segment's direction
+#### Angled terminals come from the final segment's last control point
 
-A `"butt"` cap is perpendicular to the tangent, and that tangent is yours to set. So the cut angle is fully controllable — not by a cap parameter, but by the segment:
+A `"butt"` cap is perpendicular to the tangent, and that tangent is yours to set: it points from the final segment's last control point to its endpoint. So the cut angle is fully controllable — not by a cap parameter, but by the segment:
 
 ```
 path arm (stroke: hairline, caps: { end: "butt" }) {
-  start  (at: b, dir: right)
-  spline (to: t, dir: dir(70deg))   // butt cap lands at 70deg + 90deg
+  start (at: b)
+  cube  (c1: polar(b, k, 0deg), c2: polar(t, k, 70deg + 180deg), to: t)   // butt cap lands at 70deg + 90deg
 }
 ```
 
-Setting `dir:` on the final segment is therefore the terminal-angle tool. Tie that direction to a parameter and every terminal in the face rotates together.
+Writing that control point as `polar(end, len, θ)` is therefore the terminal-angle tool. Tie `θ` to a parameter and every terminal in the face rotates together.
 
 **The coupling this imposes**, stated plainly because it is the accepted cost of having no region booleans (§1.1): the cut angle and the stroke's direction at that point are the same degree of freedom. A curved arm that must arrive at 70° but be cut at 90° cannot be built directly. End the skeleton with a short straight segment oriented to give the cut you want, and accept a slight corner where it meets the curve — real terminals frequently have one. A tangent-continuous curve with an off-perpendicular cut is not expressible.
 
@@ -703,11 +707,13 @@ glyph o (codepoint: U+006F,
 
   let w = stem * 4.2;                  // centreline extent, not ink width
                                        //   (§13.1 — ink is w + stem)
+  let ctr = (w/2, xHeight.y / 2);      // the bowl's centre
   path bowl (stroke: stem) {
-    start  (at: (w/2, xHeight.ink),     dir: right)   // .ink adds overshoot
-    spline (to: (w,   xHeight.y / 2),   dir: down)
-    spline (to: (w/2, baseline.ink), dir: left)
-    spline (to: (0,   xHeight.y / 2),   dir: up)
+    start (at: (w/2, xHeight.ink))                         // .ink adds overshoot
+    arc   (center: ctr, to: (w,   xHeight.y / 2), sweep: "cw")
+    arc   (center: ctr, to: (w/2, baseline.ink),  sweep: "cw")
+    arc   (center: ctr, to: (0,   xHeight.y / 2), sweep: "cw")
+    arc   (center: ctr, to: (w/2, xHeight.ink),   sweep: "cw")
     close
   }
 }
@@ -862,7 +868,7 @@ Then compute signed area per contour and reverse where direction disagrees with 
 
 **Construction:** point (literal or derived via the §6.3 constructors), line (`lineThrough` / `lineAt` / `hline` / `vline`), metric guide, vertical guide, symmetry axis, grid, measurement. Note there is no "constraint" tool — in a directed system the equivalent tools *rewrite definitions*, covered below.
 
-**Shape:** path tool (place points, which appends `line` or `spline` segments), **fill toggle** (sets `fill`, appending `close` if the path lacks it), **segment-kind toggle** (`line` ↔ `spline` — and since `line` admits no `dir`/`tension`/`controls`, switching kinds *removes* fields rather than leaving dead ones behind), **direction, curl, and tension controls** (spline segments only), **width tool** (set `stroke`, which is also what promotes a construction path to a rendering one), **cap tool** (per-end; three-way pick `"butt"` / `"round"` / `"square"`), **join tool** (three-way pick `"miter"` / `"round"` / `"bevel"`, path-wide default plus per-segment override), transform & instance placement, composite reference.
+**Shape:** path tool (place points, which appends `line`, `quad`, `cube`, or `arc` segments), **fill toggle** (sets `fill`, appending `close` if the path lacks it), **segment-kind toggle** (among `line`, `quad`, `cube`, `arc` — and since `line` admits no control points, switching kinds *removes* fields rather than leaving dead ones behind), **control-point handles** (`quad`, `cube`) and **centre and sweep controls** (`arc`), **width tool** (set `stroke`, which is also what promotes a construction path to a rendering one), **cap tool** (per-end; three-way pick `"butt"` / `"round"` / `"square"`), **join tool** (three-way pick `"miter"` / `"round"` / `"bevel"`, path-wide default plus per-segment override), transform & instance placement, composite reference.
 
 Segment-typed declarations pay off directly here: the editor never has to gray out an inapplicable field, because an inapplicable field does not exist on that declaration (§7.2.1).
 
@@ -870,7 +876,7 @@ Because `path` is the only shape construct (§7.2), every one of these tools set
 
 Because caps and joins are parameterless string values (§7.3), those two tools are pure three-way toggles — no numeric fields, no drag handles. The two tools that carry real expressive weight are instead:
 
-- **The end-direction tool**, which is the terminal-angle tool (§7.3). Setting `dir:` on the final segment rotates the butt cap; tie it to a parameter and every terminal in the face turns together. There is no trim tool, because there is no trim (§1.1).
+- **The end-direction tool**, which is the terminal-angle tool (§7.3). It rewrites the final segment's last control point as `polar(end, len, θ)`, which rotates the butt cap; tie `θ` to a parameter and every terminal in the face turns together. There is no trim tool, because there is no trim (§1.1).
 - **The stroke tool**, which is the contrast model (§7.3). Dragging a stroke width is the most direct expression of design intent in the whole editor, and it is a genuine scalar drag — so it is the one place where case 1 of §10.2 (rewrite a literal) always applies cleanly. Since `stroke` lives on the path, the drag target and the text node are the same thing.
 
 **Relationship:** these tools **rewrite one definition**, which is the whole framing difference from CAD. There is no constraint to add, and no solver to satisfy — the edit is a source transform, and its result is visible immediately because the graph re-evaluates.
@@ -885,7 +891,7 @@ Because caps and joins are parameterless string values (§7.3), those two tools 
 | Mirror across axis | `let p = mirror(q, axis);` |
 | Promote literal to parameter | a literal becomes a reference to a new or existing `param` |
 
-Plus: direction lock on a segment (the tangency tool — sets `dir:`, or `fromDir:` to break the joint into a corner), and the raw expression editor.
+Plus: make-smooth on a joint (the tangency tool — omits `c1`/`c` so it reflects the previous control, or rewrites it as `2·p − c′` where reflection does not apply), and the raw expression editor.
 
 Because every tool's output is one of the §6.3 constructors, **the tool inventory and the construction library are the same list**. That is a useful check in both directions: a tool with no constructor to emit is a gap in §6.3, and a constructor no tool emits is probably dead weight given the decision to start minimal.
 
@@ -1100,7 +1106,7 @@ Non-negotiable given that the source is meant to *be* the font.
 Ordered by value per unit of effort:
 
 1. **Evaluation engine** — property test that permuting statement order within a scope yields identical results (§5.2 claims this falls out of reference-based graph construction; prove it). Cycle detection tests covering self-reference, two-node, and long cycles, asserting the reported path is the actual cycle and not merely *a* cycle. Golden tests on the `meet`/`mediate`/`project`/`polar`/`mirror` set against hand-computed geometry.
-2. **Hobby splines** — differential test against real METAFONT output. METAFONT is a free, exact oracle for the spline algorithm; use it. Test the **direction-inheritance rule** (§7.2.1) separately and explicitly, since it is the one implicit rule in the path grammar: assert that omitting `fromDir` produces a tangent-continuous joint, that supplying it produces a corner, and that a `line` adjoining a `spline` never silently inherits a direction.
+2. **Segments** — assert a `quad`'s elevated cubic is exact, and that an `arc`'s cubic pieces stay within the known 90°-piece bound of the true ellipse, by dense sampling. Test the **reflection rule** (§7.2.1) separately and explicitly, since it is the one positional rule in the path grammar: an omitted `c1`/`c` produces a tangent-continuous joint, and omitting it after a segment of another kind is a structural error.
 3. **Offsets** — measure Hausdorff distance against a densely-sampled true offset `p(t) ± r·n̂(t)` and assert it is under tolerance. One case only; constant width means there is no tilt term to get wrong.
    **Caps and joins** get their own tests, since they live inside the offset walk (§8.3): assert `butt` is perpendicular to the tangent; assert `square` equals `butt` on a skeleton pre-extended by hand; assert `round` is a true semicircle of radius `stroke/2`; assert `miter` falls back to `bevel` past the limit and is never trusted on near-collinear boundaries; assert each degenerate case of §8.3 produces the named error rather than a malformed contour.
    **Differential test against a known-good stroker** — render the same path+width+caps+joins through any conforming SVG stroker and compare. With SVG semantics *and* constant width, the output should match a conforming stroker essentially exactly, so this is the strongest oracle in the whole suite and should be the primary test rather than a supplement.
@@ -1121,7 +1127,7 @@ Plan 3 is where the effort and the correctness risk live. Directed construction 
 
 1. **DSL surface** — grammar, lexer, lossless syntax tree, AST lowering, scope resolution, stable node identity, formatter. Written against spec §5, which is normative and exhaustive; §3, §4, §6, and §10.3 here supply rationale only. Read first: per-field validation of string-valued enums (spec §5.5) and element-typed tuples (spec §5.8).
 2. **Evaluation engine** — dependency graph construction from name references, topological evaluation, cycle detection with full-path reporting, the construction library (§6.3), per-glyph scoping, incremental re-evaluation. (§5, §6.3, §14) **This is now a small plan.** It was the largest before the directed-construction decision; sequence it early precisely because it is cheap and everything downstream needs it.
-3. **Geometry kernel** — paths and Hobby splines, constant-width offset generation, caps and joins inside the offset walk, the analytic curvature check, filled-contour emission with its self-intersection detector, contour roles and winding normalization. **No variable width, no region booleans, no half-plane clipping, no planar arrangement, and no self-intersection resolution** (§1.1, §7.3, §9.2). (§7, §8, §9) Sequence: offsets + caps + joins → curvature check → fills → roles → winding normalization.
+3. **Geometry kernel** — paths (lines, quadratic and cubic Béziers, elliptical arcs), constant-width offset generation, caps and joins inside the offset walk, the analytic curvature check, filled-contour emission with its self-intersection detector, contour roles and winding normalization. **No variable width, no region booleans, no half-plane clipping, no planar arrangement, and no self-intersection resolution** (§1.1, §7.3, §9.2). (§7, §8, §9) Sequence: offsets + caps + joins → curvature check → fills → roles → winding normalization.
 4. **Font compiler** — extrema insertion, zone-aware quantization, cu2qu, table assembly for TTF/OTF/WOFF2, hint derivation, metrics, kerning, instances. (§11, §12, §13, §15)
 5. **Editor projection layer** — structured edits per tool, inverse drag, dependency inspection, partial-text tolerance, incremental redraw. (§10)
 
@@ -1148,7 +1154,7 @@ The risk profile has shifted decisively toward *scope* and *ergonomics* and away
 It is research, so verification is review rather than execution:
 
 - Every locked decision in §1 traces to a section that specifies its mechanism.
-- Every algorithm named in §8, §9, §11 has a published reference (Hobby 1985 for the spline; Sederberg–Nishita Bézier clipping; cu2qu; standard tolerance-checked cubic offset fitting, §8.1).
+- Every algorithm named in §8, §9, §11 has a published reference (the standard `4/3·tan(φ/4)` cubic arc approximation; Sederberg–Nishita Bézier clipping; cu2qu; standard tolerance-checked cubic offset fitting, §8.1).
 - The spec's Appendix A sample exercises the grammar on sixteen real glyphs; the omissions it exposed are closed (A.1), and the one deferred decision is recorded with its constraints (A.2).
 - Every decision here has a normative counterpart in the spec. A plan author who has to invent semantics has found a gap in the spec, not here.
 
@@ -1172,8 +1178,8 @@ Three genuine omissions, now closed in the spec:
 
 Two further changes the sample drove:
 
-- **`stroke` collapsed to one constant per path.** The sample originally carried a path-level map keyed by segment name, which forced every modulated path to name its segments and produced keys like `right` and `left` that read as directions while sitting next to `dir: right` meaning the direction. Width is now a single `num` on the path (§7.3). That deleted the map, the `profile` type, the numeric-versus-named key rule, the naming pressure, *and* the whole variable-width envelope in §8 — at the cost of contrast within a stroke. `joinAt` is the only field still needing segment names.
-- **Reserved words may not name declarations** (§6.5). Field-typed resolution made `spline right (…)` next to `dir: right` machine-unambiguous and human-unreadable. Cheap to enforce, and it kills the category.
+- **`stroke` collapsed to one constant per path.** The sample originally carried a path-level map keyed by segment name, which forced every modulated path to name its segments and produced keys like `right` and `left` that read as directions while sitting next to the constant `right` meaning the direction. Width is now a single `num` on the path (§7.3). That deleted the map, the `profile` type, the numeric-versus-named key rule, the naming pressure, *and* the whole variable-width envelope in §8 — at the cost of contrast within a stroke. `joinAt` is the only field still needing segment names.
+- **Reserved words may not name declarations** (§6.5). Field-typed resolution made `cube right (…)` next to `c1: p + right * k` machine-unambiguous and human-unreadable. Cheap to enforce, and it kills the category.
 
 The sample is what made that first trade legible: written out, none of these sixteen glyphs actually wanted within-stroke modulation, because at low contrast the difference lives between the stems and the bars. A high-contrast face would have made the same sample fail.
 

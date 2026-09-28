@@ -27,9 +27,12 @@ pub enum EvalError {
         function: &'static str,
     },
     GlyphHasNoInk,
-    /// A segment's direction was left free; Hobby's algorithm is
-    /// deferred to M4 (spec plan M3).
-    FreeDirection,
+    /// A centre-mode `arc`'s two endpoints admit no axis-aligned ellipse
+    /// about its `center` (spec §6.3, §13 Geometry class).
+    NoAxisAlignedEllipse,
+    /// A radii-mode `arc`'s chord is longer than `rx`/`ry` can span, or
+    /// `rx`/`ry` is non-positive (spec §6.3, §13 Geometry class).
+    RadiiTooSmallForChord,
     /// A rendering path's `.bbox` needs the stroked/filled outline;
     /// stroking is deferred to M4 (spec plan M3).
     StrokingNotYetImplemented,
@@ -63,10 +66,16 @@ impl std::fmt::Display for EvalError {
                 write!(f, "`{function}` of an empty list")
             }
             EvalError::GlyphHasNoInk => write!(f, "`.bbox` of a glyph with no ink"),
-            EvalError::FreeDirection => {
+            EvalError::NoAxisAlignedEllipse => {
                 write!(
                     f,
-                    "a free direction needs Hobby's algorithm, not yet implemented (M4)"
+                    "no axis-aligned ellipse about `center` passes through both endpoints"
+                )
+            }
+            EvalError::RadiiTooSmallForChord => {
+                write!(
+                    f,
+                    "no ellipse with these `rx`/`ry` radii passes through both endpoints"
                 )
             }
             EvalError::StrokingNotYetImplemented => {
@@ -89,8 +98,13 @@ impl std::fmt::Display for EvalError {
 impl From<mg_geom::skeleton::SkeletonError> for EvalError {
     fn from(err: mg_geom::skeleton::SkeletonError) -> Self {
         match err {
-            mg_geom::skeleton::SkeletonError::FreeDirection => EvalError::FreeDirection,
             mg_geom::skeleton::SkeletonError::ZeroLengthSegment => EvalError::ZeroLengthSegment,
+            mg_geom::skeleton::SkeletonError::NoAxisAlignedEllipse => {
+                EvalError::NoAxisAlignedEllipse
+            }
+            mg_geom::skeleton::SkeletonError::RadiiTooSmallForChord => {
+                EvalError::RadiiTooSmallForChord
+            }
         }
     }
 }

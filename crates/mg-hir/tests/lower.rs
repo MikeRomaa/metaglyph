@@ -423,7 +423,7 @@ fn fill_requires_a_closed_path() {
 }
 
 #[test]
-fn curl_on_a_non_final_segment_is_illegal() {
+fn quad_reflection_after_a_different_kind_is_illegal() {
     let src = r#"
         font (name: "T", em: 1000)
         metric baseline (y: 0, align: "bottom")
@@ -434,11 +434,111 @@ fn curl_on_a_non_final_segment_is_illegal() {
         glyph A (advance: 1) {
             path p (stroke: 10) {
                 start (at: (0,0))
-                spline (to: (1,1), curl: 2)
-                spline (to: (2,2))
+                line (to: (1,1))
+                quad (to: (2,2))
+            }
+        }
+    "#;
+    let (_, diagnostics) = lower(src);
+    assert!(codes(&diagnostics).contains(&"MG0509"), "{diagnostics:#?}");
+}
+
+#[test]
+fn arc_mixing_center_and_radii_mode_is_an_error() {
+    let src = r#"
+        font (name: "T", em: 1000)
+        metric baseline (y: 0, align: "bottom")
+        metric xHeight (y: 500)
+        metric capHeight (y: 700)
+        metric ascender (y: 740)
+        metric descender (y: -200)
+        glyph A (advance: 1) {
+            path p (stroke: 10) {
+                start (at: (0,0))
+                arc (to: (10,10), center: (0,10), rx: 5, ry: 5, sweep: "cw")
+            }
+        }
+    "#;
+    let (_, diagnostics) = lower(src);
+    assert!(codes(&diagnostics).contains(&"MG0404"), "{diagnostics:#?}");
+}
+
+#[test]
+fn arc_rx_without_ry_is_an_error() {
+    let src = r#"
+        font (name: "T", em: 1000)
+        metric baseline (y: 0, align: "bottom")
+        metric xHeight (y: 500)
+        metric capHeight (y: 700)
+        metric ascender (y: 740)
+        metric descender (y: -200)
+        glyph A (advance: 1) {
+            path p (stroke: 10) {
+                start (at: (0,0))
+                arc (to: (10,10), rx: 5, sweep: "cw")
             }
         }
     "#;
     let (_, diagnostics) = lower(src);
     assert!(codes(&diagnostics).contains(&"MG0405"), "{diagnostics:#?}");
+}
+
+#[test]
+fn arc_with_neither_center_nor_radii_is_an_error() {
+    let src = r#"
+        font (name: "T", em: 1000)
+        metric baseline (y: 0, align: "bottom")
+        metric xHeight (y: 500)
+        metric capHeight (y: 700)
+        metric ascender (y: 740)
+        metric descender (y: -200)
+        glyph A (advance: 1) {
+            path p (stroke: 10) {
+                start (at: (0,0))
+                arc (to: (10,10), sweep: "cw")
+            }
+        }
+    "#;
+    let (_, diagnostics) = lower(src);
+    assert!(codes(&diagnostics).contains(&"MG0403"), "{diagnostics:#?}");
+}
+
+#[test]
+fn arc_radii_mode_with_large_lowers_with_zero_diagnostics() {
+    let src = r#"
+        font (name: "T", em: 1000)
+        metric baseline (y: 0, align: "bottom")
+        metric xHeight (y: 500)
+        metric capHeight (y: 700)
+        metric ascender (y: 740)
+        metric descender (y: -200)
+        glyph A (advance: 1) {
+            path p (stroke: 10) {
+                start (at: (0,0))
+                arc (to: (10,10), rx: 5, ry: 5, large: true, sweep: "cw")
+            }
+        }
+    "#;
+    let (_, diagnostics) = lower(src);
+    assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+}
+
+#[test]
+fn arc_negative_rx_is_an_error() {
+    let src = r#"
+        font (name: "T", em: 1000)
+        metric baseline (y: 0, align: "bottom")
+        metric xHeight (y: 500)
+        metric capHeight (y: 700)
+        metric ascender (y: 740)
+        metric descender (y: -200)
+        glyph A (advance: 1) {
+            path p (stroke: 10) {
+                start (at: (0,0))
+                arc (to: (10,10), rx: -5, ry: 5, sweep: "cw")
+            }
+        }
+    "#;
+    let (_, diagnostics) = lower(src);
+    assert!(codes(&diagnostics).contains(&"MG0407"), "{diagnostics:#?}");
 }

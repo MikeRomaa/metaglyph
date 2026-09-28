@@ -274,17 +274,15 @@ fn collect_segment_refs(
     let fields = [
         &seg.at,
         &seg.to,
-        &seg.dir,
-        &seg.from_dir,
-        &seg.tension,
-        &seg.curl,
+        &seg.c,
+        &seg.c1,
+        &seg.c2,
+        &seg.center,
+        &seg.rx,
+        &seg.ry,
     ];
     for expr in fields.into_iter().flatten() {
         collect_refs(expr, hir, instance, current_glyph, deps);
-    }
-    if let Some((c0, c1)) = &seg.controls {
-        collect_refs(c0, hir, instance, current_glyph, deps);
-        collect_refs(c1, hir, instance, current_glyph, deps);
     }
 }
 

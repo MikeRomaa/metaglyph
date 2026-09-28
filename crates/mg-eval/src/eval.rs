@@ -11,7 +11,9 @@ use indexmap::{IndexMap, IndexSet};
 use kurbo::{Affine, Point, Shape};
 use mg_diag::{Diagnostic, Label};
 use mg_hir::const_eval;
-use mg_hir::model::{Align, GlyphDecl, Hir, InstanceDecl, MetricDecl, ParamDecl, SegmentKind};
+use mg_hir::model::{
+    Align, GlyphDecl, Hir, InstanceDecl, MetricDecl, ParamDecl, SegmentKind, Sweep,
+};
 use mg_syntax::ast::{self, AstNode};
 use mg_syntax::syntax_kind::SyntaxKind;
 
@@ -505,7 +507,7 @@ fn eval_member(ctx: &mut EvalCtx, member: &ast::MemberExpr) -> Result<Value, ()>
             _ => unreachable!(),
         },
         Value::Path(p) => match field {
-            "bbox" => Value::Rect(construct::bbox(&p)),
+            "bbox" => Value::Rect(construct::bbox(&p.path)),
             _ => unreachable!(),
         },
         _ => unreachable!("mg-hir already type-checked this member access"),
@@ -615,59 +617,66 @@ fn eval_path_realized(
     let start_point = eval_expr(&mut ctx, expr_of(&start_seg.at))?
         .as_pair()
         .expect("mg-hir already type-checked `at` as `pair`");
-    let start_dir = match &start_seg.dir {
-        Some(e) => Some(eval_direction(&mut ctx, e)?),
-        None => None,
-    };
 
     let mut raw_segments = Vec::with_capacity(path.segments.len().saturating_sub(1));
     for seg in &path.segments[1..] {
         let to = eval_expr(&mut ctx, expr_of(&seg.to))?
             .as_pair()
             .expect("mg-hir already type-checked `to` as `pair`");
-        let dir = match &seg.dir {
-            Some(e) => Some(eval_direction(&mut ctx, e)?),
-            None => None,
-        };
-        let from_dir = match &seg.from_dir {
-            Some(e) => Some(eval_direction(&mut ctx, e)?),
-            None => None,
-        };
-        let tension = eval_tension(&mut ctx, &seg.tension)?;
-        let controls = match &seg.controls {
-            Some((c0, c1)) => {
-                let p0 = eval_expr(&mut ctx, c0)?
-                    .as_pair()
-                    .expect("mg-hir already type-checked `controls`");
-                let p1 = eval_expr(&mut ctx, c1)?
-                    .as_pair()
-                    .expect("mg-hir already type-checked `controls`");
-                Some((p0, p1))
+        let raw = match seg.kind {
+            SegmentKind::Line => mg_geom::skeleton::RawSegment::Line { to },
+            SegmentKind::Quad => {
+                let c = match &seg.c {
+                    Some(e) => Some(eval_pair(&mut ctx, e, "`c`")?),
+                    None => None,
+                };
+                mg_geom::skeleton::RawSegment::Quad { to, c }
             }
-            None => None,
-        };
-        raw_segments.push(mg_geom::skeleton::RawSegment {
-            kind: match seg.kind {
-                SegmentKind::Line => mg_geom::skeleton::SegmentKind::Line,
-                SegmentKind::Spline => mg_geom::skeleton::SegmentKind::Spline,
-                SegmentKind::Start => {
-                    unreachable!("a path has exactly one `start`, already consumed")
+            SegmentKind::Cube => {
+                let c1 = match &seg.c1 {
+                    Some(e) => Some(eval_pair(&mut ctx, e, "`c1`")?),
+                    None => None,
+                };
+                let c2 = eval_pair(&mut ctx, expr_of(&seg.c2), "`c2`")?;
+                mg_geom::skeleton::RawSegment::Cube { to, c1, c2 }
+            }
+            SegmentKind::Arc => {
+                let geometry = match &seg.center {
+                    Some(center) => mg_geom::skeleton::ArcGeometry::Center(eval_pair(
+                        &mut ctx, center, "`center`",
+                    )?),
+                    None => {
+                        let rx = value_num(&mut ctx, expr_of(&seg.rx))?;
+                        let ry = value_num(&mut ctx, expr_of(&seg.ry))?;
+                        mg_geom::skeleton::ArcGeometry::Radii {
+                            rx,
+                            ry,
+                            large: seg.large,
+                        }
+                    }
+                };
+                let sweep = match seg.sweep.expect("mg-hir already validated `sweep`") {
+                    Sweep::Ccw => mg_geom::skeleton::Sweep::Ccw,
+                    Sweep::Cw => mg_geom::skeleton::Sweep::Cw,
+                };
+                mg_geom::skeleton::RawSegment::Arc {
+                    to,
+                    geometry,
+                    sweep,
                 }
-            },
-            to,
-            dir,
-            from_dir,
-            tension,
-            controls,
-        });
+            }
+            SegmentKind::Start => {
+                unreachable!("a path has exactly one `start`, already consumed")
+            }
+        };
+        raw_segments.push(raw);
     }
 
-    let raw_start = mg_geom::skeleton::RawStart {
-        at: start_point,
-        dir: start_dir,
-    };
-    match mg_geom::skeleton::realize(&raw_start, &raw_segments, path.closed) {
-        Ok(bez) => Ok(Value::Path(bez)),
+    let raw_start = mg_geom::skeleton::RawStart { at: start_point };
+    // spec §14: `ARC_TOLERANCE` = `0.01 · font.em / 1000`.
+    let arc_tolerance = ctx.hir.font.em.map_or(0.0, |em| 0.01 * em as f64 / 1000.0);
+    match mg_geom::skeleton::realize(&raw_start, &raw_segments, path.closed, arc_tolerance) {
+        Ok(skeleton) => Ok(Value::Path(skeleton)),
         Err(err) => {
             let span = mg_syntax::trimmed_range(&path.syntax);
             ctx.fail(span, err.into())
@@ -675,22 +684,10 @@ fn eval_path_realized(
     }
 }
 
-fn eval_direction(ctx: &mut EvalCtx, expr: &ast::Expr) -> Result<kurbo::Vec2, ()> {
+fn eval_pair(ctx: &mut EvalCtx, expr: &ast::Expr, field: &str) -> Result<kurbo::Point, ()> {
     Ok(eval_expr(ctx, expr)?
         .as_pair()
-        .expect("mg-hir already type-checked this as `pair`")
-        .to_vec2())
-}
-
-fn eval_tension(ctx: &mut EvalCtx, expr: &Option<ast::Expr>) -> Result<(f64, f64), ()> {
-    let Some(expr) = expr else {
-        return Ok((1.0, 1.0));
-    };
-    match eval_expr(ctx, expr)? {
-        Value::Num(n) => Ok((n, n)),
-        Value::Pair(p) => Ok((p.x, p.y)),
-        _ => unreachable!("mg-hir already type-checked `tension` as `num` or `pair`"),
-    }
+        .unwrap_or_else(|| panic!("mg-hir already type-checked {field} as `pair`")))
 }
 
 fn eval_path_bbox(
@@ -711,7 +708,7 @@ fn eval_path_bbox(
     let realized = values[&NodeId::PathRealized(glyph_name.to_string(), path_index)]
         .as_path()
         .expect("PathRealized always evaluates to a Value::Path");
-    Ok(Value::Rect(construct::bbox(realized)))
+    Ok(Value::Rect(construct::bbox(&realized.path)))
 }
 
 fn eval_glyph_bbox(
@@ -813,12 +810,20 @@ fn diagnostic_for(span: Range<usize>, err: EvalError) -> Diagnostic {
         EvalError::PathParameterOutOfDomain { .. } => codes::PATH_PARAMETER_OUT_OF_DOMAIN,
         EvalError::EmptyListReduction { .. } => codes::EMPTY_LIST_REDUCTION,
         EvalError::GlyphHasNoInk => codes::GLYPH_HAS_NO_INK,
-        EvalError::FreeDirection => codes::FREE_DIRECTION_NOT_YET_IMPLEMENTED,
+        EvalError::NoAxisAlignedEllipse => codes::NO_AXIS_ALIGNED_ELLIPSE,
+        EvalError::RadiiTooSmallForChord => codes::RADII_TOO_SMALL_FOR_CHORD,
         EvalError::StrokingNotYetImplemented => codes::STROKING_NOT_YET_IMPLEMENTED,
         EvalError::ZeroLengthSegment => codes::ZERO_LENGTH_SEGMENT,
         EvalError::NeedsBezierClipping => codes::NEEDS_BEZIER_CLIPPING,
     };
-    Diagnostic::error(code, err.to_string(), Label::new(span, "here"))
+    let diagnostic = Diagnostic::error(code, err.to_string(), Label::new(span, "here"));
+    match err {
+        EvalError::NoAxisAlignedEllipse => diagnostic.with_help(
+            "or switch to radii mode: a half-oval from the top of an oval to its bottom is \
+             `arc (to: b, rx: w/2, ry: h/2, sweep: \"cw\")`",
+        ),
+        _ => diagnostic,
+    }
 }
 
 fn cycle_diagnostic(hir: &Hir, cycle: &[NodeId]) -> Diagnostic {

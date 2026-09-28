@@ -77,7 +77,9 @@ ast_block_node!(Anchor, ANCHOR);
 ast_block_node!(Component, COMPONENT);
 ast_block_node!(Start, START);
 ast_block_node!(Line, LINE);
-ast_block_node!(Spline, SPLINE);
+ast_block_node!(Quad, QUAD);
+ast_block_node!(Cube, CUBE);
+ast_block_node!(Arc, ARC);
 ast_block_node!(Close, CLOSE);
 
 ast_node!(Literal, LITERAL);

@@ -32,7 +32,7 @@ Single cargo workspace at the repo root. Crates are listed in dependency order; 
 | `mg-diag` | `Diagnostic`, error codes, labeled spans, `help`/`note`, near-miss suggestions, `codespan-reporting` rendering | §13 |
 | `mg-syntax` | Lexer, rowan CST, parser, typed AST layer, formatter | §5.1–5.2 |
 | `mg-hir` | CST → HIR lowering, field schemas, enum validation, name resolution, static type checking, structural checks | §5.3–5.8, §5.11 |
-| `mg-geom` | Pure geometry on kurbo types, with no dependency on evaluation: segment realization, Hobby splines, curvature check, stroking with join patches, filled contours, Bézier clipping, contour roles, winding | §6, §7, §8 |
+| `mg-geom` | Pure geometry on kurbo types, with no dependency on evaluation: segment realization (quad elevation, arc solve in both modes, arc realization), curvature check, stroking with join patches, filled contours, Bézier clipping, contour roles, winding | §6, §7, §8 |
 | `mg-eval` | Dependency graph, topological evaluation, cycle reporting, `Value`, construction library. Calls `mg-geom` to realize paths and compute `.bbox` | §4, §5.9–5.10 |
 | `mg-font` | Slant, extrema, cu2qu, zone snap and quantization, glyf/cmap/metrics assembly, kerning, instances | §10–§12 |
 | `mg-cli` | `build`, `check`, `fmt`, `svg`, `dump-graph` — ships the binary as `mg` (`[[bin]] name = "mg"`) | — |
@@ -57,7 +57,7 @@ Output is byte-identical on the same target only: `std` transcendental functions
 
 ## Milestones
 
-Estimates assume one developer who already knows the spec. Total **6–8 weeks**, plus 3–4 days for Hobby splines.
+Estimates assume one developer who already knows the spec. Total **6–8 weeks**.
 
 ### M0 — Scaffold and the diagnostic model (2 days)
 Workspace, seven crates, CLI skeleton with `check` stubbed. CI running `cargo test` + `clippy -D warnings` + `fmt --check`. Pin dependencies and confirm the `write-fonts` GPOS builder API.
@@ -118,9 +118,10 @@ Every error in spec §13's "field validation", "name resolution", "type", and "p
   Call position resolves only against spec §5.9 functions. Near-miss suggestions come from the `mg-diag` edit-distance helper.
 - **One table-driven field schema per block kind.** Each entry records the field's name, type, and required/optional status, plus:
   - default value
-  - mutual exclusions
-  - legal enum set
-  - position rules (`caps` needs `stroke` and an open path; `curl` only at open ends; …)
+  - mutual exclusions (`arc`: `center` excludes `rx`/`ry`, which require each other; `large` only with `rx`/`ry`)
+  - legal enum set (including `arc`'s `sweep`)
+  - value constraints checked at evaluation (`arc`'s `rx`/`ry` > 0)
+  - position rules (`caps` needs `stroke` and an open path; an omitted `c1`/`c` only after a segment of the same kind; …)
   - whether a constant expression is required
 
   That single table produces every field-validation error, including ``unknown join "mitre"; expected one of: miter, round, bevel``. Do not scatter these checks.
@@ -157,16 +158,17 @@ Every error in spec §13's "field validation", "name resolution", "type", and "p
 
 **Do not defer the clipping routine.** M4's filled-contour self-intersection check needs the same primitive, so it is on the critical path for `fill`.
 
-### M4 — Geometry kernel (6–7 days; Hobby +3–4, separable)
+### M4 — Geometry kernel (6–7 days)
 `mg svg --glyph A` writes a viewable outline. Do this before touching any font table: it is how the geometry gets eyeballed.
 
-- **Segments → `kurbo::BezPath`**, applying spec §6.3's direction rules. Test each rule as a separate case:
-  - an inherited `dir` makes a smooth joint
-  - `fromDir` makes a corner
-  - a `spline` after a `line` inherits nothing
-  - `controls` fixes the endpoint tangent
-- **`close`** appends the closing spline per spec §5.7, omitting it when the final endpoint is already the start point. The path is closed either way.
-- **Hobby's algorithm** for free directions: tridiagonal for open runs, cyclic-tridiagonal for closed paths, with tension and curl. **The Appendix A sample gives every direction explicitly**, so the acceptance target does not block on Hobby. Sequence it after the rest of M4 and verify differentially against `mf`/`mpost` (spec §15.2).
+- **Segments → `kurbo::BezPath`** per spec §6.3. Test each as a separate case:
+  - `quad` becomes its exact degree-elevated cubic
+  - `cube` passes through unchanged
+  - an omitted `c1`/`c` reflects the previous control and makes a tangent-continuous joint
+  - `arc` centre mode: the radius solve, the circular fallback on a singular system, and the non-circular-singular and no-ellipse errors
+  - `arc` radii mode: the centre solve for both `large` values in both sweeps, the diameter chord within `ARC_TOLERANCE`, and the chord-too-long and non-positive-radius errors
+  - `arc` realization: `⌈Δ/90°⌉` pieces with `4/3·tan(φ/4)` handles, in both sweeps. Written by hand from the spec formula, not via `kurbo::Arc`, whose piece count follows a tolerance rather than the spec's rule.
+- **`close`** appends a straight line per spec §5.7, omitting it when the final endpoint is already the start point. The path is closed either way.
 - **Curvature check before stroking (spec §7.2):**
   - Compare `stroke/2` against the curvature radius over each segment's interior, refining curvature extrema by root-finding.
   - Corners are excluded; interior cusps fail.
@@ -229,7 +231,7 @@ Per spec §15, ordered by value:
 | Target | Test |
 |---|---|
 | Evaluator | proptest: permuting statements within a scope yields identical values. Cycle tests for self-reference, two-node, and long cycles, asserting the reported path *is* the cycle. Golden tests for `meet`/`mediate`/`project`/`polar`/`mirror` against hand-computed geometry. |
-| Splines | Differential against `mf`/`mpost`. The direction rules of spec §6.3 as separate assertions (spec §15.2). |
+| Segments | Arc pieces against a densely sampled exact ellipse, within the 90°-piece bound; quad elevation exact; reflection and `close` per spec §15.2. |
 | Stroking | Hausdorff distance against a densely sampled exact offset, at most `OFFSET_TOLERANCE`. Each join patch against the spec §6.4 definition. Each degenerate case of spec §7.3 produces its named error. |
 | Stroker differential | The same paths, widths, caps, and joins through `tiny-skia`'s stroker. Rasterize both and compare coverage (spec §15.4). |
 | Curvature check | Fuzz random paths against random widths; assert the check fires exactly when the exact offset folds back within a segment interior (spec §15.5). |
@@ -246,13 +248,11 @@ Per spec §15, ordered by value:
 
 ```
 M0 → M1 → M2 → M3 → M4 → M5 → M6 → M7
-                      │     └ Hobby splines (after the rest of M4, not blocking)
                       └ full-sample evaluation lands with M4's stroking
 M8 grows from M0 (diagnostics corpus) and M3 (evaluator tests) onward.
 ```
 
 M1–M3 gate everything. M4 carries most of the correctness risk. With kurbo doing the offsetting, what remains in M4 is:
-- Hobby's algorithm
 - the curvature check
 - join patches
 - contour roles from kurbo's output
@@ -260,7 +260,7 @@ M1–M3 gate everything. M4 carries most of the correctness risk. With kurbo doi
 
 ## Deferred
 
-Editor and inverse drag (spec plan 5) · OTF/CFF and its hinting (spec §11.1–§11.3) · WOFF2 · Hobby splines, until after the acceptance target · the full spec §15 acceptance character set.
+Editor and inverse drag (spec plan 5) · OTF/CFF and its hinting (spec §11.1–§11.3) · WOFF2 · the full spec §15 acceptance character set.
 
 ## Out of scope
 

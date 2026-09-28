@@ -45,7 +45,9 @@ pub enum SyntaxKind {
     COMPONENT_KW,
     START_KW,
     LINE_KW,
-    SPLINE_KW,
+    QUAD_KW,
+    CUBE_KW,
+    ARC_KW,
     CLOSE_KW,
 
     // Punctuation
@@ -94,7 +96,9 @@ pub enum SyntaxKind {
     COMPONENT,
     START,
     LINE,
-    SPLINE,
+    QUAD,
+    CUBE,
+    ARC,
     CLOSE,
     CONFIG,
     FIELD,
@@ -150,7 +154,9 @@ impl SyntaxKind {
             COMPONENT_KW,
             START_KW,
             LINE_KW,
-            SPLINE_KW,
+            QUAD_KW,
+            CUBE_KW,
+            ARC_KW,
             CLOSE_KW,
             L_PAREN,
             R_PAREN,
@@ -191,7 +197,9 @@ impl SyntaxKind {
             COMPONENT,
             START,
             LINE,
-            SPLINE,
+            QUAD,
+            CUBE,
+            ARC,
             CLOSE,
             CONFIG,
             FIELD,
@@ -244,7 +252,9 @@ impl SyntaxKind {
             "component" => COMPONENT_KW,
             "start" => START_KW,
             "line" => LINE_KW,
-            "spline" => SPLINE_KW,
+            "quad" => QUAD_KW,
+            "cube" => CUBE_KW,
+            "arc" => ARC_KW,
             "close" => CLOSE_KW,
             _ => return None,
         })
@@ -281,7 +291,9 @@ impl SyntaxKind {
                 | COMPONENT_KW
                 | START_KW
                 | LINE_KW
-                | SPLINE_KW
+                | QUAD_KW
+                | CUBE_KW
+                | ARC_KW
                 | CLOSE_KW
         )
     }
@@ -307,7 +319,9 @@ impl SyntaxKind {
                 | COMPONENT_KW
                 | START_KW
                 | LINE_KW
-                | SPLINE_KW
+                | QUAD_KW
+                | CUBE_KW
+                | ARC_KW
                 | CLOSE_KW
         )
     }
@@ -345,7 +359,9 @@ impl SyntaxKind {
             COMPONENT_KW => "`component`",
             START_KW => "`start`",
             LINE_KW => "`line`",
-            SPLINE_KW => "`spline`",
+            QUAD_KW => "`quad`",
+            CUBE_KW => "`cube`",
+            ARC_KW => "`arc`",
             CLOSE_KW => "`close`",
             L_PAREN => "`(`",
             R_PAREN => "`)`",

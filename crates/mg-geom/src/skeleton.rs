@@ -1,182 +1,405 @@
 //! Segment realization (spec §6.3): turns a path's already-evaluated
-//! `start`/`line`/`spline` fields into a skeleton [`BezPath`]. Pure
-//! geometry — every point, direction, and tension has already been
-//! evaluated by `mg-eval`; this module only applies the direction rules
-//! and lays down curves.
+//! `start`/`line`/`quad`/`cube`/`arc` fields into a skeleton [`BezPath`].
+//! Pure geometry — every point has already been evaluated by `mg-eval`;
+//! this module only lays down curves and, for `arc`, does the ellipse
+//! math. Nothing here is an approximation: `quad` is degree-elevated
+//! exactly, `cube` passes through unchanged, and an `arc`'s piecewise
+//! cubic is exact for the definition the spec gives (not a tolerance).
 //!
-//! **Scope for M3:** the four *local* direction rules are implemented in
-//! full — an inherited `dir` makes a smooth joint, `fromDir` overrides it
-//! and makes a corner, a spline after a line inherits nothing, and
-//! `controls` fixes the endpoint tangent directly. What is deferred to M4
-//! is Hobby's algorithm for a *free* direction (spec §6.3, §15.2's
-//! differential test against `mf`/`mpost`) — [`realize`] reports
-//! [`SkeletonError::FreeDirection`] instead of solving for one. The
-//! Appendix A conformance sample gives every direction explicitly, so it
-//! never hits this.
-//!
-//! **Known approximation:** placing control points from a *given* pair of
-//! endpoint tangent directions still needs a formula, even without
-//! Hobby's tridiagonal solve. [`hermite_controls`] uses a plain
-//! chord-scaled Hermite construction rather than Hobby's exact velocity
-//! function (Hobby 1986). It is geometrically reasonable — the tangents
-//! are right, the curve is smooth — but M4 must replace it before the
-//! spec §15.2 differential test against `mf`/`mpost` can pass; M3 only
-//! needs *a* deterministic curve to exercise the dependency graph and
-//! `.bbox` end to end.
+//! There is no more free-direction solving (Hobby's algorithm is gone
+//! from the spec entirely — see plan 1-research.md, "Why not Hobby
+//! splines"), so unlike M3's first cut at this module, every code path
+//! here is exact, not a stand-in for later work.
 
 use kurbo::{BezPath, PathSeg, Point, Vec2};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SkeletonError {
-    /// A segment's departure or arrival direction was left free (no
-    /// `dir`, `fromDir`, or `controls` to pin it down), which needs
-    /// Hobby's algorithm — not yet implemented (deferred to M4).
-    FreeDirection,
     /// `start.at` and a segment's `to` (or two consecutive segments'
     /// endpoints) coincide.
     ZeroLengthSegment,
+    /// A centre-mode `arc`'s two endpoints admit no axis-aligned ellipse
+    /// about its `center` (spec §6.3): the radius solve is singular and
+    /// the endpoints aren't equidistant from `center` within
+    /// `ARC_TOLERANCE`, or it has a unique solution with a non-positive
+    /// `rx`/`ry`.
+    NoAxisAlignedEllipse,
+    /// A radii-mode `arc` (spec §6.3) whose chord is longer than `rx`/`ry`
+    /// can span beyond `ARC_TOLERANCE`, or whose `rx`/`ry` is
+    /// non-positive.
+    RadiiTooSmallForChord,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SegmentKind {
     Line,
-    Spline,
+    Quad,
+    Cube,
+    Arc,
 }
 
-/// One segment's already-evaluated fields (spec §5.7). `dir` and
-/// `from_dir` carry direction only — callers may pass any nonzero
-/// vector, not necessarily a unit one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sweep {
+    Ccw,
+    Cw,
+}
+
+/// An `arc`'s ellipse, fixed one of two ways (spec §6.3). Centre mode
+/// gives the centre and solves for `rx`/`ry`; radii mode gives `rx`/`ry`
+/// and solves for the centre, picking between the two candidate centres
+/// via `large` (SVG's endpoint arc, SVG 1.1 Implementation Notes F.6.5).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ArcGeometry {
+    Center(Point),
+    Radii { rx: f64, ry: f64, large: bool },
+}
+
+/// One segment's already-evaluated fields (spec §5.7). `c`/`c1` are
+/// `None` exactly when reflecting the previous segment's adjacent control
+/// point (spec §6.3) — `mg-hir`'s structural check already guarantees the
+/// previous segment is the same kind whenever that's the case, so
+/// [`realize`] trusts it rather than re-checking.
 #[derive(Debug, Clone, Copy)]
-pub struct RawSegment {
-    pub kind: SegmentKind,
-    pub to: Point,
-    pub dir: Option<Vec2>,
-    pub from_dir: Option<Vec2>,
-    /// `(departure, arrival)`, each ≥ 0.75 (spec §5.7); defaults to
-    /// `(1.0, 1.0)`.
-    pub tension: (f64, f64),
-    /// Mutually exclusive with `dir`/`from_dir`/`tension` at the HIR
-    /// level (spec §5.7); fixes the curve directly when present.
-    pub controls: Option<(Point, Point)>,
+pub enum RawSegment {
+    Line {
+        to: Point,
+    },
+    Quad {
+        to: Point,
+        c: Option<Point>,
+    },
+    Cube {
+        to: Point,
+        c1: Option<Point>,
+        c2: Point,
+    },
+    Arc {
+        to: Point,
+        geometry: ArcGeometry,
+        sweep: Sweep,
+    },
+}
+
+impl RawSegment {
+    pub fn kind(&self) -> SegmentKind {
+        match self {
+            RawSegment::Line { .. } => SegmentKind::Line,
+            RawSegment::Quad { .. } => SegmentKind::Quad,
+            RawSegment::Cube { .. } => SegmentKind::Cube,
+            RawSegment::Arc { .. } => SegmentKind::Arc,
+        }
+    }
+
+    pub fn to(&self) -> Point {
+        match self {
+            RawSegment::Line { to }
+            | RawSegment::Quad { to, .. }
+            | RawSegment::Cube { to, .. }
+            | RawSegment::Arc { to, .. } => *to,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct RawStart {
     pub at: Point,
-    /// Departure direction of the first segment.
-    pub dir: Option<Vec2>,
+}
+
+/// A realized skeleton, plus how many `BezPath` pieces each *authored*
+/// segment expanded into. An `arc` becomes `m` cubic pieces (spec §5.9);
+/// every other kind is exactly one. The spec §5.9 path-query parameter
+/// domain `[0, n]` counts authored segments, not underlying pieces, so
+/// anything indexing by parameter needs this to find the right piece —
+/// see [`resolve_param`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct Skeleton {
+    pub path: BezPath,
+    pub piece_counts: Vec<usize>,
+}
+
+impl Skeleton {
+    /// Wraps an already-built `BezPath` with one authored segment per
+    /// underlying piece — the right shape for a value with no original
+    /// `arc`s to preserve piece counts for, such as `subpath`/`reverse`'s
+    /// result (spec §5.9: a construction value, never `follows`-able, so
+    /// nothing needs its domain to match some other skeleton's).
+    pub fn from_path(path: BezPath) -> Self {
+        let piece_counts = vec![1; path.segments().count()];
+        Self { path, piece_counts }
+    }
 }
 
 /// Realizes a path body's skeleton (spec §6.3). `closed` mirrors the
 /// HIR's own `PathDecl::closed` — when true and the last point does not
-/// already coincide with `start.at`, this appends the closing spline the
-/// spec describes (§5.7: departure from the last declaration's endpoint
-/// tangent when it was a spline with `dir`/`controls`, arrival from
-/// `start.dir`, both otherwise free).
+/// already coincide with `start.at`, this appends the closing straight
+/// line the spec describes (§5.7).
 pub fn realize(
     start: &RawStart,
     segments: &[RawSegment],
     closed: bool,
-) -> Result<BezPath, SkeletonError> {
+    arc_tolerance: f64,
+) -> Result<Skeleton, SkeletonError> {
     let mut path = BezPath::new();
     path.move_to(start.at);
 
     let mut current = start.at;
-    // The direction a smooth joint inherits into the *next* segment: the
-    // resolved arrival tangent of whichever segment just ran, or `None`
-    // after a `line` (spec §6.3: "a spline after a line inherits
-    // nothing") or after a segment whose own arrival was left free.
-    let mut inherited_dir = start.dir;
+    let mut piece_counts = Vec::with_capacity(segments.len() + 1);
+    // Reflection state (spec §6.3): the trailing control point of the
+    // most recent `quad`/`cube`, cleared whenever a different kind runs.
+    let mut prev_quad_c: Option<Point> = None;
+    let mut prev_cube_c2: Option<Point> = None;
 
     for segment in segments {
-        match segment.kind {
-            SegmentKind::Line => {
-                if segment.to == current {
-                    return Err(SkeletonError::ZeroLengthSegment);
-                }
-                path.line_to(segment.to);
-                current = segment.to;
-                inherited_dir = None;
+        if segment.to() == current {
+            return Err(SkeletonError::ZeroLengthSegment);
+        }
+        match *segment {
+            RawSegment::Line { to } => {
+                path.line_to(to);
+                piece_counts.push(1);
+                prev_quad_c = None;
+                prev_cube_c2 = None;
             }
-            SegmentKind::Spline => {
-                let (c0, c1) = spline_controls(current, segment, inherited_dir)?;
-                path.curve_to(c0, c1, segment.to);
-                inherited_dir = resolved_arrival_dir(segment, c1);
-                current = segment.to;
+            RawSegment::Quad { to, c } => {
+                let c = c.unwrap_or_else(|| {
+                    let prev = prev_quad_c.expect("mg-hir already validated this reflection");
+                    reflect_through(current, prev)
+                });
+                let (c0, c1) = elevate_quad(current, c, to);
+                path.curve_to(c0, c1, to);
+                piece_counts.push(1);
+                prev_quad_c = Some(c);
+                prev_cube_c2 = None;
+            }
+            RawSegment::Cube { to, c1, c2 } => {
+                let c1 = c1.unwrap_or_else(|| {
+                    let prev = prev_cube_c2.expect("mg-hir already validated this reflection");
+                    reflect_through(current, prev)
+                });
+                path.curve_to(c1, c2, to);
+                piece_counts.push(1);
+                prev_cube_c2 = Some(c2);
+                prev_quad_c = None;
+            }
+            RawSegment::Arc {
+                to,
+                geometry,
+                sweep,
+            } => {
+                let pieces = realize_arc(&mut path, current, to, geometry, sweep, arc_tolerance)?;
+                piece_counts.push(pieces);
+                prev_quad_c = None;
+                prev_cube_c2 = None;
             }
         }
+        current = segment.to();
     }
 
     if closed {
         if current != start.at {
-            let closing = RawSegment {
-                kind: SegmentKind::Spline,
-                to: start.at,
-                dir: start.dir,
-                from_dir: None,
-                tension: (1.0, 1.0),
-                controls: None,
-            };
-            let (c0, c1) = spline_controls(current, &closing, inherited_dir)?;
-            path.curve_to(c0, c1, start.at);
+            path.line_to(start.at);
+            piece_counts.push(1);
         }
         path.close_path();
     }
 
-    Ok(path)
+    Ok(Skeleton { path, piece_counts })
 }
 
-/// This spline's control points, either taken directly from `controls`
-/// or built from resolved departure/arrival tangents.
-fn spline_controls(
-    from: Point,
-    segment: &RawSegment,
-    inherited_dir: Option<Vec2>,
-) -> Result<(Point, Point), SkeletonError> {
-    if let Some(controls) = segment.controls {
-        return Ok(controls);
-    }
-    if segment.to == from {
-        return Err(SkeletonError::ZeroLengthSegment);
-    }
-    let departure = segment
-        .from_dir
-        .or(inherited_dir)
-        .ok_or(SkeletonError::FreeDirection)?;
-    let arrival = segment.dir.ok_or(SkeletonError::FreeDirection)?;
-    Ok(hermite_controls(
-        from,
-        segment.to,
-        departure,
-        arrival,
-        segment.tension,
-    ))
+/// The reflection of `point` through `pivot` (spec §6.3: `2·p − c′`),
+/// SVG's `S`/`T` construction.
+fn reflect_through(pivot: Point, point: Point) -> Point {
+    pivot + (pivot - point)
 }
 
-/// This segment's resolved arrival tangent, for the next segment's
-/// inheritance (spec §6.3): its own `dir` when given, else the tangent
-/// implied by `controls`, else free (`None`).
-fn resolved_arrival_dir(segment: &RawSegment, c1: Point) -> Option<Vec2> {
-    segment.dir.or_else(|| {
-        let tangent = segment.to - c1;
-        (tangent != Vec2::ZERO).then_some(tangent)
-    })
-}
-
-/// Places control points from given endpoint tangent directions and
-/// tensions, chord-scaled (see the module's known-approximation note).
-fn hermite_controls(
-    p0: Point,
-    p1: Point,
-    departure: Vec2,
-    arrival: Vec2,
-    tension: (f64, f64),
-) -> (Point, Point) {
-    let chord = p1 - p0;
-    let dist = chord.length();
-    let c0 = p0 + departure.normalize() * (dist / (3.0 * tension.0));
-    let c1 = p1 - arrival.normalize() * (dist / (3.0 * tension.1));
+/// Exact degree elevation from a quadratic (`p0`, `c`, `p1`) to its cubic
+/// equivalent (spec §6.3).
+fn elevate_quad(p0: Point, c: Point, p1: Point) -> (Point, Point) {
+    let c0 = p0 + (c - p0) * (2.0 / 3.0);
+    let c1 = p1 + (c - p1) * (2.0 / 3.0);
     (c0, c1)
+}
+
+/// Realizes one `arc` (spec §6.3) as `⌈Δ/90°⌉` cubic pieces, appending
+/// them to `path`. Returns the piece count.
+fn realize_arc(
+    path: &mut BezPath,
+    p: Point,
+    to: Point,
+    geometry: ArcGeometry,
+    sweep: Sweep,
+    arc_tolerance: f64,
+) -> Result<usize, SkeletonError> {
+    let (center, rx, ry) = match geometry {
+        ArcGeometry::Center(center) => {
+            let (rx, ry) = fit_ellipse(p, to, center, arc_tolerance)?;
+            (center, rx, ry)
+        }
+        ArcGeometry::Radii { rx, ry, large } => {
+            let center = solve_center_from_radii(p, to, rx, ry, large, sweep, arc_tolerance)?;
+            (center, rx, ry)
+        }
+    };
+
+    let theta_p = eccentric_angle(p, center, rx, ry);
+    let theta_to = eccentric_angle(to, center, rx, ry);
+    let delta = swept_angle(theta_p, theta_to, sweep);
+
+    let m = ((delta / std::f64::consts::FRAC_PI_2).ceil() as usize).max(1);
+    let signed_step = match sweep {
+        Sweep::Ccw => delta / m as f64,
+        Sweep::Cw => -delta / m as f64,
+    };
+
+    let mut theta = theta_p;
+    let mut point = p;
+    for k in 0..m {
+        let theta_next = theta + signed_step;
+        let end = if k + 1 == m {
+            to
+        } else {
+            ellipse_point(center, rx, ry, theta_next)
+        };
+        let k_factor = 4.0 / 3.0 * (signed_step / 4.0).tan();
+        let c0 = point + ellipse_deriv(rx, ry, theta) * k_factor;
+        let c1 = end - ellipse_deriv(rx, ry, theta_next) * k_factor;
+        path.curve_to(c0, c1, end);
+        point = end;
+        theta = theta_next;
+    }
+
+    Ok(m)
+}
+
+fn ellipse_point(center: Point, rx: f64, ry: f64, theta: f64) -> Point {
+    center + Vec2::new(rx * theta.cos(), ry * theta.sin())
+}
+
+/// The ellipse's derivative with respect to `theta`, in the direction of
+/// *increasing* `theta` (i.e. CCW) — always this convention regardless of
+/// `sweep`; [`realize_arc`] folds the sweep direction into `signed_step`
+/// instead, which correctly flips the sign here through `theta.tan()`
+/// being odd.
+fn ellipse_deriv(rx: f64, ry: f64, theta: f64) -> Vec2 {
+    Vec2::new(-rx * theta.sin(), ry * theta.cos())
+}
+
+fn eccentric_angle(point: Point, center: Point, rx: f64, ry: f64) -> f64 {
+    let d = point - center;
+    (d.y / ry).atan2(d.x / rx)
+}
+
+/// The swept angle from `theta_p` to `theta_to`, travelling in `sweep`'s
+/// direction, in `(0, τ)` (spec §6.3: "covering strictly between 0° and
+/// 360°"). `theta_p == theta_to` can't arise here: [`realize`] already
+/// rejects `p == to` before calling this, and two distinct points on one
+/// ellipse never share an eccentric angle.
+fn swept_angle(theta_p: f64, theta_to: f64, sweep: Sweep) -> f64 {
+    let tau = std::f64::consts::TAU;
+    match sweep {
+        Sweep::Ccw => (theta_to - theta_p).rem_euclid(tau),
+        Sweep::Cw => (theta_p - theta_to).rem_euclid(tau),
+    }
+}
+
+/// Solves for `(rx, ry)` of the axis-aligned ellipse about `center`
+/// passing through `p` and `to` (spec §6.3).
+fn fit_ellipse(
+    p: Point,
+    to: Point,
+    center: Point,
+    arc_tolerance: f64,
+) -> Result<(f64, f64), SkeletonError> {
+    let d0 = p - center;
+    let d1 = to - center;
+    let (dx0_2, dy0_2) = (d0.x * d0.x, d0.y * d0.y);
+    let (dx1_2, dy1_2) = (d1.x * d1.x, d1.y * d1.y);
+    let len0_sq = dx0_2 + dy0_2;
+    let len1_sq = dx1_2 + dy1_2;
+
+    let det = dx0_2 * dy1_2 - dx1_2 * dy0_2;
+    let singular_threshold = 1e-12 * len0_sq * len1_sq;
+
+    if det.abs() > singular_threshold {
+        let u = (dy1_2 - dy0_2) / det;
+        let v = (dx0_2 - dx1_2) / det;
+        if u > 0.0 && v > 0.0 {
+            Ok((1.0 / u.sqrt(), 1.0 / v.sqrt()))
+        } else {
+            Err(SkeletonError::NoAxisAlignedEllipse)
+        }
+    } else {
+        let len0 = len0_sq.sqrt();
+        let len1 = len1_sq.sqrt();
+        if (len0 - len1).abs() <= arc_tolerance && len0 > 0.0 {
+            let r = (len0 + len1) / 2.0;
+            Ok((r, r))
+        } else {
+            Err(SkeletonError::NoAxisAlignedEllipse)
+        }
+    }
+}
+
+/// Solves for the centre of a radii-mode `arc` (spec §6.3): SVG's
+/// endpoint-to-centre parametrization (SVG 1.1 Implementation Notes
+/// F.6.5) with zero rotation. There are two candidate centres, symmetric
+/// about the chord `p`–`to`; travelling in `sweep`'s direction, one's arc
+/// spans less than 180° and the other's more, and `large` picks between
+/// them.
+fn solve_center_from_radii(
+    p: Point,
+    to: Point,
+    rx: f64,
+    ry: f64,
+    large: bool,
+    sweep: Sweep,
+    arc_tolerance: f64,
+) -> Result<Point, SkeletonError> {
+    if rx <= 0.0 || ry <= 0.0 {
+        return Err(SkeletonError::RadiiTooSmallForChord);
+    }
+
+    let mid = Point::new((p.x + to.x) / 2.0, (p.y + to.y) / 2.0);
+    let half_chord = Vec2::new((p.x - to.x) / 2.0, (p.y - to.y) / 2.0);
+    let scaled = Vec2::new(half_chord.x / rx, half_chord.y / ry);
+    let mut lambda = scaled.x * scaled.x + scaled.y * scaled.y;
+
+    if lambda > 1.0 {
+        if (lambda.sqrt() - 1.0) * rx.max(ry) <= arc_tolerance {
+            // The chord is (within tolerance) a diameter: unlike SVG, the
+            // radii are never enlarged to fit, so this is the closest
+            // legal ellipse rather than an approximation of a bigger one.
+            lambda = 1.0;
+        } else {
+            return Err(SkeletonError::RadiiTooSmallForChord);
+        }
+    }
+
+    // `lambda == 1.0` here only when set above or when the chord already
+    // is an exact diameter — either way the candidates coincide at `mid`
+    // and `large` has no effect (spec §6.3).
+    let factor = ((1.0 - lambda) / lambda).sqrt();
+    if factor == 0.0 {
+        return Ok(mid);
+    }
+
+    let offset = Vec2::new(-rx * scaled.y, ry * scaled.x) * factor;
+    let candidate_a = mid + offset;
+    let candidate_b = mid - offset;
+
+    let span = |center: Point| {
+        swept_angle(
+            eccentric_angle(p, center, rx, ry),
+            eccentric_angle(to, center, rx, ry),
+            sweep,
+        )
+    };
+    let (small, big) = if span(candidate_a) <= span(candidate_b) {
+        (candidate_a, candidate_b)
+    } else {
+        (candidate_b, candidate_a)
+    };
+    Ok(if large { big } else { small })
 }
 
 /// The skeleton's tight bounding box (spec §5.5 `path.bbox`, for a
@@ -187,16 +410,101 @@ pub fn bounding_box(path: &BezPath) -> kurbo::Rect {
     path.bounding_box()
 }
 
-/// Every segment of `path` as a 0-based `Vec`, matching the spec §5.9
-/// path-query parameter domain `[0, n]`: segment `i` spans `[i, i+1]`.
+/// Every underlying `BezPath` piece, in order. Not 1:1 with authored
+/// segments when an `arc` is present — see [`resolve_param`], which is
+/// almost always what you actually want instead.
 pub fn segments(path: &BezPath) -> Vec<PathSeg> {
     path.segments().collect()
 }
 
-/// Total arc length, per segment plus in total (spec §5.9 `arcLength`).
+/// Total arc length (spec §5.9 `arcLength`).
 pub fn arc_length(path: &BezPath, accuracy: f64) -> f64 {
     use kurbo::ParamCurveArclen;
     segments(path).iter().map(|s| s.arclen(accuracy)).sum()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParamOutOfDomain;
+
+/// `t`'s 0-based index into the flattened underlying pieces, and its
+/// local parameter within that piece, per the spec §5.9 domain over
+/// *authored* segments — `[0, n]`, segment `i` spanning `[i, i+1]`, and
+/// (spec §6.3) an `arc` realized as `m` pieces dividing its span
+/// uniformly, piece `k` spanning `[i + k/m, i + (k+1)/m]`. Exposed
+/// directly (not just via [`resolve_param`]) for callers like `subpath`
+/// that need to work across a range of pieces rather than look up one.
+pub fn authored_param_to_piece(
+    skeleton: &Skeleton,
+    t: f64,
+) -> Result<(usize, f64), ParamOutOfDomain> {
+    let n = skeleton.piece_counts.len();
+    if n == 0 || t < 0.0 || t > n as f64 {
+        return Err(ParamOutOfDomain);
+    }
+    let seg_index = if t >= n as f64 {
+        n - 1
+    } else {
+        t.floor() as usize
+    };
+    let within_segment = t - seg_index as f64;
+
+    let m = skeleton.piece_counts[seg_index];
+    let piece_offset: usize = skeleton.piece_counts[..seg_index].iter().sum();
+    let scaled = within_segment * m as f64;
+    let piece_index = if scaled >= m as f64 {
+        m - 1
+    } else {
+        scaled.floor() as usize
+    };
+    let local_t = scaled - piece_index as f64;
+
+    Ok((piece_offset + piece_index, local_t))
+}
+
+/// `t`'s underlying piece and local parameter — see
+/// [`authored_param_to_piece`] for the domain this indexes into.
+pub fn resolve_param(skeleton: &Skeleton, t: f64) -> Result<(PathSeg, f64), ParamOutOfDomain> {
+    let (piece_index, local_t) = authored_param_to_piece(skeleton, t)?;
+    let pieces = segments(&skeleton.path);
+    Ok((pieces[piece_index], local_t))
+}
+
+/// The inverse of [`resolve_param`]'s piece lookup: given a 0-based index
+/// into the *flattened* underlying pieces and a local parameter within
+/// it, the authored-domain global parameter (spec §5.9).
+fn piece_to_authored_param(skeleton: &Skeleton, piece_index: usize, local_t: f64) -> f64 {
+    let mut offset = 0;
+    for (seg_index, &m) in skeleton.piece_counts.iter().enumerate() {
+        if piece_index < offset + m {
+            let k = piece_index - offset;
+            return seg_index as f64 + (k as f64 + local_t) / m as f64;
+        }
+        offset += m;
+    }
+    panic!("piece_index out of range for this skeleton")
+}
+
+/// Parameters where `x′ = 0` or `y′ = 0` (spec §5.9 `extrema`), in the
+/// authored-segment domain.
+pub fn extrema(skeleton: &Skeleton) -> Vec<f64> {
+    use kurbo::ParamCurveExtrema;
+    let mut out: Vec<f64> = segments(&skeleton.path)
+        .iter()
+        .enumerate()
+        .flat_map(|(i, seg)| {
+            let local: Vec<f64> = match seg {
+                PathSeg::Line(l) => l.extrema().into_iter().collect(),
+                PathSeg::Quad(q) => q.extrema().into_iter().collect(),
+                PathSeg::Cubic(c) => c.extrema().into_iter().collect(),
+            };
+            local
+                .into_iter()
+                .map(move |t| piece_to_authored_param(skeleton, i, t))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    out.sort_by(|a, b| a.partial_cmp(b).expect("path parameters are always finite"));
+    out
 }
 
 /// The tangent direction at `t` (spec §5.9 `directionAt`, unnormalized).
@@ -226,17 +534,16 @@ pub fn curvature_at(seg: &PathSeg, t: f64) -> f64 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NeedsBezierClipping;
 
-/// `a`'s global parameters (spec §5.9 domain `[0, n]`) where `a` crosses
-/// `b`, ascending. Handles every pair where at least one side is a
-/// straight `Line` segment, via kurbo's own line–curve intersection —
-/// which is every segment the M3 skeleton realizer can produce, since it
-/// never emits `Quad`. A genuine curve-against-curve crossing (two
-/// `Cubic` segments) has no such shortcut; kurbo has no curve–curve
-/// solver, and Bézier clipping is deferred to M4 (spec plan M3: "schedule
-/// late... not used by the Appendix A sample"), so that pair reports
+/// `a`'s global parameters (spec §5.9 domain `[0, n]`, over authored
+/// segments — see [`resolve_param`]) where `a` crosses `b`, ascending.
+/// Handles every pair where at least one side is a straight `Line` piece,
+/// via kurbo's own line–curve intersection. A genuine curve-against-curve
+/// crossing (a `Quad`/`Cubic` piece against another) has no such
+/// shortcut; kurbo has no curve–curve solver, and Bézier clipping is
+/// deferred to M4 (spec plan M3), so that pair reports
 /// [`NeedsBezierClipping`] instead of a parameter.
-pub fn intersect(a: &BezPath, b: &BezPath) -> Result<Vec<f64>, NeedsBezierClipping> {
-    let a_segs = segments(a);
+pub fn intersect(a: &Skeleton, b: &BezPath) -> Result<Vec<f64>, NeedsBezierClipping> {
+    let a_segs = segments(&a.path);
     let b_segs = segments(b);
     let mut hits = Vec::new();
 
@@ -245,12 +552,12 @@ pub fn intersect(a: &BezPath, b: &BezPath) -> Result<Vec<f64>, NeedsBezierClippi
             match (as_line(seg_a), as_line(seg_b)) {
                 (Some(line_a), _) => {
                     for hit in seg_b.intersect_line(line_a) {
-                        hits.push(i as f64 + hit.line_t);
+                        hits.push(piece_to_authored_param(a, i, hit.line_t));
                     }
                 }
                 (None, Some(line_b)) => {
                     for hit in seg_a.intersect_line(line_b) {
-                        hits.push(i as f64 + hit.segment_t);
+                        hits.push(piece_to_authored_param(a, i, hit.segment_t));
                     }
                 }
                 (None, None) => return Err(NeedsBezierClipping),
@@ -274,127 +581,439 @@ mod tests {
     use super::*;
     use kurbo::Shape;
 
-    fn seg_line(to: Point) -> RawSegment {
-        RawSegment {
-            kind: SegmentKind::Line,
-            to,
-            dir: None,
-            from_dir: None,
-            tension: (1.0, 1.0),
-            controls: None,
-        }
-    }
+    const NO_TOLERANCE: f64 = 1e-6;
 
-    fn seg_spline(to: Point, dir: Option<Vec2>) -> RawSegment {
-        RawSegment {
-            kind: SegmentKind::Spline,
-            to,
-            dir,
-            from_dir: None,
-            tension: (1.0, 1.0),
-            controls: None,
-        }
+    fn line(to: Point) -> RawSegment {
+        RawSegment::Line { to }
     }
 
     #[test]
     fn straight_lines_realize_directly() {
         let start = RawStart {
             at: Point::new(0.0, 0.0),
-            dir: None,
         };
-        let segs = [
-            seg_line(Point::new(10.0, 0.0)),
-            seg_line(Point::new(10.0, 10.0)),
-        ];
-        let path = realize(&start, &segs, false).unwrap();
-        assert_eq!(path.segments().count(), 2);
-        assert_eq!(path.bounding_box(), kurbo::Rect::new(0.0, 0.0, 10.0, 10.0));
-    }
-
-    #[test]
-    fn spline_with_explicit_directions_realizes() {
-        let start = RawStart {
-            at: Point::new(0.0, 0.0),
-            dir: Some(Vec2::new(1.0, 0.0)),
-        };
-        let segs = [seg_spline(
-            Point::new(10.0, 10.0),
-            Some(Vec2::new(0.0, 1.0)),
-        )];
-        let path = realize(&start, &segs, false).unwrap();
-        assert_eq!(path.segments().count(), 1);
-    }
-
-    #[test]
-    fn free_direction_is_deferred_to_m4() {
-        let start = RawStart {
-            at: Point::new(0.0, 0.0),
-            dir: None,
-        };
-        let segs = [seg_spline(Point::new(10.0, 10.0), None)];
+        let segs = [line(Point::new(10.0, 0.0)), line(Point::new(10.0, 10.0))];
+        let skeleton = realize(&start, &segs, false, NO_TOLERANCE).unwrap();
+        assert_eq!(skeleton.path.segments().count(), 2);
+        assert_eq!(skeleton.piece_counts, vec![1, 1]);
         assert_eq!(
-            realize(&start, &segs, false),
-            Err(SkeletonError::FreeDirection)
+            skeleton.path.bounding_box(),
+            kurbo::Rect::new(0.0, 0.0, 10.0, 10.0)
         );
     }
 
     #[test]
-    fn spline_after_line_inherits_nothing() {
+    fn quad_elevates_to_the_exact_cubic() {
         let start = RawStart {
             at: Point::new(0.0, 0.0),
-            dir: Some(Vec2::new(1.0, 0.0)),
+        };
+        let segs = [RawSegment::Quad {
+            to: Point::new(10.0, 0.0),
+            c: Some(Point::new(5.0, 10.0)),
+        }];
+        let skeleton = realize(&start, &segs, false, NO_TOLERANCE).unwrap();
+        let PathSeg::Cubic(cubic) = skeleton.path.segments().next().unwrap() else {
+            panic!("expected a cubic")
+        };
+        // Sample the quadratic and the elevated cubic at the same
+        // parameters; a degree-elevated curve is identical everywhere.
+        use kurbo::{ParamCurve, QuadBez};
+        let quad = QuadBez::new(
+            Point::new(0.0, 0.0),
+            Point::new(5.0, 10.0),
+            Point::new(10.0, 0.0),
+        );
+        for i in 0..=10 {
+            let t = i as f64 / 10.0;
+            let a = quad.eval(t);
+            let b = cubic.eval(t);
+            assert!((a.x - b.x).abs() < 1e-9 && (a.y - b.y).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn quad_reflection_mirrors_the_previous_control_point() {
+        let start = RawStart {
+            at: Point::new(0.0, 0.0),
         };
         let segs = [
-            seg_line(Point::new(10.0, 0.0)),
-            seg_spline(Point::new(20.0, 10.0), None),
+            RawSegment::Quad {
+                to: Point::new(10.0, 0.0),
+                c: Some(Point::new(5.0, 10.0)),
+            },
+            RawSegment::Quad {
+                to: Point::new(20.0, 0.0),
+                c: None,
+            },
         ];
-        // The line resets the inherited direction, so the spline's
-        // departure is free — even though `start.dir` was given.
+        let skeleton = realize(&start, &segs, false, NO_TOLERANCE).unwrap();
+        assert_eq!(skeleton.piece_counts, vec![1, 1]);
+        // The reflection of (5, 10) through (10, 0) is (15, -10).
+        let PathSeg::Cubic(second) = skeleton.path.segments().nth(1).unwrap() else {
+            panic!("expected a cubic")
+        };
+        let (expected_c0, _) = elevate_quad(
+            Point::new(10.0, 0.0),
+            Point::new(15.0, -10.0),
+            Point::new(20.0, 0.0),
+        );
+        assert!((second.p1.x - expected_c0.x).abs() < 1e-9);
+        assert!((second.p1.y - expected_c0.y).abs() < 1e-9);
+    }
+
+    #[test]
+    fn cube_passes_through_unchanged() {
+        let start = RawStart {
+            at: Point::new(0.0, 0.0),
+        };
+        let c1 = Point::new(2.0, 5.0);
+        let c2 = Point::new(8.0, 5.0);
+        let to = Point::new(10.0, 0.0);
+        let segs = [RawSegment::Cube {
+            to,
+            c1: Some(c1),
+            c2,
+        }];
+        let skeleton = realize(&start, &segs, false, NO_TOLERANCE).unwrap();
+        let PathSeg::Cubic(cubic) = skeleton.path.segments().next().unwrap() else {
+            panic!("expected a cubic")
+        };
+        assert_eq!((cubic.p1, cubic.p2, cubic.p3), (c1, c2, to));
+    }
+
+    #[test]
+    fn quarter_circle_arc_is_one_piece_and_hits_the_exact_endpoint() {
+        // Quarter circle of radius 10 about the origin, from (10, 0) to
+        // (0, 10), travelling ccw.
+        let start = RawStart {
+            at: Point::new(10.0, 0.0),
+        };
+        let segs = [RawSegment::Arc {
+            to: Point::new(0.0, 10.0),
+            geometry: ArcGeometry::Center(Point::new(0.0, 0.0)),
+            sweep: Sweep::Ccw,
+        }];
+        let skeleton = realize(&start, &segs, false, NO_TOLERANCE).unwrap();
+        assert_eq!(skeleton.piece_counts, vec![1]);
+        let PathSeg::Cubic(cubic) = skeleton.path.segments().next().unwrap() else {
+            panic!("expected a cubic")
+        };
+        assert!((cubic.p3.x - 0.0).abs() < 1e-9);
+        assert!((cubic.p3.y - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn three_quarter_circle_arc_is_three_pieces() {
+        let start = RawStart {
+            at: Point::new(10.0, 0.0),
+        };
+        let segs = [RawSegment::Arc {
+            to: Point::new(0.0, -10.0),
+            geometry: ArcGeometry::Center(Point::new(0.0, 0.0)),
+            sweep: Sweep::Ccw,
+        }];
+        let skeleton = realize(&start, &segs, false, NO_TOLERANCE).unwrap();
+        assert_eq!(skeleton.piece_counts, vec![3]);
+        let last = skeleton.path.segments().last().unwrap();
+        let PathSeg::Cubic(cubic) = last else {
+            panic!("expected a cubic")
+        };
+        assert!((cubic.p3.x - 0.0).abs() < 1e-9);
+        assert!((cubic.p3.y + 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn arc_stays_within_bound_of_the_exact_ellipse() {
+        let center = Point::new(0.0, 0.0);
+        let (rx, ry) = (10.0, 6.0);
+        let start_pt = ellipse_point(center, rx, ry, 0.0);
+        let end_pt = ellipse_point(center, rx, ry, 200f64.to_radians());
+        let start = RawStart { at: start_pt };
+        let segs = [RawSegment::Arc {
+            to: end_pt,
+            geometry: ArcGeometry::Center(center),
+            sweep: Sweep::Ccw,
+        }];
+        let skeleton = realize(&start, &segs, false, NO_TOLERANCE).unwrap();
+
+        use kurbo::ParamCurve;
+        let bound = 3e-4 * rx.max(ry);
+        for seg in skeleton.path.segments() {
+            let PathSeg::Cubic(cubic) = seg else {
+                panic!("expected a cubic")
+            };
+            for i in 0..=20 {
+                let t = i as f64 / 20.0;
+                let p = cubic.eval(t);
+                let d = p - center;
+                // Distance from the sample to the ellipse boundary,
+                // approximated via the normalized radial residual scaled
+                // by the smaller radius (adequate near-boundary bound for
+                // this test's purpose).
+                let residual = ((d.x / rx).powi(2) + (d.y / ry).powi(2)).sqrt() - 1.0;
+                assert!(
+                    residual.abs() * rx.min(ry) < bound,
+                    "residual {residual} at t={t}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn singular_system_falls_back_to_circular() {
+        // p and to symmetric about the x-axis through center: a circle
+        // of radius 5 is a valid (if not unique) fit.
+        let center = Point::new(0.0, 0.0);
+        let p = Point::new(5.0, 0.0);
+        let to = Point::new(-5.0, 0.0);
+        let (rx, ry) = fit_ellipse(p, to, center, 1e-6).unwrap();
+        assert!((rx - 5.0).abs() < 1e-9);
+        assert!((ry - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn no_ellipse_fits_is_a_geometry_error() {
+        // Singular system (both on the x-axis) but not equidistant from
+        // center: no axis-aligned ellipse threads both.
+        let center = Point::new(0.0, 0.0);
+        let p = Point::new(5.0, 0.0);
+        let to = Point::new(-8.0, 0.0);
         assert_eq!(
-            realize(&start, &segs, false),
-            Err(SkeletonError::FreeDirection)
+            fit_ellipse(p, to, center, 1e-6),
+            Err(SkeletonError::NoAxisAlignedEllipse)
+        );
+    }
+
+    /// Asserts every sampled point of `skeleton`'s (single-arc) path lies
+    /// on the ellipse of radii `rx`, `ry` about `center`, per the same
+    /// residual bound as `arc_stays_within_bound_of_the_exact_ellipse`.
+    fn assert_arc_centered_at(skeleton: &Skeleton, center: Point, rx: f64, ry: f64) {
+        use kurbo::ParamCurve;
+        let bound = 3e-4 * rx.max(ry);
+        for seg in skeleton.path.segments() {
+            let PathSeg::Cubic(cubic) = seg else {
+                panic!("expected a cubic")
+            };
+            for i in 0..=20 {
+                let t = i as f64 / 20.0;
+                let p = cubic.eval(t);
+                let d = p - center;
+                let residual = ((d.x / rx).powi(2) + (d.y / ry).powi(2)).sqrt() - 1.0;
+                assert!(
+                    residual.abs() * rx.min(ry) < bound,
+                    "residual {residual} at t={t}, center {center:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn radii_mode_large_flag_picks_the_stated_candidate_center() {
+        // p=(10,0), to=(0,10), rx=ry=10: the two circles of radius 10
+        // through both points are centered at (0,0) (quarter turn) and
+        // (10,10) (three-quarter turn) travelling ccw.
+        let start = RawStart {
+            at: Point::new(10.0, 0.0),
+        };
+        let to = Point::new(0.0, 10.0);
+        let (rx, ry) = (10.0, 10.0);
+
+        let minor = realize(
+            &start,
+            &[RawSegment::Arc {
+                to,
+                geometry: ArcGeometry::Radii {
+                    rx,
+                    ry,
+                    large: false,
+                },
+                sweep: Sweep::Ccw,
+            }],
+            false,
+            NO_TOLERANCE,
+        )
+        .unwrap();
+        assert_eq!(minor.piece_counts, vec![1]);
+        assert_arc_centered_at(&minor, Point::new(0.0, 0.0), rx, ry);
+
+        let major = realize(
+            &start,
+            &[RawSegment::Arc {
+                to,
+                geometry: ArcGeometry::Radii {
+                    rx,
+                    ry,
+                    large: true,
+                },
+                sweep: Sweep::Ccw,
+            }],
+            false,
+            NO_TOLERANCE,
+        )
+        .unwrap();
+        assert_eq!(major.piece_counts, vec![3]);
+        assert_arc_centered_at(&major, Point::new(10.0, 10.0), rx, ry);
+    }
+
+    #[test]
+    fn radii_mode_exact_diameter_solves_a_half_oval() {
+        // The chord is exactly the ellipse's major axis: both candidate
+        // centers coincide at the midpoint, and `large` has no effect.
+        let start = RawStart {
+            at: Point::new(5.0, 0.0),
+        };
+        let segs = [RawSegment::Arc {
+            to: Point::new(-5.0, 0.0),
+            geometry: ArcGeometry::Radii {
+                rx: 5.0,
+                ry: 3.0,
+                large: false,
+            },
+            sweep: Sweep::Ccw,
+        }];
+        let skeleton = realize(&start, &segs, false, NO_TOLERANCE).unwrap();
+        // A half-oval spans exactly 180 degrees: ceil(180/90) = 2 pieces.
+        assert_eq!(skeleton.piece_counts, vec![2]);
+        assert_arc_centered_at(&skeleton, Point::new(0.0, 0.0), 5.0, 3.0);
+    }
+
+    #[test]
+    fn radii_mode_near_diameter_chord_falls_back_within_tolerance() {
+        // The chord is a hair longer than the major axis, but within
+        // `arc_tolerance`: taken as an exact diameter rather than an error.
+        let tolerance = 0.01;
+        let start = RawStart {
+            at: Point::new(5.0001, 0.0),
+        };
+        let segs = [RawSegment::Arc {
+            to: Point::new(-5.0001, 0.0),
+            geometry: ArcGeometry::Radii {
+                rx: 5.0,
+                ry: 5.0,
+                large: false,
+            },
+            sweep: Sweep::Ccw,
+        }];
+        let skeleton = realize(&start, &segs, false, tolerance).unwrap();
+        assert_eq!(skeleton.piece_counts, vec![2]);
+    }
+
+    #[test]
+    fn radii_mode_chord_too_long_for_radii_is_an_error() {
+        let start = RawStart {
+            at: Point::new(5.0, 0.0),
+        };
+        let segs = [RawSegment::Arc {
+            to: Point::new(-5.0, 0.0),
+            geometry: ArcGeometry::Radii {
+                rx: 2.0,
+                ry: 2.0,
+                large: false,
+            },
+            sweep: Sweep::Ccw,
+        }];
+        assert_eq!(
+            realize(&start, &segs, false, NO_TOLERANCE),
+            Err(SkeletonError::RadiiTooSmallForChord)
         );
     }
 
     #[test]
-    fn closed_path_appends_closing_spline() {
+    fn radii_mode_non_positive_radius_is_an_error() {
         let start = RawStart {
-            at: Point::new(0.0, 0.0),
-            dir: Some(Vec2::new(1.0, 0.0)),
+            at: Point::new(5.0, 0.0),
         };
-        let segs = [
-            seg_spline(Point::new(10.0, 10.0), Some(Vec2::new(0.0, 1.0))),
-            seg_spline(Point::new(0.0, 20.0), Some(Vec2::new(-1.0, 0.0))),
-        ];
-        let path = realize(&start, &segs, true).unwrap();
-        // Two authored splines plus one appended closing spline.
-        assert_eq!(path.segments().count(), 3);
-    }
-
-    #[test]
-    fn already_closed_path_appends_nothing() {
-        let start = RawStart {
-            at: Point::new(0.0, 0.0),
-            dir: None,
-        };
-        let segs = [
-            seg_line(Point::new(10.0, 0.0)),
-            seg_line(Point::new(0.0, 0.0)),
-        ];
-        let path = realize(&start, &segs, true).unwrap();
-        assert_eq!(path.segments().count(), 2);
+        let segs = [RawSegment::Arc {
+            to: Point::new(-5.0, 0.0),
+            geometry: ArcGeometry::Radii {
+                rx: 0.0,
+                ry: 5.0,
+                large: false,
+            },
+            sweep: Sweep::Ccw,
+        }];
+        assert_eq!(
+            realize(&start, &segs, false, NO_TOLERANCE),
+            Err(SkeletonError::RadiiTooSmallForChord)
+        );
     }
 
     #[test]
     fn zero_length_line_is_an_error() {
         let start = RawStart {
             at: Point::new(0.0, 0.0),
-            dir: None,
         };
-        let segs = [seg_line(Point::new(0.0, 0.0))];
+        let segs = [line(Point::new(0.0, 0.0))];
         assert_eq!(
-            realize(&start, &segs, false),
+            realize(&start, &segs, false, NO_TOLERANCE),
             Err(SkeletonError::ZeroLengthSegment)
         );
+    }
+
+    #[test]
+    fn closed_path_appends_a_straight_line() {
+        let start = RawStart {
+            at: Point::new(0.0, 0.0),
+        };
+        let segs = [line(Point::new(10.0, 0.0)), line(Point::new(10.0, 10.0))];
+        let skeleton = realize(&start, &segs, true, NO_TOLERANCE).unwrap();
+        // Two authored lines plus one appended closing line.
+        assert_eq!(skeleton.path.segments().count(), 3);
+        assert_eq!(skeleton.piece_counts, vec![1, 1, 1]);
+    }
+
+    #[test]
+    fn already_closed_path_appends_nothing() {
+        let start = RawStart {
+            at: Point::new(0.0, 0.0),
+        };
+        let segs = [line(Point::new(10.0, 0.0)), line(Point::new(0.0, 0.0))];
+        let skeleton = realize(&start, &segs, true, NO_TOLERANCE).unwrap();
+        assert_eq!(skeleton.path.segments().count(), 2);
+        assert_eq!(skeleton.piece_counts, vec![1, 1]);
+    }
+
+    #[test]
+    fn resolve_param_maps_through_arc_pieces() {
+        let start = RawStart {
+            at: Point::new(10.0, 0.0),
+        };
+        let segs = [
+            line(Point::new(20.0, 0.0)),
+            RawSegment::Arc {
+                to: Point::new(-20.0, 0.0),
+                geometry: ArcGeometry::Center(Point::new(0.0, 0.0)),
+                sweep: Sweep::Ccw,
+            },
+        ];
+        // Re-center so the arc's center is the origin: adjust the line
+        // start to keep it simple.
+        let start = RawStart { at: start.at };
+        let skeleton = realize(&start, &segs, false, NO_TOLERANCE).unwrap();
+        assert_eq!(skeleton.piece_counts.len(), 2);
+        let arc_pieces = skeleton.piece_counts[1];
+        assert!(arc_pieces >= 2); // a half circle needs at least 2 pieces
+
+        // t=1.0 is exactly the arc's start (global segment index 1).
+        let (_, local_t) = resolve_param(&skeleton, 1.0).unwrap();
+        assert_eq!(local_t, 0.0);
+        // t=2.0 is exactly the arc's end.
+        let (last_piece, local_t) = resolve_param(&skeleton, 2.0).unwrap();
+        assert_eq!(local_t, 1.0);
+        let PathSeg::Cubic(cubic) = last_piece else {
+            panic!("expected a cubic")
+        };
+        assert!((cubic.p3.x + 20.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn param_out_of_domain_is_an_error() {
+        let start = RawStart {
+            at: Point::new(0.0, 0.0),
+        };
+        let segs = [line(Point::new(10.0, 0.0))];
+        let skeleton = realize(&start, &segs, false, NO_TOLERANCE).unwrap();
+        assert_eq!(resolve_param(&skeleton, 1.5), Err(ParamOutOfDomain));
+        assert_eq!(resolve_param(&skeleton, -0.1), Err(ParamOutOfDomain));
     }
 }

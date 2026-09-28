@@ -149,7 +149,27 @@ impl PathDecl {
 pub enum SegmentKind {
     Start,
     Line,
-    Spline,
+    Quad,
+    Cube,
+    Arc,
+}
+
+/// `arc`'s `sweep` field: the direction of travel from the current point
+/// to `to` about `center` (spec §5.7, y-up). Resolved to this enum at HIR
+/// time, the same way `joins`/`align` are — not deferred to evaluation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sweep {
+    Ccw,
+    Cw,
+}
+
+impl Sweep {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Sweep::Ccw => "ccw",
+            Sweep::Cw => "cw",
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -159,18 +179,27 @@ pub struct SegmentDecl {
     pub syntax: SyntaxNode,
     /// `start` only.
     pub at: Option<ast::Expr>,
-    /// `line` / `spline`.
+    /// `line` / `quad` / `cube` / `arc`.
     pub to: Option<ast::Expr>,
-    /// `start` / `spline`.
-    pub dir: Option<ast::Expr>,
-    /// `spline` only.
-    pub from_dir: Option<ast::Expr>,
-    /// `spline` only; defaults to `1`.
-    pub tension: Option<ast::Expr>,
-    /// `spline` only.
-    pub controls: Option<(ast::Expr, ast::Expr)>,
-    /// `start` / `spline`; defaults to `1`.
-    pub curl: Option<ast::Expr>,
+    /// `quad` only; omitted only when the previous declaration is also a
+    /// `quad` (spec §6.3 reflection).
+    pub c: Option<ast::Expr>,
+    /// `cube` only; omitted only when the previous declaration is also a
+    /// `cube` (spec §6.3 reflection).
+    pub c1: Option<ast::Expr>,
+    /// `cube` only; required.
+    pub c2: Option<ast::Expr>,
+    /// `arc` only; centre mode — mutually exclusive with `rx`/`ry`.
+    pub center: Option<ast::Expr>,
+    /// `arc` only; radii mode — the horizontal radius, requires `ry`.
+    pub rx: Option<ast::Expr>,
+    /// `arc` only; radii mode — the vertical radius, requires `rx`.
+    pub ry: Option<ast::Expr>,
+    /// `arc` only; radii mode only. Resolved at HIR time like `sweep`;
+    /// `false` when omitted or not in radii mode.
+    pub large: bool,
+    /// `arc` only; required.
+    pub sweep: Option<Sweep>,
 }
 
 #[derive(Debug)]

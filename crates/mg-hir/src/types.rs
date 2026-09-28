@@ -22,8 +22,6 @@ pub enum Type {
     /// first-class expression type.
     Range,
     List(Box<Type>),
-    /// `(point, point)`, legal only as `spline controls:`.
-    PointPair,
     /// Error-recovery sentinel: propagates silently so one bad subtree
     /// does not cascade into a second diagnostic about its parent.
     Error,
@@ -43,7 +41,6 @@ impl fmt::Display for Type {
             Type::Zone => write!(f, "zone"),
             Type::Range => write!(f, "range"),
             Type::List(elem) => write!(f, "list<{elem}>"),
-            Type::PointPair => write!(f, "(point, point)"),
             Type::Error => write!(f, "<error>"),
         }
     }

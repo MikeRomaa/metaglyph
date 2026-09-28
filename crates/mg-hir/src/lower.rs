@@ -932,7 +932,11 @@ fn lower_path_body(body: ast::Body, diagnostics: &mut Vec<Diagnostic>) -> (Vec<S
 
     for item in body.items() {
         match item.kind() {
-            SyntaxKind::START | SyntaxKind::LINE | SyntaxKind::SPLINE => {
+            SyntaxKind::START
+            | SyntaxKind::LINE
+            | SyntaxKind::QUAD
+            | SyntaxKind::CUBE
+            | SyntaxKind::ARC => {
                 segments.push(lower_segment(item, diagnostics));
             }
             SyntaxKind::CLOSE => {
@@ -953,6 +957,54 @@ fn lower_path_body(body: ast::Body, diagnostics: &mut Vec<Diagnostic>) -> (Vec<S
     (segments, closed)
 }
 
+/// `sweep` (spec §5.7): a required `"ccw"`/`"cw"` enum, resolved at HIR
+/// time like `joins`/`align` rather than deferred to evaluation.
+fn lower_sweep(
+    fields: &IndexMap<String, ast::Field>,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<Sweep> {
+    let field = fields.get("sweep")?;
+    let expr = field.value()?;
+    match string_literal_value(&expr) {
+        Some(value) if value == "ccw" => Some(Sweep::Ccw),
+        Some(value) if value == "cw" => Some(Sweep::Cw),
+        Some(value) => {
+            diagnostics.push(Diagnostic::error(
+                codes::UNKNOWN_ENUM_VALUE,
+                format!("unknown sweep \"{value}\"; expected one of: ccw, cw"),
+                Label::new(expr.syntax().text_range().into(), "not a legal value"),
+            ));
+            None
+        }
+        None => {
+            diagnostics.push(Diagnostic::error(
+                codes::TYPE_MISMATCH,
+                "`sweep` must be a string literal",
+                Label::new(expr.syntax().text_range().into(), "expected a string"),
+            ));
+            None
+        }
+    }
+}
+
+/// `arc`'s two modes (spec §6.3): `crate::schema::ARC_FIELDS` already
+/// rejects mixing `center` with `rx`/`ry` and requires `rx` and `ry`
+/// together, but "at least one mode" is a cross-group rule the field
+/// table can't express, so it's checked here instead.
+fn check_arc_mode(
+    fields: &IndexMap<String, ast::Field>,
+    block_syntax: &SyntaxNode,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if !fields.contains_key("center") && !fields.contains_key("rx") {
+        diagnostics.push(Diagnostic::error(
+            codes::MISSING_REQUIRED_FIELD,
+            "`arc` needs either `center`, or `rx` and `ry`",
+            Label::new(schema::trimmed_span(block_syntax), "missing arc geometry"),
+        ));
+    }
+}
+
 fn lower_segment(node: SyntaxNode, diagnostics: &mut Vec<Diagnostic>) -> SegmentDecl {
     match node.kind() {
         SyntaxKind::START => {
@@ -970,11 +1022,14 @@ fn lower_segment(node: SyntaxNode, diagnostics: &mut Vec<Diagnostic>) -> Segment
                 syntax: start.syntax().clone(),
                 at: fields.get("at").and_then(|f| f.value()),
                 to: None,
-                dir: fields.get("dir").and_then(|f| f.value()),
-                from_dir: None,
-                tension: None,
-                controls: None,
-                curl: fields.get("curl").and_then(|f| f.value()),
+                c: None,
+                c1: None,
+                c2: None,
+                center: None,
+                rx: None,
+                ry: None,
+                large: false,
+                sweep: None,
             }
         }
         SyntaxKind::LINE => {
@@ -992,61 +1047,96 @@ fn lower_segment(node: SyntaxNode, diagnostics: &mut Vec<Diagnostic>) -> Segment
                 syntax: line.syntax().clone(),
                 at: None,
                 to: fields.get("to").and_then(|f| f.value()),
-                dir: None,
-                from_dir: None,
-                tension: None,
-                controls: None,
-                curl: None,
+                c: None,
+                c1: None,
+                c2: None,
+                center: None,
+                rx: None,
+                ry: None,
+                large: false,
+                sweep: None,
             }
         }
-        SyntaxKind::SPLINE => {
-            let spline = ast::Spline::cast(node).expect("SPLINE casts");
+        SyntaxKind::QUAD => {
+            let quad = ast::Quad::cast(node).expect("QUAD casts");
             let fields = schema::collect_fields(
-                spline.syntax(),
-                spline.config().as_ref(),
-                schema::SPLINE_FIELDS,
-                "`spline`",
+                quad.syntax(),
+                quad.config().as_ref(),
+                schema::QUAD_FIELDS,
+                "`quad`",
                 diagnostics,
             );
-            let controls = fields
-                .get("controls")
-                .and_then(|f| f.value())
-                .and_then(|expr| {
-                    let ast::Expr::Tuple(tuple) = &expr else {
-                        diagnostics.push(Diagnostic::error(
-                            codes::TYPE_MISMATCH,
-                            "`controls` must be `(point, point)`",
-                            Label::new(expr.syntax().text_range().into(), "expected two points"),
-                        ));
-                        return None;
-                    };
-                    let elements: Vec<ast::Expr> = tuple.elements().collect();
-                    if elements.len() == 2 {
-                        let mut it = elements.into_iter();
-                        Some((it.next().unwrap(), it.next().unwrap()))
-                    } else {
-                        diagnostics.push(Diagnostic::error(
-                            codes::TYPE_MISMATCH,
-                            format!(
-                                "`controls` must have exactly two points, found {}",
-                                elements.len()
-                            ),
-                            Label::new(tuple.syntax().text_range().into(), "expected two points"),
-                        ));
-                        None
-                    }
-                });
             SegmentDecl {
-                kind: SegmentKind::Spline,
-                name: spline.name_token().map(|t| t.text().to_string()),
-                syntax: spline.syntax().clone(),
+                kind: SegmentKind::Quad,
+                name: quad.name_token().map(|t| t.text().to_string()),
+                syntax: quad.syntax().clone(),
                 at: None,
                 to: fields.get("to").and_then(|f| f.value()),
-                dir: fields.get("dir").and_then(|f| f.value()),
-                from_dir: fields.get("fromDir").and_then(|f| f.value()),
-                tension: fields.get("tension").and_then(|f| f.value()),
-                controls,
-                curl: fields.get("curl").and_then(|f| f.value()),
+                c: fields.get("c").and_then(|f| f.value()),
+                c1: None,
+                c2: None,
+                center: None,
+                rx: None,
+                ry: None,
+                large: false,
+                sweep: None,
+            }
+        }
+        SyntaxKind::CUBE => {
+            let cube = ast::Cube::cast(node).expect("CUBE casts");
+            let fields = schema::collect_fields(
+                cube.syntax(),
+                cube.config().as_ref(),
+                schema::CUBE_FIELDS,
+                "`cube`",
+                diagnostics,
+            );
+            SegmentDecl {
+                kind: SegmentKind::Cube,
+                name: cube.name_token().map(|t| t.text().to_string()),
+                syntax: cube.syntax().clone(),
+                at: None,
+                to: fields.get("to").and_then(|f| f.value()),
+                c: None,
+                c1: fields.get("c1").and_then(|f| f.value()),
+                c2: fields.get("c2").and_then(|f| f.value()),
+                center: None,
+                rx: None,
+                ry: None,
+                large: false,
+                sweep: None,
+            }
+        }
+        SyntaxKind::ARC => {
+            let arc = ast::Arc::cast(node).expect("ARC casts");
+            let fields = schema::collect_fields(
+                arc.syntax(),
+                arc.config().as_ref(),
+                schema::ARC_FIELDS,
+                "`arc`",
+                diagnostics,
+            );
+            check_arc_mode(&fields, arc.syntax(), diagnostics);
+            let sweep = lower_sweep(&fields, diagnostics);
+            let large = fields
+                .get("large")
+                .and_then(|f| f.value())
+                .and_then(|e| const_eval::eval_const_bool(&e))
+                .unwrap_or(false);
+            SegmentDecl {
+                kind: SegmentKind::Arc,
+                name: arc.name_token().map(|t| t.text().to_string()),
+                syntax: arc.syntax().clone(),
+                at: None,
+                to: fields.get("to").and_then(|f| f.value()),
+                c: None,
+                c1: None,
+                c2: None,
+                center: fields.get("center").and_then(|f| f.value()),
+                rx: fields.get("rx").and_then(|f| f.value()),
+                ry: fields.get("ry").and_then(|f| f.value()),
+                large,
+                sweep,
             }
         }
         _ => unreachable!("lower_segment called on a non-segment node"),
@@ -1275,23 +1365,6 @@ fn expect_type(ctx: &mut Ctx, expr: &ast::Expr, expected: Type, desc: &str) {
     ));
 }
 
-/// `num | pair` (spline `tension`): either is legal, so this only rejects
-/// something that is neither.
-fn expect_num_or_pair(ctx: &mut Ctx, expr: &ast::Expr, desc: &str) {
-    let found = type_check::infer_expr(ctx, expr);
-    if matches!(found, Type::Error | Type::Num | Type::Pair) {
-        return;
-    }
-    ctx.diagnostics.push(Diagnostic::error(
-        codes::TYPE_MISMATCH,
-        format!("{desc} must be `num` or `pair`, found `{found}`"),
-        Label::new(
-            expr.syntax().text_range().into(),
-            "expected `num` or `pair`",
-        ),
-    ));
-}
-
 fn check_min(ctx: &mut Ctx, expr: &ast::Expr, min: f64, desc: &str) {
     let font_em = ctx.hir.font.em.map(|v| v as f64);
     if let Some(value) = const_eval::eval_const(expr, font_em)
@@ -1403,11 +1476,12 @@ fn typecheck_glyph(hir: &mut Hir, key: &GlyphKey, diagnostics: &mut Vec<Diagnost
                 .map(|s| SegmentExprs {
                     at: s.at.clone(),
                     to: s.to.clone(),
-                    dir: s.dir.clone(),
-                    from_dir: s.from_dir.clone(),
-                    tension: s.tension.clone(),
-                    controls: s.controls.clone(),
-                    curl: s.curl.clone(),
+                    c: s.c.clone(),
+                    c1: s.c1.clone(),
+                    c2: s.c2.clone(),
+                    center: s.center.clone(),
+                    rx: s.rx.clone(),
+                    ry: s.ry.clone(),
                 })
                 .collect();
             (p.stroke.clone(), segs)
@@ -1475,23 +1549,25 @@ fn typecheck_glyph(hir: &mut Hir, key: &GlyphKey, diagnostics: &mut Vec<Diagnost
             if let Some(to) = &seg.to {
                 expect_type(&mut ctx, to, Type::Pair, "`to`");
             }
-            if let Some(dir) = &seg.dir {
-                expect_type(&mut ctx, dir, Type::Pair, "`dir`");
+            if let Some(c) = &seg.c {
+                expect_type(&mut ctx, c, Type::Pair, "`c`");
             }
-            if let Some(from_dir) = &seg.from_dir {
-                expect_type(&mut ctx, from_dir, Type::Pair, "`fromDir`");
+            if let Some(c1) = &seg.c1 {
+                expect_type(&mut ctx, c1, Type::Pair, "`c1`");
             }
-            if let Some(tension) = &seg.tension {
-                expect_num_or_pair(&mut ctx, tension, "`tension`");
-                check_tension_components(&mut ctx, tension);
+            if let Some(c2) = &seg.c2 {
+                expect_type(&mut ctx, c2, Type::Pair, "`c2`");
             }
-            if let Some((c0, c1)) = &seg.controls {
-                expect_type(&mut ctx, c0, Type::Pair, "`controls`");
-                expect_type(&mut ctx, c1, Type::Pair, "`controls`");
+            if let Some(center) = &seg.center {
+                expect_type(&mut ctx, center, Type::Pair, "`center`");
             }
-            if let Some(curl) = &seg.curl {
-                expect_type(&mut ctx, curl, Type::Num, "`curl`");
-                check_min(&mut ctx, curl, 0.0, "`curl`");
+            if let Some(rx) = &seg.rx {
+                expect_type(&mut ctx, rx, Type::Num, "`rx`");
+                check_min_exclusive(&mut ctx, rx, 0.0, "`rx`");
+            }
+            if let Some(ry) = &seg.ry {
+                expect_type(&mut ctx, ry, Type::Num, "`ry`");
+                check_min_exclusive(&mut ctx, ry, 0.0, "`ry`");
             }
         }
     }
@@ -1507,32 +1583,12 @@ struct ComponentExprs {
 struct SegmentExprs {
     at: Option<ast::Expr>,
     to: Option<ast::Expr>,
-    dir: Option<ast::Expr>,
-    from_dir: Option<ast::Expr>,
-    tension: Option<ast::Expr>,
-    controls: Option<(ast::Expr, ast::Expr)>,
-    curl: Option<ast::Expr>,
-}
-
-/// `tension` (spec §5.7): "Every component must be ≥ 0.75," whether it is
-/// a single `num` or a `(departure, arrival)` `pair`.
-fn check_tension_components(ctx: &mut Ctx, expr: &ast::Expr) {
-    let font_em = ctx.hir.font.em.map(|v| v as f64);
-    if let ast::Expr::Tuple(tuple) = expr {
-        for element in tuple.elements() {
-            if let Some(value) = const_eval::eval_const(&element, font_em)
-                && value < 0.75
-            {
-                ctx.diagnostics.push(Diagnostic::error(
-                    codes::VALUE_OUT_OF_RANGE,
-                    format!("`tension` must be at least 0.75, found {value}"),
-                    Label::new(element.syntax().text_range().into(), "out of range"),
-                ));
-            }
-        }
-    } else {
-        check_min(ctx, expr, 0.75, "`tension`");
-    }
+    c: Option<ast::Expr>,
+    c1: Option<ast::Expr>,
+    c2: Option<ast::Expr>,
+    center: Option<ast::Expr>,
+    rx: Option<ast::Expr>,
+    ry: Option<ast::Expr>,
 }
 
 fn check_min_exclusive(ctx: &mut Ctx, expr: &ast::Expr, min: f64, desc: &str) {

@@ -74,7 +74,9 @@ fn block_node_kind(keyword: SyntaxKind) -> SyntaxKind {
         COMPONENT_KW => COMPONENT,
         START_KW => START,
         LINE_KW => LINE,
-        SPLINE_KW => SPLINE,
+        QUAD_KW => QUAD,
+        CUBE_KW => CUBE,
+        ARC_KW => ARC,
         CLOSE_KW => CLOSE,
         _ => unreachable!("block() called on a non-declaration keyword"),
     }

@@ -5,7 +5,7 @@
 
 use mg_diag::{Diagnostic, Label};
 
-use crate::model::{PathDecl, SegmentDecl, SegmentKind};
+use crate::model::{PathDecl, SegmentKind};
 use mg_diag::codes;
 
 pub fn check_path(all_paths: &[PathDecl], path: &PathDecl, diagnostics: &mut Vec<Diagnostic>) {
@@ -131,83 +131,45 @@ fn check_body_shape(path: &PathDecl, diagnostics: &mut Vec<Diagnostic>) {
         ));
     }
 
-    check_start_fields(path, diagnostics);
-    check_spline_fields(path, diagnostics);
+    check_reflections(path, diagnostics);
 }
 
-fn check_start_fields(path: &PathDecl, diagnostics: &mut Vec<Diagnostic>) {
-    let Some(start) = path
-        .segments
-        .first()
-        .filter(|s| s.kind == SegmentKind::Start)
-    else {
-        return;
-    };
-    let next = path.segments.get(1);
-
-    if start.dir.is_some() && !path.closed && next.is_some_and(|seg| seg.kind == SegmentKind::Line)
-    {
-        diagnostics.push(Diagnostic::error(
-            codes::FIELD_ILLEGAL_HERE,
-            "`dir` on `start` is illegal when the first segment is a `line` on an open path",
-            Label::new(crate::schema::trimmed_span(&start.syntax), "illegal here"),
-        ));
-    }
-
-    if start.curl.is_some()
-        && !(!path.closed && next.is_some_and(|seg| seg.kind == SegmentKind::Spline))
-    {
-        diagnostics.push(Diagnostic::error(
-            codes::FIELD_ILLEGAL_HERE,
-            "`curl` on `start` is legal only on an open path whose first segment is a `spline`",
-            Label::new(crate::schema::trimmed_span(&start.syntax), "illegal here"),
-        ));
-    }
-}
-
-fn check_spline_fields(path: &PathDecl, diagnostics: &mut Vec<Diagnostic>) {
-    let last_index = path.segments.len().saturating_sub(1);
+/// A `quad` without `c`, or a `cube` without `c1`, reflects the previous
+/// declaration's adjacent control point (spec §6.3) — legal only when
+/// that previous declaration is a segment of the same kind.
+fn check_reflections(path: &PathDecl, diagnostics: &mut Vec<Diagnostic>) {
     for (i, seg) in path.segments.iter().enumerate() {
-        if seg.kind != SegmentKind::Spline {
+        let (omitted, field_name) = match seg.kind {
+            SegmentKind::Quad => (seg.c.is_none(), "c"),
+            SegmentKind::Cube => (seg.c1.is_none(), "c1"),
+            _ => continue,
+        };
+        if !omitted {
             continue;
         }
-        check_from_dir_position(path, i, seg, diagnostics);
-        check_curl_position(path, i, last_index, seg, diagnostics);
+        let previous_matches = i > 0 && path.segments[i - 1].kind == seg.kind;
+        if !previous_matches {
+            diagnostics.push(Diagnostic::error(
+                codes::INVALID_REFLECTION,
+                format!(
+                    "`{field_name}` may only be omitted when the previous declaration is also a `{}`",
+                    segment_keyword(seg.kind)
+                ),
+                Label::new(
+                    crate::schema::trimmed_span(&seg.syntax),
+                    format!("missing `{field_name}`"),
+                ),
+            ));
+        }
     }
 }
 
-fn check_from_dir_position(
-    path: &PathDecl,
-    index: usize,
-    seg: &SegmentDecl,
-    diagnostics: &mut Vec<Diagnostic>,
-) {
-    let first_after_start = path
-        .segments
-        .first()
-        .is_some_and(|s| s.kind == SegmentKind::Start)
-        && index == 1;
-    if seg.from_dir.is_some() && first_after_start {
-        diagnostics.push(Diagnostic::error(
-            codes::FIELD_ILLEGAL_HERE,
-            "`fromDir` is illegal on the first segment after `start`",
-            Label::new(crate::schema::trimmed_span(&seg.syntax), "illegal here"),
-        ));
-    }
-}
-
-fn check_curl_position(
-    path: &PathDecl,
-    index: usize,
-    last_index: usize,
-    seg: &SegmentDecl,
-    diagnostics: &mut Vec<Diagnostic>,
-) {
-    if seg.curl.is_some() && !(index == last_index && !path.closed) {
-        diagnostics.push(Diagnostic::error(
-            codes::FIELD_ILLEGAL_HERE,
-            "`curl` is legal only on the final segment of an open path",
-            Label::new(crate::schema::trimmed_span(&seg.syntax), "illegal here"),
-        ));
+fn segment_keyword(kind: SegmentKind) -> &'static str {
+    match kind {
+        SegmentKind::Start => "start",
+        SegmentKind::Line => "line",
+        SegmentKind::Quad => "quad",
+        SegmentKind::Cube => "cube",
+        SegmentKind::Arc => "arc",
     }
 }
