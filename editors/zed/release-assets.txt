@@ -1,0 +1,11 @@
+# The `mg` release assets, one per line (plan 4, R). The release job must
+# publish exactly these names, and the extension's `release::asset_name`
+# is tested against this list, so the two cannot drift apart.
+#
+# Each archive holds the binary at its root: `mg`, or `mg.exe` on Windows.
+mg-linux-x86_64.tar.gz
+mg-linux-aarch64.tar.gz
+mg-macos-x86_64.tar.gz
+mg-macos-aarch64.tar.gz
+mg-windows-x86_64.zip
+mg-windows-aarch64.zip

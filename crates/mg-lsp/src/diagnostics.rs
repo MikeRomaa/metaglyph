@@ -14,7 +14,7 @@ use crate::line_index::{Encoding, LineIndex};
 
 /// The table every `MGxxxx` code is defined and documented in.
 pub const CODE_TABLE_URL: &str =
-    "https://github.com/mikeromashov/metaglyph/blob/main/crates/mg-diag/src/codes.rs";
+    "https://github.com/MikeRomaa/metaglyph/blob/main/crates/mg-diag/src/codes.rs";
 
 /// Shown as the diagnostic's origin in the editor.
 pub const SOURCE: &str = "mg";
@@ -85,7 +85,7 @@ pub fn to_lsp(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mg_diag::{Label, codes};
+    use mg_diag::{codes, Label};
 
     fn uri() -> Uri {
         Uri::from_str("file:///font.mg").unwrap()

@@ -15,11 +15,11 @@
     "license": "Apache-2.0",
     "authors": [
       {
-        "name": "Michael Romashov"
+        "name": "Michael Romashov <mromashov@icloud.com>"
       }
     ],
     "links": {
-      "repository": "https://github.com/mikeromashov/metaglyph"
+      "repository": "https://github.com/MikeRomaa/metaglyph"
     }
   }
 }
