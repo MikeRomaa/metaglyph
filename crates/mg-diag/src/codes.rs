@@ -87,6 +87,8 @@ pub const KERN_GROUP_OVERLAP: Code = Code::new("MG0418");
 pub const DUPLICATE_KERN_PAIR: Code = Code::new("MG0419");
 pub const MISSING_DECLARATION_NAME: Code = Code::new("MG0420");
 pub const UNEXPECTED_DECLARATION_NAME: Code = Code::new("MG0421");
+/// `font.version` not of the form `digits.digits` (spec §5.6).
+pub const MALFORMED_VERSION: Code = Code::new("MG0422");
 
 // -- MG05xx: path structure (mg-hir) --------------------------------------
 
@@ -146,3 +148,17 @@ pub const INNER_CORNER_NO_CROSSING: Code = Code::new("MG0620");
 /// A filled contour that was simple before quantization crosses itself
 /// after it (spec §10.4 step 4).
 pub const QUANTIZED_FILL_SELF_INTERSECTS: Code = Code::new("MG0801");
+/// A point, component offset, or glyph bounding box outside `glyf`'s
+/// int16 range (spec §10.5).
+pub const COORDINATE_OUT_OF_RANGE: Code = Code::new("MG0802");
+/// A glyph with more points or contours than `maxp`'s uint16 counts
+/// allow, or a font with more than 65535 glyphs (spec §10.5).
+pub const GLYPH_LIMIT_EXCEEDED: Code = Code::new("MG0803");
+/// Components nest deeper than `COMPONENT_DEPTH` (spec §10.1).
+pub const COMPONENT_TOO_DEEP: Code = Code::new("MG0804");
+/// One codepoint mapped by more than one glyph (spec §10.6).
+pub const DUPLICATE_CODEPOINT: Code = Code::new("MG0805");
+/// A surrogate or noncharacter codepoint (spec §10.6).
+pub const UNENCODABLE_CODEPOINT: Code = Code::new("MG0806");
+/// An advance width outside `hmtx`'s uint16 range.
+pub const ADVANCE_OUT_OF_RANGE: Code = Code::new("MG0807");

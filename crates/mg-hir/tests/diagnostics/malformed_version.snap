@@ -1,0 +1,11 @@
+---
+source: crates/mg-hir/tests/diagnostics.rs
+expression: rendered
+---
+error[MG0422]: `version` must have the form `digits.digits`, found "Version 2.000"
+  ┌─ malformed_version.mg:1:36
+  │
+1 │ font (name: "T", em: 1000, version: "Version 2.000")
+  │                                    ^^^^^^^^^^^^^^^^ not `digits.digits`
+  │
+  = help: write just the number, e.g. `version: "1.000"`; `mg build` adds "Version " in the name table itself

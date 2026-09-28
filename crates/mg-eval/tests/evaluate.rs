@@ -94,16 +94,12 @@ glyph A (advance: w * 2 + 10) {{
     let hir = lower(&source);
     let instance = regular(&hir);
     let (_, outcome) = mg_eval::evaluate(&hir, instance);
-    // `path guide` has neither `stroke` nor `fill`, so it never renders
-    // and `A.bbox` (built for every glyph regardless of whether the
-    // source reads it — M6 will eventually need it for `glyf`/`hmtx`
-    // either way) has no ink to union. That's the one expected
-    // diagnostic here; everything this test actually cares about still
-    // evaluates (spec §4.6 failure containment).
-    assert_eq!(outcome.diagnostics.len(), 1, "{:#?}", outcome.diagnostics);
+    // `path guide` has neither `stroke` nor `fill`, so `A` has no ink.
+    // That is legal; only reading `A.bbox` would be an error.
+    assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
     assert_eq!(
-        outcome.diagnostics[0].code,
-        mg_diag::codes::GLYPH_HAS_NO_INK
+        outcome.values[&NodeId::GlyphBbox("A".into())],
+        mg_eval::value::Value::NoInk
     );
 
     assert_eq!(num(&outcome.values, NodeId::GlyphAdvance("A".into())), 20.0);
@@ -126,7 +122,8 @@ fn glyph_bbox_of_an_empty_glyph_is_a_domain_error() {
     let instance = regular(&hir);
     let (_, outcome) = mg_eval::evaluate(&hir, instance);
 
-    assert!(outcome.failed.contains(&NodeId::GlyphBbox("A".into())));
+    // The glyph itself is fine; the read of its `.bbox` is what fails.
+    assert!(!outcome.failed.contains(&NodeId::GlyphBbox("A".into())));
     assert!(
         outcome
             .failed
@@ -392,13 +389,10 @@ glyph A (advance: 10) {{
     let hir = lower(&source);
     let instance = regular(&hir);
     let (_, outcome) = mg_eval::evaluate(&hir, instance);
-    // Neither path renders, so `A.bbox` (always attempted — see the
-    // comment in `glyph_advance_path_and_anchor_evaluate`) has no ink.
-    assert_eq!(outcome.diagnostics.len(), 1, "{:#?}", outcome.diagnostics);
-    assert_eq!(
-        outcome.diagnostics[0].code,
-        mg_diag::codes::GLYPH_HAS_NO_INK
-    );
+    // Neither path renders, which is legal (see
+    // `glyph_advance_path_and_anchor_evaluate`).
+    assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
+    assert!(!outcome.failed.contains(&NodeId::GlyphBbox("A".into())));
     let hits = outcome.values[&NodeId::GlyphLocal("A".into(), "hits".into())]
         .as_num_list()
         .unwrap();

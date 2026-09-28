@@ -38,6 +38,11 @@ enum Command {
         files: Vec<PathBuf>,
         #[arg(short, long)]
         out: PathBuf,
+        /// `head.created`/`modified`, in seconds since the Unix epoch.
+        /// Defaults to `SOURCE_DATE_EPOCH` when set, else 0, so builds
+        /// are byte-identical unless asked otherwise.
+        #[arg(long)]
+        timestamp: Option<i64>,
     },
     /// Format source files in place.
     Fmt { files: Vec<PathBuf> },
@@ -64,7 +69,11 @@ enum Command {
 fn main() -> ExitCode {
     match Cli::parse().command {
         Command::Check { files } => cmd_check(&files),
-        Command::Build { files, out } => cmd_build(&files, &out),
+        Command::Build {
+            files,
+            out,
+            timestamp,
+        } => cmd_build(&files, &out, timestamp),
         Command::Fmt { files } => cmd_fmt(&files),
         Command::Svg {
             files,
@@ -132,7 +141,8 @@ fn cmd_check(files: &[PathBuf]) -> ExitCode {
         }
         let source_file = mg_syntax::ast::SourceFile::cast(parsed.syntax())
             .expect("SOURCE_FILE always casts from a parse's root node");
-        let (_, hir_diagnostics) = mg_hir::lower(&source_file);
+        let (hir, mut hir_diagnostics) = mg_hir::lower(&source_file);
+        hir_diagnostics.extend(mg_font::build::check_codepoints(&hir));
         for diagnostic in &hir_diagnostics {
             print_diagnostic(&mut stderr, diagnostic, &filename, &source);
             had_errors |= diagnostic.severity == mg_diag::Severity::Error;
@@ -146,14 +156,70 @@ fn cmd_check(files: &[PathBuf]) -> ExitCode {
     }
 }
 
-fn cmd_build(files: &[PathBuf], _out: &Path) -> ExitCode {
+fn cmd_build(files: &[PathBuf], out: &Path, timestamp: Option<i64>) -> ExitCode {
     let code = require_files(files);
     if code != ExitCode::SUCCESS {
         return code;
     }
 
-    eprintln!("mg build: not yet implemented");
-    ExitCode::FAILURE
+    // Spec §5.6's multi-file merge isn't implemented yet (see
+    // `cmd_check`'s own note); the font is the first file.
+    let path = &files[0];
+    let source = match read_source(path) {
+        Ok(source) => source,
+        Err(code) => return code,
+    };
+    let filename = path.display().to_string();
+    let mut stderr = StandardStream::stderr(ColorChoice::Auto);
+
+    let parsed = mg_syntax::parse(&source);
+    let mut had_errors = false;
+    for diagnostic in &parsed.diagnostics {
+        print_diagnostic(&mut stderr, diagnostic, &filename, &source);
+        had_errors |= diagnostic.severity == mg_diag::Severity::Error;
+    }
+    if had_errors {
+        return ExitCode::FAILURE;
+    }
+
+    let source_file = mg_syntax::ast::SourceFile::cast(parsed.syntax())
+        .expect("SOURCE_FILE always casts from a parse's root node");
+    let (hir, hir_diagnostics) = mg_hir::lower(&source_file);
+    for diagnostic in &hir_diagnostics {
+        print_diagnostic(&mut stderr, diagnostic, &filename, &source);
+        had_errors |= diagnostic.severity == mg_diag::Severity::Error;
+    }
+    if had_errors {
+        return ExitCode::FAILURE;
+    }
+
+    let timestamp = timestamp
+        .or_else(|| std::env::var("SOURCE_DATE_EPOCH").ok()?.parse().ok())
+        .unwrap_or(0);
+    let options = mg_font::BuildOptions { timestamp };
+    let (fonts, diagnostics) = mg_font::build_fonts(&hir, &options);
+    for diagnostic in &diagnostics {
+        print_diagnostic(&mut stderr, diagnostic, &filename, &source);
+    }
+    // `build_fonts` returns no fonts at all when anything failed (spec
+    // §4.6), so a failed build writes nothing.
+    if fonts.is_empty() {
+        return ExitCode::FAILURE;
+    }
+
+    if let Err(err) = std::fs::create_dir_all(out) {
+        eprintln!("error: could not create {}: {err}", out.display());
+        return ExitCode::from(2);
+    }
+    for font in &fonts {
+        let target = out.join(&font.file_name);
+        if let Err(err) = std::fs::write(&target, &font.data) {
+            eprintln!("error: could not write {}: {err}", target.display());
+            return ExitCode::from(2);
+        }
+        eprintln!("wrote {}", target.display());
+    }
+    ExitCode::SUCCESS
 }
 
 fn cmd_fmt(files: &[PathBuf]) -> ExitCode {

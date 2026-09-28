@@ -469,7 +469,7 @@ fn eval_member(ctx: &mut EvalCtx, member: &ast::MemberExpr) -> Result<Value, ()>
                     .current_glyph
                     .expect("mg-hir only allows `glyph.*` inside a glyph body")
                     .to_string();
-                return eval_glyph_member(ctx, &glyph_name, field);
+                return eval_glyph_member(ctx, &glyph_name, field, member);
             }
             _ => {}
         }
@@ -480,7 +480,7 @@ fn eval_member(ctx: &mut EvalCtx, member: &ast::MemberExpr) -> Result<Value, ()>
         && root.token().as_ref().map(|t| t.text()) == Some("glyphs")
         && let Some(glyph_name_token) = inner.member_token()
     {
-        return eval_glyph_member(ctx, glyph_name_token.text(), field);
+        return eval_glyph_member(ctx, glyph_name_token.text(), field, member);
     }
 
     let receiver_value = eval_expr(ctx, &receiver)?;
@@ -556,10 +556,21 @@ fn eval_instance_member(ctx: &EvalCtx, field: &str) -> Value {
     }
 }
 
-fn eval_glyph_member(ctx: &mut EvalCtx, glyph_name: &str, field: &str) -> Result<Value, ()> {
+fn eval_glyph_member(
+    ctx: &mut EvalCtx,
+    glyph_name: &str,
+    field: &str,
+    member: &ast::MemberExpr,
+) -> Result<Value, ()> {
     match field {
         "advance" => Ok(ctx.value_of(&NodeId::GlyphAdvance(glyph_name.to_string()))),
-        "bbox" => Ok(ctx.value_of(&NodeId::GlyphBbox(glyph_name.to_string()))),
+        "bbox" => match ctx.value_of(&NodeId::GlyphBbox(glyph_name.to_string())) {
+            Value::NoInk => ctx.fail(
+                mg_syntax::trimmed_range(member.syntax()),
+                EvalError::GlyphHasNoInk,
+            ),
+            rect => Ok(rect),
+        },
         "name" => Ok(Value::String(glyph_name.to_string())),
         "codepoints" => {
             let glyph = effective_glyph(ctx.hir, ctx.instance, glyph_name);
@@ -936,12 +947,14 @@ fn eval_glyph_bbox(
         let Some(target) = &component.glyph else {
             continue;
         };
-        let target_rect = ctx
+        let target_bbox = ctx
             .values
             .get(&NodeId::GlyphBbox(target.clone()))
-            .expect("a component's target glyph bbox is a dependency")
-            .as_rect()
-            .expect("GlyphBbox always evaluates to a Value::Rect");
+            .expect("a component's target glyph bbox is a dependency");
+        // An inkless component adds nothing.
+        let Some(target_rect) = target_bbox.as_rect() else {
+            continue;
+        };
 
         let affine = component_affine(&mut ctx, component)?;
 
@@ -949,13 +962,7 @@ fn eval_glyph_bbox(
         union = Some(union.map_or(transformed, |u| union_rect(u, transformed)));
     }
 
-    match union {
-        Some(rect) => Ok(Value::Rect(rect)),
-        None => {
-            let span = mg_syntax::trimmed_range(&glyph.syntax);
-            ctx.fail(span, EvalError::GlyphHasNoInk)
-        }
-    }
+    Ok(union.map_or(Value::NoInk, Value::Rect))
 }
 
 fn union_rect(a: Rect, b: Rect) -> Rect {

@@ -141,6 +141,18 @@ pub fn stroke_path(
         trim_inner_corner(&mut result, &corner, r, offset_tolerance)?;
     }
 
+    // Every later stage treats a `MoveTo` as the start of a new contour,
+    // so a stray one here splits the outline.
+    debug_assert!(
+        result.iter().all(|(contour, _)| contour
+            .elements()
+            .iter()
+            .filter(|e| matches!(e, PathEl::MoveTo(_)))
+            .count()
+            == 1),
+        "every stroke contour is a single subpath"
+    );
+
     Ok(result)
 }
 
@@ -468,8 +480,13 @@ fn try_trim_inner_chord(
     let Some((t_prev, t_next)) = nearest_crossing(prev, next, vertex, tolerance) else {
         return InnerTrim::NoCrossing;
     };
-    let trimmed_prev = prev.subsegment(0.0..t_prev);
-    let trimmed_next = next.subsegment(t_next..1.0);
+    // Both pieces end and start at one shared point, bit-for-bit: each
+    // side's own evaluation of the crossing differs in the last few ulps,
+    // and any gap would split the contour in two (see
+    // `closed_path_from_segments`).
+    let crossing = prev.eval(t_prev);
+    let trimmed_prev = with_end(prev.subsegment(0.0..t_prev), crossing);
+    let trimmed_next = with_start(next.subsegment(t_next..1.0), crossing);
 
     let mut new_segs = Vec::with_capacity(n - 1);
     if prev_index < next_index {
@@ -489,8 +506,46 @@ fn try_trim_inner_chord(
         new_segs.push(trimmed_prev);
     }
 
-    *contour = BezPath::from_path_segments(new_segs.into_iter());
+    *contour = closed_path_from_segments(&new_segs);
     InnerTrim::Trimmed
+}
+
+fn with_start(seg: PathSeg, p: Point) -> PathSeg {
+    match seg {
+        PathSeg::Line(l) => PathSeg::Line(Line::new(p, l.p1)),
+        PathSeg::Quad(q) => PathSeg::Quad(kurbo::QuadBez::new(p, q.p1, q.p2)),
+        PathSeg::Cubic(c) => PathSeg::Cubic(kurbo::CubicBez::new(p, c.p1, c.p2, c.p3)),
+    }
+}
+
+fn with_end(seg: PathSeg, p: Point) -> PathSeg {
+    match seg {
+        PathSeg::Line(l) => PathSeg::Line(Line::new(l.p0, p)),
+        PathSeg::Quad(q) => PathSeg::Quad(kurbo::QuadBez::new(q.p0, q.p1, p)),
+        PathSeg::Cubic(c) => PathSeg::Cubic(kurbo::CubicBez::new(c.p0, c.p1, c.p2, p)),
+    }
+}
+
+/// `segs`, consecutive pieces of one closed contour, as a single closed
+/// subpath. Not `BezPath::from_path_segments`, which starts a new
+/// subpath wherever a piece's start differs from the previous end by any
+/// amount, and never closes: either would turn one contour into several
+/// open fragments.
+fn closed_path_from_segments(segs: &[PathSeg]) -> BezPath {
+    let mut path = BezPath::new();
+    let Some(first) = segs.first() else {
+        return path;
+    };
+    path.move_to(first.start());
+    for seg in segs {
+        match *seg {
+            PathSeg::Line(l) => path.line_to(l.p1),
+            PathSeg::Quad(q) => path.quad_to(q.p1, q.p2),
+            PathSeg::Cubic(c) => path.curve_to(c.p1, c.p2, c.p3),
+        }
+    }
+    path.close_path();
+    path
 }
 
 /// Among `prev` and `next`'s crossings (line–line directly, curves via
@@ -946,5 +1001,97 @@ mod tests {
             matches!(result, Err(StrokeError::Curvature(_))),
             "{result:#?}"
         );
+    }
+
+    /// One `MoveTo`, first, and one `ClosePath`, last: a single closed
+    /// subpath, not fragments that a later stage would close separately.
+    fn assert_single_closed_subpath(contour: &BezPath) {
+        let els = contour.elements();
+        let moves = els
+            .iter()
+            .filter(|e| matches!(e, PathEl::MoveTo(_)))
+            .count();
+        let closes = els
+            .iter()
+            .filter(|e| matches!(e, PathEl::ClosePath))
+            .count();
+        assert_eq!((moves, closes), (1, 1), "{}", contour.to_svg());
+        assert!(matches!(els.first(), Some(PathEl::MoveTo(_))));
+        assert!(matches!(els.last(), Some(PathEl::ClosePath)));
+    }
+
+    #[test]
+    fn a_trimmed_inner_corner_keeps_the_stroke_one_closed_subpath() {
+        // An `A`'s two stems: a sharp apex whose inner offsets cross.
+        let start = RawStart {
+            at: Point::new(0.0, 0.0),
+        };
+        let segs = [
+            RawSegment::Line {
+                to: Point::new(250.0, 1000.0),
+            },
+            RawSegment::Line {
+                to: Point::new(500.0, 0.0),
+            },
+        ];
+        let skeleton = skeleton::realize(&start, &segs, false, NO_ARC_TOLERANCE).unwrap();
+        for join in [JoinKind::Round, JoinKind::Miter, JoinKind::Bevel] {
+            let mut spec = default_spec(50.0);
+            spec.start_cap = Cap::Round;
+            spec.end_cap = Cap::Round;
+            spec.default_join = join;
+            let contours = stroke_path(&skeleton, false, &spec, OFFSET_TOLERANCE).unwrap();
+            assert_eq!(contours.len(), 1);
+            let contour = &contours[0].0;
+            assert_single_closed_subpath(contour);
+
+            // The inner apex is on the outline: the stroke is two stems,
+            // not a filled triangle. Its area is about two 1030 × 50
+            // stems, far below the 500 × 1000 / 2 triangle's.
+            // On the bisector, r / sin(half the apex angle) below it.
+            let inner_apex_y = 1000.0 - 25.0 / 0.25f64.atan().sin();
+            assert!(
+                contour
+                    .segments()
+                    .any(|s| (s.end() - Point::new(250.0, inner_apex_y)).hypot() < 1.0),
+                "{:?}: no inner apex near y = {inner_apex_y}",
+                join
+            );
+            assert!(kurbo::Shape::area(contour).abs() < 2.0 * 1031.0 * 50.0 + 5000.0);
+        }
+    }
+
+    #[test]
+    fn a_curved_inner_corner_keeps_the_stroke_one_closed_subpath() {
+        // The `a` stem from `samples/a22x-mono.mg`: an arc into a line.
+        let w = 500.0;
+        let h = 1000.0;
+        let ctr = Point::new(0.494 * w, 0.400 * h);
+        let r = 0.533 * w;
+        let polar = |ctr: Point, r: f64, deg: f64| {
+            let rad = deg.to_radians();
+            ctr + Vec2::new(r * rad.cos(), r * rad.sin())
+        };
+        let start = RawStart {
+            at: polar(ctr, r, 143.0),
+        };
+        let segs = [
+            RawSegment::Arc {
+                to: polar(ctr, r, 25.0),
+                geometry: skeleton::ArcGeometry::Center(ctr),
+                sweep: Sweep::Cw,
+            },
+            RawSegment::Line {
+                to: Point::new(0.975 * w, 0.085 * h),
+            },
+        ];
+        let skeleton = skeleton::realize(&start, &segs, false, NO_ARC_TOLERANCE).unwrap();
+        let mut spec = default_spec(50.0);
+        spec.start_cap = Cap::Round;
+        spec.end_cap = Cap::Round;
+        spec.default_join = JoinKind::Round;
+        let contours = stroke_path(&skeleton, false, &spec, OFFSET_TOLERANCE).unwrap();
+        assert_eq!(contours.len(), 1);
+        assert_single_closed_subpath(&contours[0].0);
     }
 }

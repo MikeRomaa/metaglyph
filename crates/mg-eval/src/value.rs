@@ -84,6 +84,11 @@ pub enum Value {
     Rect(Rect),
     Zone(Zone),
     List(Vec<Value>),
+    /// A `GlyphBbox` node's value for a glyph with no ink. Never an
+    /// expression's value: an inkless glyph is legal (a space), and only
+    /// reading its `.bbox` is the spec §13 domain error, reported where
+    /// the read happens.
+    NoInk,
 }
 
 impl std::fmt::Display for Value {
@@ -98,6 +103,7 @@ impl std::fmt::Display for Value {
             Value::Path(p) => write!(f, "path[{} segments]", p.piece_counts.len()),
             Value::Rect(r) => write!(f, "rect[{}, {}, {}, {}]", r.x0, r.y0, r.x1, r.y1),
             Value::Zone(z) => write!(f, "zone[y={}, ink={}]", z.y, z.ink),
+            Value::NoInk => write!(f, "no ink"),
             Value::List(items) => {
                 write!(f, "[")?;
                 for (i, item) in items.iter().enumerate() {
@@ -125,6 +131,7 @@ impl Value {
             Value::Rect(_) => "rect",
             Value::Zone(_) => "zone",
             Value::List(_) => "list",
+            Value::NoInk => "no ink",
         }
     }
 

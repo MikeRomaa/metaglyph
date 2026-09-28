@@ -358,7 +358,29 @@ fn lower_font(
     let version = fields
         .get("version")
         .and_then(|f| f.value())
-        .and_then(|e| string_literal_value(&e))
+        .and_then(|e| {
+            let value = string_literal_value(&e)?;
+            // spec §5.6: form `digits.digits`, since it feeds
+            // `head.fontRevision` as a number.
+            let well_formed = value.split_once('.').is_some_and(|(whole, frac)| {
+                !whole.is_empty()
+                    && !frac.is_empty()
+                    && whole.bytes().all(|b| b.is_ascii_digit())
+                    && frac.bytes().all(|b| b.is_ascii_digit())
+            });
+            if !well_formed {
+                diagnostics.push(
+                    Diagnostic::error(
+                        codes::MALFORMED_VERSION,
+                        format!("`version` must have the form `digits.digits`, found {value:?}"),
+                        Label::new(e.syntax().text_range().into(), "not `digits.digits`"),
+                    )
+                    .with_help("write just the number, e.g. `version: \"1.000\"`; `mg build` adds \"Version \" in the name table itself"),
+                );
+                return None;
+            }
+            Some(value)
+        })
         .unwrap_or_else(|| "1.000".to_string());
 
     let designer = fields
