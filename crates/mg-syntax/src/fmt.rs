@@ -172,6 +172,7 @@ fn break_down_trivia(trivia: &[SyntaxToken], has_previous: bool) -> TriviaBreakd
 /// newline — the caller adds one only if something follows.
 fn print_item_sequence(container: &SyntaxNode, indent: usize, out: &mut String) {
     let items: Vec<SyntaxNode> = container.children().collect();
+    let head_widths = aligned_head_widths(container, &items);
     let mut at_start = true;
     for (i, item) in items.iter().enumerate() {
         let trivia = leading_trivia(item);
@@ -198,7 +199,7 @@ fn print_item_sequence(container: &SyntaxNode, indent: usize, out: &mut String) 
             }
         }
         push_indent(out, indent);
-        print_declaration(item, indent, out);
+        print_declaration(item, indent, head_widths[i], out);
         at_start = false;
     }
 
@@ -227,17 +228,70 @@ fn print_item_sequence(container: &SyntaxNode, indent: usize, out: &mut String) 
     // left to separate and is dropped.
 }
 
+/// The declaration kinds whose configs line up when declared together.
+const ALIGNED_GROUP_KINDS: [SyntaxKind; 3] = [PARAM, METRIC, INSTANCE];
+
+/// The width each item's `keyword name` is padded to, so its config's `(`
+/// lines up with its neighbours': across a whole path body, and within
+/// each group of `param`s, `metric`s, or `instance`s declared together —
+/// consecutive declarations of one kind, with no blank line between them.
+/// `None` for an item that is not aligned.
+fn aligned_head_widths(container: &SyntaxNode, items: &[SyntaxNode]) -> Vec<Option<usize>> {
+    let has_config = |item: &SyntaxNode| item.children().any(|n| n.kind() == CONFIG);
+    let width = |group: &[SyntaxNode]| {
+        group
+            .iter()
+            .filter(|item| has_config(item))
+            .map(|item| block_head(item).chars().count())
+            .max()
+    };
+
+    if container.parent().map(|p| p.kind()) == Some(PATH) {
+        return vec![width(items); items.len()];
+    }
+
+    let blank_line_before = |item: &SyntaxNode| {
+        leading_trivia(item)
+            .iter()
+            .any(|t| t.kind() == WHITESPACE && t.text().matches('\n').count() >= 2)
+    };
+    let mut widths = vec![None; items.len()];
+    let mut start = 0;
+    while start < items.len() {
+        let kind = items[start].kind();
+        let mut end = start + 1;
+        if ALIGNED_GROUP_KINDS.contains(&kind) {
+            while end < items.len() && items[end].kind() == kind && !blank_line_before(&items[end])
+            {
+                end += 1;
+            }
+            let group_width = width(&items[start..end]);
+            widths[start..end].fill(group_width);
+        }
+        start = end;
+    }
+    widths
+}
+
 fn first_token(node: &SyntaxNode, pred: impl Fn(SyntaxKind) -> bool) -> Option<SyntaxToken> {
     node.children_with_tokens()
         .filter_map(|e| e.into_token())
         .find(|t| pred(t.kind()))
 }
 
-fn print_declaration(node: &SyntaxNode, indent: usize, out: &mut String) {
+/// `head_width`, when given, is the column width every block's
+/// `keyword name` is padded to before its config, so a run of sibling
+/// configs opens in one column.
+fn print_declaration(
+    node: &SyntaxNode,
+    indent: usize,
+    head_width: Option<usize>,
+    out: &mut String,
+) {
     match node.kind() {
         LET_STMT => print_let_stmt(node, out),
         FONT | PARAM | METRIC | GLYPH | INSTANCE | GROUP | KERN | PATH | ANCHOR | COMPONENT
-        | START | LINE | QUAD | CUBE | ARC | CLOSE => print_block(node, indent, out),
+        | START | LINE | QUAD | CUBE | ARC | CLOSE => print_block(node, indent, head_width, out),
         // Malformed input (an `ERROR` node): best-effort, lossy fallback.
         _ => out.push_str(&node.text().to_string()),
     }
@@ -277,15 +331,24 @@ fn keyword_text(kind: SyntaxKind) -> &'static str {
     }
 }
 
-fn print_block(node: &SyntaxNode, indent: usize, out: &mut String) {
-    out.push_str(keyword_text(node.kind()));
+/// A block's `keyword name?`, as printed.
+fn block_head(node: &SyntaxNode) -> String {
+    let mut head = keyword_text(node.kind()).to_string();
     if let Some(name) = first_token(node, |k| k == IDENT) {
-        out.push(' ');
-        out.push_str(name.text());
+        head.push(' ');
+        head.push_str(name.text());
     }
+    head
+}
+
+fn print_block(node: &SyntaxNode, indent: usize, head_width: Option<usize>, out: &mut String) {
+    let head = block_head(node);
+    out.push_str(&head);
     if let Some(config) = node.children().find(|n| n.kind() == CONFIG) {
-        out.push(' ');
-        print_config(&config, out);
+        let padding = head_width.map_or(0, |w| w.saturating_sub(head.chars().count()));
+        out.push_str(&" ".repeat(padding + 1));
+        let has_body = node.children().any(|n| n.kind() == BODY);
+        print_config(&config, has_body, out);
     }
     if let Some(body) = node.children().find(|n| n.kind() == BODY) {
         out.push(' ');
@@ -293,13 +356,46 @@ fn print_block(node: &SyntaxNode, indent: usize, out: &mut String) {
     }
 }
 
-fn print_config(config: &SyntaxNode, out: &mut String) {
+/// The line width a `( … )` config is kept within when it can be.
+const MAX_WIDTH: usize = 80;
+
+/// The column `out` currently ends at.
+fn current_column(out: &str) -> usize {
+    out.rsplit('\n')
+        .next()
+        .map_or(0, |line| line.chars().count())
+}
+
+/// A config on one line when it fits in [`MAX_WIDTH`] — counting the ` {`
+/// of a body that follows — and otherwise one field per line: the first
+/// right after `(`, each later one aligned under it.
+fn print_config(config: &SyntaxNode, followed_by_body: bool, out: &mut String) {
+    let fields: Vec<String> = config
+        .children()
+        .filter(|n| n.kind() == FIELD)
+        .map(|field| {
+            let mut text = String::new();
+            print_field(&field, &mut text);
+            text
+        })
+        .collect();
+
+    let column = current_column(out);
+    let inline = format!("({})", fields.join(", "));
+    let tail = if followed_by_body { " {".len() } else { 0 };
+    if fields.len() <= 1 || column + inline.chars().count() + tail <= MAX_WIDTH {
+        out.push_str(&inline);
+        return;
+    }
+
+    let align = " ".repeat(column + 1);
     out.push('(');
-    for (i, field) in config.children().filter(|n| n.kind() == FIELD).enumerate() {
+    for (i, field) in fields.iter().enumerate() {
         if i > 0 {
-            out.push_str(", ");
+            out.push_str(",\n");
+            out.push_str(&align);
         }
-        print_field(&field, out);
+        out.push_str(field);
     }
     out.push(')');
 }

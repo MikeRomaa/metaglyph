@@ -59,7 +59,14 @@ fn an_already_formatted_file_gets_no_edits() {
 
 #[test]
 fn the_sample_formats_to_exactly_what_mg_fmt_writes() {
-    let (edits, client) = formatted(SAMPLE);
+    // The sample with every indent removed — insignificant (spec §5.1),
+    // so the formatter must restore it — whether or not the sample
+    // itself is already formatted.
+    let flattened: String = SAMPLE
+        .lines()
+        .map(|l| format!("{}\n", l.trim_start()))
+        .collect();
+    let (edits, client) = formatted(&flattened);
     assert_eq!(edits.len(), 1);
     assert_eq!(edits[0].new_text, mg_syntax::fmt::format(SAMPLE));
     client.stop();

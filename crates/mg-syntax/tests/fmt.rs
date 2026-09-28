@@ -47,8 +47,23 @@ fn reindents_nested_glyph_body() {
     );
     assert_eq!(
         out,
-        "glyph A (advance: 1) {\n    let w = 1;\n    path p (stroke: 1) {\n        start (at: w)\n        line (to: w)\n    }\n}\n"
+        "glyph A (advance: 1) {\n    let w = 1;\n    path p (stroke: 1) {\n        start (at: w)\n        line  (to: w)\n    }\n}\n"
     );
+}
+
+/// Inside a path body, every segment's `(` opens in one column, set by
+/// the longest `keyword name`; `close` has no config and takes no part.
+/// Only segments are aligned, not the paths around them.
+#[test]
+fn aligns_segment_configs_within_a_path() {
+    let out = format(
+        "glyph C (advance: 1) {\npath bowl (stroke: 1) {\nstart (at: a)\ncube (c2: c, to: d)\narc tip (center: e, to: f, sweep: \"cw\")\nclose\n}\npath p (stroke: 1) {\nstart (at: a)\nline (to: b)\n}\n}\n",
+    );
+    assert_eq!(
+        out,
+        "glyph C (advance: 1) {\n    path bowl (stroke: 1) {\n        start   (at: a)\n        cube    (c2: c, to: d)\n        arc tip (center: e, to: f, sweep: \"cw\")\n        close\n    }\n    path p (stroke: 1) {\n        start (at: a)\n        line  (to: b)\n    }\n}\n"
+    );
+    assert_idempotent(&out);
 }
 
 /// A blank line between a leading comment block and the very first
@@ -84,6 +99,98 @@ fn checked_formatting_declines_rather_than_drop_a_comment() {
     let source = "param stem (\n  default: 100, // the regular weight\n  range: 20..260,\n)\n";
     assert!(!format(source).contains("regular weight"));
     assert_eq!(format_checked(source), Err(FormatError::WouldLoseText));
+}
+
+/// `param`s, `metric`s, and `instance`s declared together line up their
+/// configs like a path's segments. A blank line or a declaration of
+/// another kind starts a new group; a comment does not.
+#[test]
+fn aligns_configs_of_params_metrics_and_instances_declared_together() {
+    let source = r#"param stem (default: 100) // weight
+param contrast (default: 0.86)
+
+param sidebear (default: 44)
+param w (default: 1)
+metric baseline (y: 0)
+metric capHeight (y: 700)
+let x = 1;
+instance Regular ()
+instance Bold (stem: 160)
+"#;
+    let expected = r#"param stem     (default: 100)  // weight
+param contrast (default: 0.86)
+
+param sidebear (default: 44)
+param w        (default: 1)
+metric baseline  (y: 0)
+metric capHeight (y: 700)
+let x = 1;
+instance Regular ()
+instance Bold    (stem: 160)
+"#;
+    assert_eq!(format(source), expected);
+    assert_idempotent(source);
+}
+
+/// A config past 80 columns breaks one field per line, the first staying
+/// after `(` and the rest aligned under it.
+#[test]
+fn a_long_config_breaks_one_field_per_line() {
+    let source = r#"glyph a (advance: 1) {
+path lower_bowl (stroke: 50, caps: "round", joins: "round") {
+start (at: (0, 0))
+line (to: (lower_bowl_ctr.x, 0))
+arc (to: (lower_bowl_ctr.x, mid_y), rx: 0.486 * w, ry: 0.266 * h, sweep: "ccw", large: false)
+line (to: (stem_x, mid_y))
+}
+}
+"#;
+    let expected = r#"glyph a (advance: 1) {
+    path lower_bowl (stroke: 50, caps: "round", joins: "round") {
+        start (at: (0, 0))
+        line  (to: (lower_bowl_ctr.x, 0))
+        arc   (to: (lower_bowl_ctr.x, mid_y),
+               rx: 0.486 * w,
+               ry: 0.266 * h,
+               sweep: "ccw",
+               large: false)
+        line  (to: (stem_x, mid_y))
+    }
+}
+"#;
+    assert_eq!(format(source), expected);
+    assert_idempotent(source);
+    assert_eq!(format_checked(source), Ok(expected.to_string()));
+}
+
+/// The ` {` of a following body counts toward the width, and exactly 80
+/// columns still fits.
+#[test]
+fn the_width_limit_counts_a_following_body_and_is_inclusive() {
+    // `glyph a (advance: X, codepoint: 1)` is 33 + len(X) columns, and a
+    // body's ` {` adds 2: 45 digits reach exactly 80.
+    let line = |digits: usize| {
+        format!(
+            "glyph a (advance: {}, codepoint: 1) {{}}\n",
+            "1".repeat(digits)
+        )
+    };
+    let fits = line(45);
+    assert_eq!(fits.find(')').unwrap() + 1 + " {".len(), 80);
+    assert_eq!(format(&fits), fits);
+
+    let breaks = line(46);
+    assert_eq!(
+        format(&breaks),
+        format!(
+            "glyph a (advance: {},\n         codepoint: 1) {{}}\n",
+            "1".repeat(46)
+        )
+    );
+
+    // A lone field has nowhere to break to, however long.
+    let lone = format!("glyph a (advance: {}) {{}}\n", "1".repeat(100));
+    assert_eq!(format(&lone), lone);
 }
 
 #[test]

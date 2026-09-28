@@ -261,8 +261,8 @@ fn sample_names_jump_to_their_declarations() {
     let text = SAMPLE;
 
     // A param, from inside an expression, and from the cursor's end.
-    assert_jump(&mut client, &file, text, ("stem/2", 0, 0), ("stem", 0, 0));
-    assert_jump(&mut client, &file, text, ("stem/2", 0, 4), ("stem", 0, 0));
+    assert_jump(&mut client, &file, text, ("stem / 2", 0, 0), ("stem", 0, 0));
+    assert_jump(&mut client, &file, text, ("stem / 2", 0, 4), ("stem", 0, 0));
     // A top-level let, and a metric through a member access.
     // (`hair` #0 is in a comment, #1 is its own declaration.)
     assert_jump(&mut client, &file, text, ("hair", 2, 0), ("let hair", 0, 4));
@@ -282,9 +282,12 @@ fn sample_names_jump_to_their_declarations() {
         position_of(text, &text[w_use..w_use + 8], 0, 0),
     )
     .unwrap();
+    // `let w = capW;` #0 is glyph A's; #1 is glyph C's.
+    let c_decl = text.match_indices("let w = capW;").nth(1).unwrap().0;
+    assert!(c_decl > c_w, "occurrence #1 is inside glyph C");
     assert_eq!(
         location.range.start,
-        position_of(text, "let w   = capW;", 0, 4)
+        position_of(text, "let w = capW;", 1, 4)
     );
     // A component's glyph, and `glyphs.X`.
     assert_jump(
@@ -453,7 +456,8 @@ fn references_find_every_use_and_optionally_the_declaration() {
     // Glyph C's own `w`: only the uses inside glyph C.
     let c = SAMPLE.find("glyph C").unwrap();
     let d = SAMPLE.find("glyph D").unwrap();
-    let w = position_of(SAMPLE, "let w   = capW;", 0, 4);
+    // `let w = capW;` #0 is glyph A's; #1 is glyph C's.
+    let w = position_of(SAMPLE, "let w = capW;", 1, 4);
     let refs = references(&mut client, &file, w, true);
     assert_eq!(refs.len(), code_occurrences(&SAMPLE[c..d], "w"));
     let (c_line, d_line) = (

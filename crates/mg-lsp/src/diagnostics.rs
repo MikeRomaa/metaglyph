@@ -85,7 +85,7 @@ pub fn to_lsp(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mg_diag::{codes, Label};
+    use mg_diag::{Label, codes};
 
     fn uri() -> Uri {
         Uri::from_str("file:///font.mg").unwrap()

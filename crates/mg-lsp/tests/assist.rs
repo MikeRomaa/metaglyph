@@ -359,13 +359,19 @@ fn a_comment_offers_nothing() {
 
 #[test]
 fn a_name_shows_its_kind_type_and_declaration_line() {
-    let text = hover_sample("stem/2", 0, 1).unwrap();
+    let text = hover_sample("stem / 2", 0, 1).unwrap();
     assert!(text.contains("param stem: num"), "{text}");
-    assert!(text.contains("Declared on line 7:"), "{text}");
+    // The declaration line as the sample spells it, whatever its layout.
+    let (index, line) = SAMPLE
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.starts_with("param stem "))
+        .unwrap();
     assert!(
-        text.contains("param stem     (default: 100,  range: 20..260)"),
+        text.contains(&format!("Declared on line {}:", index + 1)),
         "{text}"
     );
+    assert!(text.contains(line.trim()), "{text}");
 
     let text = hover_sample("hair", 2, 0).unwrap();
     assert!(text.contains("let hair: num"), "{text}");
