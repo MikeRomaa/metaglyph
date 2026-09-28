@@ -162,3 +162,5 @@ pub const DUPLICATE_CODEPOINT: Code = Code::new("MG0805");
 pub const UNENCODABLE_CODEPOINT: Code = Code::new("MG0806");
 /// An advance width outside `hmtx`'s uint16 range.
 pub const ADVANCE_OUT_OF_RANGE: Code = Code::new("MG0807");
+/// A `kern` value outside GPOS's int16 range.
+pub const KERN_OUT_OF_RANGE: Code = Code::new("MG0808");

@@ -4,10 +4,11 @@
 //! [`outline`] holds the per-contour preparation stages and [`prepare`]
 //! runs them over a whole instance (M5). [`assemble`] turns prepared
 //! glyphs into tables and [`build`] drives one build per instance (M6).
-//! Kerning (M7) is still to come.
+//! [`kern`] compiles `kern` declarations to GPOS (M7).
 
 pub mod assemble;
 pub mod build;
+pub mod kern;
 pub mod outline;
 pub mod prepare;
 

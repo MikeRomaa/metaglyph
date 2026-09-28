@@ -8,10 +8,11 @@ use std::ops::Range;
 use indexmap::IndexMap;
 use mg_diag::{Diagnostic, Label, Severity, codes};
 use mg_eval::NodeId;
-use mg_hir::model::{Hir, InstanceDecl};
+use mg_hir::model::{Hir, InstanceDecl, KernSide as HirKernSide};
 use mg_syntax::ast::AstNode;
 
 use crate::assemble::{self, FontInfo, GlyphRecord, LimitError};
+use crate::kern::{KernRule, KernSide};
 use crate::prepare::{self, PreparedGlyph};
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -50,10 +51,10 @@ pub fn build_fonts(hir: &Hir, options: &BuildOptions) -> (Vec<BuiltFont>, Vec<Di
         let (compiled, mut instance_diagnostics) = compile_instance(hir, instance, options);
         // Assembly assumes every codepoint is valid and unique, so it only
         // runs once that is known.
-        if let Some((info, records)) = compiled
+        if let Some((info, records, kerns)) = compiled
             && codepoints_ok
         {
-            match assemble::assemble(&info, &records) {
+            match assemble::assemble(&info, &records, &kerns) {
                 Ok(data) => fonts.push(BuiltFont {
                     instance: instance.name.clone(),
                     file_name: format!(
@@ -103,13 +104,16 @@ pub fn build_fonts(hir: &Hir, options: &BuildOptions) -> (Vec<BuiltFont>, Vec<Di
     (fonts, diagnostics)
 }
 
+/// What assembly needs for one instance.
+type Compiled = (FontInfo, Vec<GlyphRecord>, Vec<KernRule>);
+
 /// One instance evaluated and prepared, ready for assembly (`None` on any
 /// error), with its diagnostics.
 fn compile_instance(
     hir: &Hir,
     instance: &InstanceDecl,
     options: &BuildOptions,
-) -> (Option<(FontInfo, Vec<GlyphRecord>)>, Vec<Diagnostic>) {
+) -> (Option<Compiled>, Vec<Diagnostic>) {
     let (_, outcome) = mg_eval::evaluate(hir, instance);
     if has_errors(&outcome.diagnostics) {
         return (None, outcome.diagnostics);
@@ -150,7 +154,36 @@ fn compile_instance(
         timestamp: options.timestamp,
     };
 
-    (Some((info, records)), diagnostics)
+    let kerns = kern_rules(hir, &outcome);
+    (Some((info, records, kerns)), diagnostics)
+}
+
+/// Every `kern` in declaration order (the index `LimitError` reports),
+/// with its `by` evaluated for this instance and rounded (spec §12.2).
+fn kern_rules(hir: &Hir, outcome: &mg_eval::EvalOutcome) -> Vec<KernRule> {
+    let side = |side: &Option<HirKernSide>| match side
+        .as_ref()
+        .expect("mg-hir resolved every kern side")
+    {
+        HirKernSide::Glyph(name) => KernSide::Glyph(name.clone()),
+        HirKernSide::Group(name) => KernSide::Group(hir.groups[name].glyphs.clone()),
+    };
+    hir.kerns
+        .iter()
+        .enumerate()
+        .map(|(i, kern)| {
+            let value = outcome
+                .values
+                .get(&NodeId::Kern(i))
+                .and_then(|v| v.as_num())
+                .expect("an error-free evaluation has every kern value");
+            KernRule {
+                left: side(&kern.left),
+                right: side(&kern.right),
+                value: value.round() as i64,
+            }
+        })
+        .collect()
 }
 
 fn has_errors(diagnostics: &[Diagnostic]) -> bool {
@@ -248,6 +281,14 @@ fn limit_diagnostic(
                 name_of(glyph)
             ),
             Label::new(span_of(glyph), "in this glyph"),
+        ),
+        LimitError::KernOutOfRange { kern, value } => Diagnostic::error(
+            codes::KERN_OUT_OF_RANGE,
+            format!("this `kern` rounds to {value}; GPOS needs -32768..=32767"),
+            Label::new(
+                mg_syntax::trimmed_range(&hir.kerns[kern].syntax),
+                "this kern",
+            ),
         ),
         LimitError::TooManyGlyphs { count } => Diagnostic::error(
             codes::GLYPH_LIMIT_EXCEEDED,

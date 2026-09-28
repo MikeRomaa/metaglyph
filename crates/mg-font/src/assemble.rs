@@ -25,6 +25,7 @@ use write_fonts::types::{
     F2Dot14, FWord, Fixed, GlyphId, GlyphId16, LongDateTime, NameId, Tag, UfWord,
 };
 
+use crate::kern::{self, KernRule};
 use crate::prepare::PreparedGlyph;
 
 /// One glyph in final glyph order (`.notdef` first, spec §10.6).
@@ -65,11 +66,30 @@ pub struct FontInfo {
 /// breaks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LimitError {
-    CoordinateOutOfRange { glyph: usize },
-    TooManyPoints { glyph: usize, points: usize },
-    TooManyContours { glyph: usize, contours: usize },
-    AdvanceOutOfRange { glyph: usize, advance: i64 },
-    TooManyGlyphs { count: usize },
+    CoordinateOutOfRange {
+        glyph: usize,
+    },
+    TooManyPoints {
+        glyph: usize,
+        points: usize,
+    },
+    TooManyContours {
+        glyph: usize,
+        contours: usize,
+    },
+    AdvanceOutOfRange {
+        glyph: usize,
+        advance: i64,
+    },
+    TooManyGlyphs {
+        count: usize,
+    },
+    /// `kern` number `kern` (an index into the rules) rounds to a value
+    /// outside int16.
+    KernOutOfRange {
+        kern: usize,
+        value: i64,
+    },
 }
 
 /// Seconds from 1904-01-01 (`LongDateTime`'s epoch) to 1970-01-01.
@@ -182,7 +202,11 @@ fn is_ribbi(style: &str) -> bool {
 }
 
 /// Builds the whole font, or reports every limit it breaks.
-pub fn assemble(info: &FontInfo, glyphs: &[GlyphRecord]) -> Result<Vec<u8>, Vec<LimitError>> {
+pub fn assemble(
+    info: &FontInfo,
+    glyphs: &[GlyphRecord],
+    kerns: &[KernRule],
+) -> Result<Vec<u8>, Vec<LimitError>> {
     let mut errors = Vec::new();
     if glyphs.len() > u16::MAX as usize {
         return Err(vec![LimitError::TooManyGlyphs {
@@ -239,6 +263,14 @@ pub fn assemble(info: &FontInfo, glyphs: &[GlyphRecord]) -> Result<Vec<u8>, Vec<
             contours,
             depth,
         });
+    }
+    for (kern, rule) in kerns.iter().enumerate() {
+        if !in_i16(rule.value) {
+            errors.push(LimitError::KernOutOfRange {
+                kern,
+                value: rule.value,
+            });
+        }
     }
     if !errors.is_empty() {
         return Err(errors);
@@ -469,7 +501,8 @@ pub fn assemble(info: &FontInfo, glyphs: &[GlyphRecord]) -> Result<Vec<u8>, Vec<
         s_cap_height: Some(round(info.cap_height)),
         us_default_char: Some(0),
         us_break_char: Some(0x20),
-        us_max_context: Some(0),
+        // A pair kern looks at two glyphs.
+        us_max_context: Some(if kerns.is_empty() { 0 } else { 2 }),
         us_lower_optical_point_size: None,
         us_upper_optical_point_size: None,
     };
@@ -571,6 +604,11 @@ pub fn assemble(info: &FontInfo, glyphs: &[GlyphRecord]) -> Result<Vec<u8>, Vec<
         .and_then(|b| b.add_table(&post))
         .and_then(|b| b.add_table(&gasp))
         .expect("every table is well-formed by construction");
+    if let Some(gpos) = kern::build_gpos(kerns, &ids) {
+        builder
+            .add_table(&gpos)
+            .expect("GPOS is well-formed by construction");
+    }
     Ok(builder.build())
 }
 
