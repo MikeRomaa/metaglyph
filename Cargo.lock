@@ -538,6 +538,8 @@ dependencies = [
  "lsp-server",
  "lsp-types",
  "mg-diag",
+ "mg-font",
+ "mg-hir",
  "mg-syntax",
  "serde",
  "serde_json",

@@ -2,147 +2,14 @@
 //! `mg_lsp::main_loop` over an in-memory connection, through the whole
 //! lifecycle — initialize, open, change, close, shutdown, exit.
 
-use std::str::FromStr;
-use std::thread::JoinHandle;
-use std::time::Duration;
+mod common;
 
-use lsp_server::{Connection, Message, Notification, Request, RequestId, Response};
-use lsp_types::notification::{
-    DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Exit, Initialized,
-    Notification as _, PublishDiagnostics,
-};
-use lsp_types::request::{Initialize, Request as _, Shutdown};
+use common::{Client, SAMPLE, code, uri, valid};
+use lsp_types::notification::{DidCloseTextDocument, Notification as _};
 use lsp_types::{
-    ClientCapabilities, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, GeneralClientCapabilities, InitializeParams, InitializeResult,
-    NumberOrString, Position, PositionEncodingKind, PublishDiagnosticsParams,
-    TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
-    TextDocumentSyncCapability, TextDocumentSyncKind, Uri, VersionedTextDocumentIdentifier,
+    DidCloseTextDocumentParams, Position, PositionEncodingKind, TextDocumentIdentifier,
+    TextDocumentSyncCapability, TextDocumentSyncKind,
 };
-
-type ServerResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
-
-struct Client {
-    connection: Connection,
-    server: Option<JoinHandle<ServerResult>>,
-    next_id: i32,
-}
-
-impl Client {
-    /// Starts a server and completes the handshake, offering `encodings`
-    /// (none at all when `None`).
-    fn start(encodings: Option<Vec<PositionEncodingKind>>) -> (Self, InitializeResult) {
-        let (client, server) = Connection::memory();
-        let handle = std::thread::spawn(move || mg_lsp::main_loop(server));
-        let mut client = Client {
-            connection: client,
-            server: Some(handle),
-            next_id: 0,
-        };
-        let params = InitializeParams {
-            capabilities: ClientCapabilities {
-                general: Some(GeneralClientCapabilities {
-                    position_encodings: encodings,
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let response = client.request(Initialize::METHOD, params);
-        let result: InitializeResult =
-            serde_json::from_value(response.response_result.unwrap()).unwrap();
-        client.notify(Initialized::METHOD, lsp_types::InitializedParams {});
-        (client, result)
-    }
-
-    fn request(&mut self, method: &str, params: impl serde::Serialize) -> Response {
-        self.next_id += 1;
-        let id = RequestId::from(self.next_id);
-        let request = Request::new(id.clone(), method.to_string(), params);
-        self.connection.sender.send(request.into()).unwrap();
-        match self.recv() {
-            Message::Response(response) => {
-                assert_eq!(response.id, id);
-                response
-            }
-            other => panic!("expected a response, got {other:?}"),
-        }
-    }
-
-    fn notify(&self, method: &str, params: impl serde::Serialize) {
-        let notification = Notification::new(method.to_string(), params);
-        self.connection.sender.send(notification.into()).unwrap();
-    }
-
-    fn recv(&self) -> Message {
-        self.connection
-            .receiver
-            .recv_timeout(Duration::from_secs(10))
-            .expect("the server answers")
-    }
-
-    fn diagnostics(&self) -> PublishDiagnosticsParams {
-        match self.recv() {
-            Message::Notification(n) if n.method == PublishDiagnostics::METHOD => {
-                serde_json::from_value(n.params).unwrap()
-            }
-            other => panic!("expected publishDiagnostics, got {other:?}"),
-        }
-    }
-
-    fn open(&self, uri: &Uri, text: &str) -> PublishDiagnosticsParams {
-        self.notify(
-            DidOpenTextDocument::METHOD,
-            DidOpenTextDocumentParams {
-                text_document: TextDocumentItem::new(
-                    uri.clone(),
-                    "metaglyph".into(),
-                    1,
-                    text.into(),
-                ),
-            },
-        );
-        self.diagnostics()
-    }
-
-    fn change(&self, uri: &Uri, version: i32, text: &str) -> PublishDiagnosticsParams {
-        self.notify(
-            DidChangeTextDocument::METHOD,
-            DidChangeTextDocumentParams {
-                text_document: VersionedTextDocumentIdentifier::new(uri.clone(), version),
-                content_changes: vec![TextDocumentContentChangeEvent {
-                    range: None,
-                    range_length: None,
-                    text: text.into(),
-                }],
-            },
-        );
-        self.diagnostics()
-    }
-
-    /// `shutdown` then `exit`; the server thread must finish cleanly.
-    fn stop(mut self) {
-        let response = self.request(Shutdown::METHOD, ());
-        assert!(response.response_result.is_ok(), "{response:?}");
-        self.notify(Exit::METHOD, ());
-        let result = self.server.take().unwrap().join().unwrap();
-        assert!(result.is_ok(), "{result:?}");
-    }
-}
-
-fn uri(name: &str) -> Uri {
-    Uri::from_str(&format!("file:///fonts/{name}")).unwrap()
-}
-
-fn code(diagnostic: &lsp_types::Diagnostic) -> &str {
-    match diagnostic.code.as_ref().unwrap() {
-        NumberOrString::String(code) => code,
-        NumberOrString::Number(_) => panic!("codes are strings"),
-    }
-}
-
-const SAMPLE: &str = include_str!("../../../samples/metaglyph-sans.mg");
 
 #[test]
 fn initialize_advertises_full_sync_and_utf16_by_default() {
@@ -197,14 +64,10 @@ fn the_sample_opens_with_no_diagnostics() {
 fn a_change_republishes_and_a_fix_clears() {
     let (client, _) = Client::start(None);
     let file = uri("a.mg");
-    assert!(
-        client
-            .open(&file, "glyph A (advance: 1) {}\n")
-            .diagnostics
-            .is_empty()
-    );
+    let opened = client.open(&file, &valid("glyph A (advance: 1) {}"));
+    assert!(opened.diagnostics.is_empty(), "{:#?}", opened.diagnostics);
 
-    let broken = client.change(&file, 2, "glyph A (advance: 1 {}\n");
+    let broken = client.change(&file, 2, &valid("glyph A (advance: 1 {}"));
     assert_eq!(broken.version, Some(2));
     assert!(!broken.diagnostics.is_empty());
     assert!(
@@ -220,7 +83,7 @@ fn a_change_republishes_and_a_fix_clears() {
             .all(|d| code(d).starts_with("MG01"))
     );
 
-    let fixed = client.change(&file, 3, "glyph A (advance: 1) {}\n");
+    let fixed = client.change(&file, 3, &valid("glyph A (advance: 1) {}"));
     assert_eq!(fixed.version, Some(3));
     assert!(fixed.diagnostics.is_empty());
     client.stop();
@@ -293,7 +156,7 @@ fn documents_are_independent() {
     let (client, _) = Client::start(None);
     let (a, b) = (uri("a.mg"), uri("b.mg"));
     assert!(!client.open(&a, "glyph (").diagnostics.is_empty());
-    let published = client.open(&b, "glyph B (advance: 1) {}");
+    let published = client.open(&b, &valid("glyph B (advance: 1) {}"));
     assert_eq!(published.uri, b);
     assert!(published.diagnostics.is_empty());
     client.stop();

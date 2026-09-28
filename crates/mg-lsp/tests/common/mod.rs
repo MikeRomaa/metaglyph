@@ -1,0 +1,173 @@
+//! The scripted LSP client shared by the integration tests: it drives
+//! `mg_lsp::main_loop` over an in-memory connection.
+
+#![allow(dead_code)] // Each test file uses a different subset.
+
+use std::str::FromStr;
+use std::thread::JoinHandle;
+use std::time::Duration;
+
+use lsp_server::{Connection, Message, Notification, Request, RequestId, Response};
+use lsp_types::notification::{
+    DidChangeTextDocument, DidOpenTextDocument, Exit, Initialized, Notification as _,
+    PublishDiagnostics,
+};
+use lsp_types::request::{Initialize, Request as _, Shutdown};
+use lsp_types::{
+    ClientCapabilities, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
+    GeneralClientCapabilities, InitializeParams, InitializeResult, NumberOrString, Position,
+    PositionEncodingKind, PublishDiagnosticsParams, TextDocumentContentChangeEvent,
+    TextDocumentItem, Uri, VersionedTextDocumentIdentifier,
+};
+
+pub type ServerResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
+
+pub struct Client {
+    connection: Connection,
+    server: Option<JoinHandle<ServerResult>>,
+    next_id: i32,
+}
+
+impl Client {
+    /// Starts a server and completes the handshake, offering `encodings`
+    /// (none at all when `None`).
+    pub fn start(encodings: Option<Vec<PositionEncodingKind>>) -> (Self, InitializeResult) {
+        let (client, server) = Connection::memory();
+        let handle = std::thread::spawn(move || mg_lsp::main_loop(server));
+        let mut client = Client {
+            connection: client,
+            server: Some(handle),
+            next_id: 0,
+        };
+        let params = InitializeParams {
+            capabilities: ClientCapabilities {
+                general: Some(GeneralClientCapabilities {
+                    position_encodings: encodings,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let response = client.request(Initialize::METHOD, params);
+        let result: InitializeResult =
+            serde_json::from_value(response.response_result.unwrap()).unwrap();
+        client.notify(Initialized::METHOD, lsp_types::InitializedParams {});
+        (client, result)
+    }
+
+    pub fn request(&mut self, method: &str, params: impl serde::Serialize) -> Response {
+        self.next_id += 1;
+        let id = RequestId::from(self.next_id);
+        let request = Request::new(id.clone(), method.to_string(), params);
+        self.connection.sender.send(request.into()).unwrap();
+        match self.recv() {
+            Message::Response(response) => {
+                assert_eq!(response.id, id);
+                response
+            }
+            other => panic!("expected a response, got {other:?}"),
+        }
+    }
+
+    pub fn notify(&self, method: &str, params: impl serde::Serialize) {
+        let notification = Notification::new(method.to_string(), params);
+        self.connection.sender.send(notification.into()).unwrap();
+    }
+
+    pub fn recv(&self) -> Message {
+        self.connection
+            .receiver
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the server answers")
+    }
+
+    pub fn diagnostics(&self) -> PublishDiagnosticsParams {
+        match self.recv() {
+            Message::Notification(n) if n.method == PublishDiagnostics::METHOD => {
+                serde_json::from_value(n.params).unwrap()
+            }
+            other => panic!("expected publishDiagnostics, got {other:?}"),
+        }
+    }
+
+    pub fn open(&self, uri: &Uri, text: &str) -> PublishDiagnosticsParams {
+        self.notify(
+            DidOpenTextDocument::METHOD,
+            DidOpenTextDocumentParams {
+                text_document: TextDocumentItem::new(
+                    uri.clone(),
+                    "metaglyph".into(),
+                    1,
+                    text.into(),
+                ),
+            },
+        );
+        self.diagnostics()
+    }
+
+    pub fn change(&self, uri: &Uri, version: i32, text: &str) -> PublishDiagnosticsParams {
+        self.notify(
+            DidChangeTextDocument::METHOD,
+            DidChangeTextDocumentParams {
+                text_document: VersionedTextDocumentIdentifier::new(uri.clone(), version),
+                content_changes: vec![TextDocumentContentChangeEvent {
+                    range: None,
+                    range_length: None,
+                    text: text.into(),
+                }],
+            },
+        );
+        self.diagnostics()
+    }
+
+    /// `shutdown` then `exit`; the server thread must finish cleanly.
+    pub fn stop(mut self) {
+        let response = self.request(Shutdown::METHOD, ());
+        assert!(response.response_result.is_ok(), "{response:?}");
+        self.notify(Exit::METHOD, ());
+        let result = self.server.take().unwrap().join().unwrap();
+        assert!(result.is_ok(), "{result:?}");
+    }
+}
+
+pub fn uri(name: &str) -> Uri {
+    Uri::from_str(&format!("file:///fonts/{name}")).unwrap()
+}
+
+pub fn code(diagnostic: &lsp_types::Diagnostic) -> &str {
+    match diagnostic.code.as_ref().unwrap() {
+        NumberOrString::String(code) => code,
+        NumberOrString::Number(_) => panic!("codes are strings"),
+    }
+}
+
+pub const SAMPLE: &str = include_str!("../../../../samples/metaglyph-sans.mg");
+
+/// The position of the `n`th (0-based) occurrence of `needle` in `text`,
+/// plus `into` bytes, for ASCII `text` (so bytes and UTF-16 units agree).
+pub fn position_of(text: &str, needle: &str, n: usize, into: usize) -> Position {
+    let offset = text
+        .match_indices(needle)
+        .nth(n)
+        .unwrap_or_else(|| panic!("occurrence {n} of {needle:?}"))
+        .0
+        + into;
+    let line = text[..offset].matches('\n').count();
+    let column = offset - text[..offset].rfind('\n').map_or(0, |i| i + 1);
+    Position::new(line as u32, column as u32)
+}
+
+/// The smallest header that makes a file a complete font (spec §5.6).
+pub const PREAMBLE: &str = r#"font (name: "T", em: 1000)
+metric baseline (y: 0, align: "bottom")
+metric xHeight (y: 500)
+metric capHeight (y: 700)
+metric ascender (y: 740)
+metric descender (y: -200, align: "bottom")
+"#;
+
+/// `body` after [`PREAMBLE`].
+pub fn valid(body: &str) -> String {
+    format!("{PREAMBLE}{body}\n")
+}

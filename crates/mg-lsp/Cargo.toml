@@ -8,10 +8,11 @@ publish = { workspace = true }
 [dependencies]
 mg-diag = { workspace = true }
 mg-syntax = { workspace = true }
+mg-hir = { workspace = true }
+mg-font = { workspace = true }
 indexmap = { workspace = true }
 lsp-server = { workspace = true }
 lsp-types = { workspace = true }
+serde = "1"
 serde_json = { workspace = true }
 
-[dev-dependencies]
-serde = "1"

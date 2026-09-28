@@ -2,13 +2,16 @@
 //! over stdio and calls the compiler's own crates in-process, so its
 //! diagnostics are exactly the compiler's.
 //!
-//! L0 (this much): the protocol lifecycle, a document store with
-//! full-document sync, position-encoding negotiation, and syntax
-//! diagnostics on every change.
+//! So far: the protocol lifecycle, a document store with full-document
+//! sync, and position-encoding negotiation (L0); every diagnostic
+//! `mg check` reports, document symbols, go-to-definition, and references
+//! (L1).
 
 pub mod diagnostics;
+pub mod index;
 pub mod line_index;
 mod server;
+pub mod symbols;
 
 pub use server::main_loop;
 
