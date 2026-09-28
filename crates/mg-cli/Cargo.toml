@@ -17,6 +17,7 @@ mg-geom = { workspace = true }
 mg-eval = { workspace = true }
 mg-font = { workspace = true }
 clap = { workspace = true }
+kurbo = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }

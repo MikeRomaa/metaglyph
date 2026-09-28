@@ -1,15 +1,22 @@
 //! Pure geometry on kurbo types, with no dependency on evaluation: segment
 //! realization (quad elevation, cube passthrough, arc radius fit and
-//! realization), the curvature check, stroking with join patches, filled
-//! contours, Bézier clipping, contour roles, and winding (spec §6, §7,
-//! §8).
+//! realization, [`skeleton`]), curve–curve intersection ([`intersect`]),
+//! the curvature limit check ([`curvature`]), stroking with join patches
+//! ([`stroke`]), filled contours and their self-intersection check
+//! ([`fill`]), and contour roles and winding direction ([`winding`]) —
+//! spec §6, §7, §8.
 //!
-//! Implemented in M3: segment realization is complete and exact — there
-//! is no Hobby's-algorithm-style approximation left to defer, since the
-//! spec's `quad`/`cube`/`arc` segments fix their own geometry with no
-//! free directions to solve for (see [`skeleton`]) — plus skeleton
-//! bounding boxes and line-involving path intersection. M4 adds the
-//! curvature check, stroking, join patches, filled contours, full
-//! curve–curve Bézier clipping, contour roles, and winding.
+//! Segment realization (M3) is complete and exact — there is no Hobby's-
+//! algorithm-style approximation left to defer, since the spec's
+//! `quad`/`cube`/`arc` segments fix their own geometry with no free
+//! directions to solve for. The rest of this crate (M4) is what turns
+//! that skeleton into a renderable outline: [`stroke`] and [`fill`] are
+//! the two entry points a rendering path's `.bbox` and `mg svg` actually
+//! call, and lean on the other modules underneath.
 
+pub mod curvature;
+pub mod fill;
+pub mod intersect;
 pub mod skeleton;
+pub mod stroke;
+pub mod winding;

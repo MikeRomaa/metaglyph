@@ -175,14 +175,132 @@ fn cmd_fmt(files: &[PathBuf]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn cmd_svg(files: &[PathBuf], _glyph: &str, _instance: Option<&str>) -> ExitCode {
+fn cmd_svg(files: &[PathBuf], glyph_name: &str, instance_name: Option<&str>) -> ExitCode {
     let code = require_files(files);
     if code != ExitCode::SUCCESS {
         return code;
     }
 
-    eprintln!("mg svg: not yet implemented");
-    ExitCode::FAILURE
+    // Spec §5.6's multi-file merge isn't implemented yet (see `cmd_check`'s
+    // own note); one glyph's outline only ever needs the first file.
+    let path = &files[0];
+    let source = match read_source(path) {
+        Ok(source) => source,
+        Err(code) => return code,
+    };
+    let filename = path.display().to_string();
+    let mut stderr = StandardStream::stderr(ColorChoice::Auto);
+
+    let parsed = mg_syntax::parse(&source);
+    let mut had_errors = false;
+    for diagnostic in &parsed.diagnostics {
+        print_diagnostic(&mut stderr, diagnostic, &filename, &source);
+        had_errors |= diagnostic.severity == mg_diag::Severity::Error;
+    }
+    if had_errors {
+        return ExitCode::FAILURE;
+    }
+
+    let source_file = mg_syntax::ast::SourceFile::cast(parsed.syntax())
+        .expect("SOURCE_FILE always casts from a parse's root node");
+    let (hir, hir_diagnostics) = mg_hir::lower(&source_file);
+    for diagnostic in &hir_diagnostics {
+        print_diagnostic(&mut stderr, diagnostic, &filename, &source);
+        had_errors |= diagnostic.severity == mg_diag::Severity::Error;
+    }
+    if had_errors {
+        return ExitCode::FAILURE;
+    }
+
+    let instance = match instance_name {
+        Some(name) => match hir.instances.get(name) {
+            Some(instance) => instance,
+            None => {
+                eprintln!("error: no instance named `{name}` in {filename}");
+                return ExitCode::from(2);
+            }
+        },
+        None => hir
+            .instances
+            .values()
+            .next()
+            .expect("mg-hir always inserts at least one instance"),
+    };
+
+    if !hir.glyphs.keys().any(|(name, _)| name == glyph_name) {
+        eprintln!("error: no glyph named `{glyph_name}` in {filename}");
+        return ExitCode::from(2);
+    }
+
+    let (_, outcome) = mg_eval::evaluate(&hir, instance);
+
+    let mut render_diagnostics = Vec::new();
+    let contours = mg_eval::render_glyph(
+        &hir,
+        instance,
+        glyph_name,
+        &outcome.values,
+        &outcome.failed,
+        &mut render_diagnostics,
+    );
+
+    for diagnostic in outcome.diagnostics.iter().chain(&render_diagnostics) {
+        print_diagnostic(&mut stderr, diagnostic, &filename, &source);
+    }
+    let Ok(contours) = contours else {
+        // `render_diagnostics` already explains why; there is no partial
+        // outline to fall back to without it.
+        return ExitCode::FAILURE;
+    };
+
+    println!("{}", render_svg(&contours));
+    // Printed regardless (this glyph rendered fine even if some unrelated
+    // node elsewhere in the font failed), matching `cmd_dump_graph`'s own
+    // "always show what you can, signal failure via exit code" shape.
+    if outcome.diagnostics.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+/// Renders `contours` (spec §6.4–§6.5, §8: `mg_eval::render_glyph`'s
+/// output, roles already resolved) as one SVG document. Every contour
+/// goes into a single `<path>` with `fill-rule="nonzero"`, since that
+/// rule — not this function — is what actually turns an oppositely-wound
+/// counter into a hole; the roles only decided *which* direction each
+/// contour got, back in `mg_eval::render_glyph`.
+fn render_svg(contours: &[(kurbo::BezPath, mg_geom::winding::ContourRole)]) -> String {
+    use kurbo::Shape;
+
+    let mut bbox: Option<kurbo::Rect> = None;
+    let mut data = String::new();
+    for (contour, _role) in contours {
+        data.push_str(&contour.to_svg());
+        data.push(' ');
+        let b = contour.bounding_box();
+        bbox = Some(match bbox {
+            Some(u) => u.union(b),
+            None => b,
+        });
+    }
+    let bbox = bbox.unwrap_or(kurbo::Rect::ZERO);
+
+    // The glyph's own coordinates are y-up (spec §14); SVG is y-down, so
+    // the content is flipped inside a `<g>` and the viewBox is flipped to
+    // match, rather than negating every coordinate by hand.
+    format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"{} {} {} {}\">\n\
+         <g transform=\"scale(1,-1)\">\n\
+         <path d=\"{}\" fill=\"black\" fill-rule=\"nonzero\"/>\n\
+         </g>\n\
+         </svg>",
+        bbox.x0,
+        -bbox.y1,
+        bbox.width(),
+        bbox.height(),
+        data.trim(),
+    )
 }
 
 fn cmd_dump_graph(files: &[PathBuf], instance_name: Option<&str>) -> ExitCode {

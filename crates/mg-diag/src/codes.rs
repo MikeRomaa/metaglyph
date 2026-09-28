@@ -104,10 +104,12 @@ pub const INVALID_REFLECTION: Code = Code::new("MG0509");
 
 // -- MG06xx: evaluation and domain errors (mg-eval) -----------------------
 //
-// Includes cycles, arithmetic/geometric domain errors, and the M3-scope
-// markers for what M4 has not landed yet (a free direction needing
-// Hobby's algorithm, a rendering path's stroked/filled bounds,
-// curve–curve intersection needing Bézier clipping).
+// Includes cycles, arithmetic/geometric domain errors, and the geometry
+// kernel's own errors (spec §7–§8): degenerate stroke/fill input, the
+// curvature limit, and self-intersecting fills. MG0610 and MG0612 are
+// deliberately unused — they briefly named M3-scope stubs ("stroking not
+// yet implemented," "needs Bézier clipping") that M4 fully resolved, so
+// per this file's own rule the numbers are retired rather than reused.
 
 pub const CYCLE: Code = Code::new("MG0601");
 pub const DIVISION_BY_ZERO: Code = Code::new("MG0602");
@@ -118,11 +120,18 @@ pub const PATH_PARAMETER_OUT_OF_DOMAIN: Code = Code::new("MG0606");
 pub const EMPTY_LIST_REDUCTION: Code = Code::new("MG0607");
 pub const GLYPH_HAS_NO_INK: Code = Code::new("MG0608");
 pub const NO_AXIS_ALIGNED_ELLIPSE: Code = Code::new("MG0609");
-pub const STROKING_NOT_YET_IMPLEMENTED: Code = Code::new("MG0610");
 pub const ZERO_LENGTH_SEGMENT: Code = Code::new("MG0611");
-pub const NEEDS_BEZIER_CLIPPING: Code = Code::new("MG0612");
 pub const POWER_DOMAIN_ERROR: Code = Code::new("MG0613");
 pub const ZERO_VECTOR: Code = Code::new("MG0614");
 /// A radii-mode `arc` (spec §6.3) whose chord is longer than `rx`/`ry` can
 /// span, or whose `rx`/`ry` is non-positive.
 pub const RADII_TOO_SMALL_FOR_CHORD: Code = Code::new("MG0615");
+/// A path being stroked or filled has zero total arc length (spec §7.3).
+pub const ZERO_LENGTH_PATH: Code = Code::new("MG0616");
+/// `stroke` is not greater than zero (spec §7.3).
+pub const NON_POSITIVE_STROKE: Code = Code::new("MG0617");
+/// The curvature radius drops below `stroke / 2` in a segment's interior
+/// (spec §7.2).
+pub const CURVATURE_LIMIT_EXCEEDED: Code = Code::new("MG0618");
+/// A filled contour crosses itself (spec §8.3).
+pub const SELF_INTERSECTING_FILL: Code = Code::new("MG0619");

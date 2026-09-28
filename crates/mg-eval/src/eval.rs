@@ -12,7 +12,7 @@ use kurbo::{Affine, Point, Shape};
 use mg_diag::{Diagnostic, Label};
 use mg_hir::const_eval;
 use mg_hir::model::{
-    Align, GlyphDecl, Hir, InstanceDecl, MetricDecl, ParamDecl, SegmentKind, Sweep,
+    Align, ComponentDecl, GlyphDecl, Hir, InstanceDecl, MetricDecl, ParamDecl, SegmentKind, Sweep,
 };
 use mg_syntax::ast::{self, AstNode};
 use mg_syntax::syntax_kind::SyntaxKind;
@@ -196,7 +196,7 @@ fn eval_metric(ctx: &mut EvalCtx, metric: &MetricDecl) -> Result<Value, ()> {
 // ---------------------------------------------------------------------
 // Expression evaluation
 
-struct EvalCtx<'a> {
+pub(crate) struct EvalCtx<'a> {
     hir: &'a Hir,
     instance: &'a InstanceDecl,
     current_glyph: Option<&'a str>,
@@ -205,7 +205,7 @@ struct EvalCtx<'a> {
 }
 
 impl<'a> EvalCtx<'a> {
-    fn new(
+    pub(crate) fn new(
         hir: &'a Hir,
         instance: &'a InstanceDecl,
         current_glyph: Option<&'a str>,
@@ -700,15 +700,209 @@ fn eval_path_bbox(
 ) -> Result<Value, ()> {
     let glyph = effective_glyph(hir, instance, glyph_name);
     let path = &glyph.paths[path_index];
-    if path.renders() {
-        let span = mg_syntax::trimmed_range(&path.syntax);
-        diagnostics.push(diagnostic_for(span, EvalError::StrokingNotYetImplemented));
-        return Err(());
-    }
     let realized = values[&NodeId::PathRealized(glyph_name.to_string(), path_index)]
         .as_path()
         .expect("PathRealized always evaluates to a Value::Path");
-    Ok(Value::Rect(construct::bbox(&realized.path)))
+
+    if !path.renders() {
+        return Ok(Value::Rect(construct::bbox(&realized.path)));
+    }
+
+    let contours = render_path(hir, instance, glyph_name, path_index, values, diagnostics)?;
+    let mut union: Option<kurbo::Rect> = None;
+    for (contour, _role) in &contours {
+        let bbox = contour.bounding_box();
+        union = Some(match union {
+            Some(u) => u.union(bbox),
+            None => bbox,
+        });
+    }
+    Ok(Value::Rect(
+        union
+            .expect("`path.renders()` guarantees at least one contour")
+            .into(),
+    ))
+}
+
+/// The `OFFSET_TOLERANCE`-scale numerics have no bearing on skeleton
+/// realization's own `ARC_TOLERANCE` (spec §14); each stage gets its own
+/// constant scaled the same way (`k · font.em / 1000`).
+fn spec_tolerance(hir: &Hir, k: f64) -> f64 {
+    hir.font.em.map_or(0.0, |em| k * em as f64 / 1000.0)
+}
+
+/// Every contour a rendering path produces (spec §6.4–§6.5), with its
+/// role already assigned (spec §8.1) — except a filled contour's, which
+/// only a whole glyph's cross-path nesting count (spec §8.1) can finalize,
+/// so it always comes back `Outer` here provisionally. Public so `mg-cli`
+/// can call it directly for `mg svg`, the same way it calls
+/// [`evaluate`] itself.
+///
+/// `Err(())` rather than a typed error for the same reason every other
+/// `Result<_, ()>` in this module is: the diagnostic already pushed onto
+/// `diagnostics` is the real error, not the unit it fails with — the same
+/// failure-containment shape (spec §4.6) as [`compute_node`]'s.
+#[allow(clippy::result_unit_err)]
+pub fn render_path(
+    hir: &Hir,
+    instance: &InstanceDecl,
+    glyph_name: &str,
+    path_index: usize,
+    values: &IndexMap<NodeId, Value>,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<Vec<(kurbo::BezPath, mg_geom::winding::ContourRole)>, ()> {
+    let glyph = effective_glyph(hir, instance, glyph_name);
+    let path = &glyph.paths[path_index];
+    // Absent rather than a panic-worthy invariant break: called from
+    // `compute_node`, `PathRealized` succeeding is already guaranteed by
+    // containment (it's one of `PathBbox`'s own dependencies); called
+    // directly by `mg-cli` for `mg svg`, it may genuinely have failed —
+    // whichever diagnostic that produced is already in `diagnostics` from
+    // the `evaluate()` call this came from, so this fails silently.
+    let Some(skeleton) = values
+        .get(&NodeId::PathRealized(glyph_name.to_string(), path_index))
+        .map(|v| {
+            v.as_path()
+                .expect("PathRealized always evaluates to a Value::Path")
+        })
+    else {
+        return Err(());
+    };
+    let path_span = mg_syntax::trimmed_range(&path.syntax);
+
+    let mut contours = Vec::new();
+
+    if path.fill {
+        // spec §8.3: a self-intersecting filled contour is a hard error,
+        // checked before it ever reaches a role or a stroke.
+        const INTERSECTION_ACCURACY: f64 = 1e-6;
+        if let Err(hit) = mg_geom::fill::check_self_intersection(skeleton, INTERSECTION_ACCURACY) {
+            diagnostics.push(diagnostic_for(
+                path_span,
+                EvalError::SelfIntersectingFill {
+                    crossings: hit.crossings,
+                },
+            ));
+            return Err(());
+        }
+        contours.push((
+            mg_geom::fill::fill_contour(skeleton),
+            mg_geom::winding::ContourRole::Outer,
+        ));
+    }
+
+    if let Some(stroke_expr) = &path.stroke {
+        let mut ctx = EvalCtx::new(hir, instance, Some(glyph_name), values, diagnostics);
+        let width = value_num(&mut ctx, stroke_expr)?;
+        let spec = build_stroke_spec(path, width);
+        let offset_tolerance = spec_tolerance(hir, 0.05);
+        match mg_geom::stroke::stroke_path(skeleton, path.closed, &spec, offset_tolerance) {
+            Ok(mut stroke_contours) => contours.append(&mut stroke_contours),
+            Err(err) => {
+                let (span, eval_err) = stroke_error_to_eval(path, err);
+                diagnostics.push(diagnostic_for(span, eval_err));
+                return Err(());
+            }
+        }
+    }
+
+    Ok(contours)
+}
+
+/// Builds `mg-geom`'s stroke configuration from a `PathDecl`'s already
+/// HIR-validated fields (spec §5.7). `joinAt`'s segment names are
+/// resolved to 0-based drawn-segment indices here, since name lookup is
+/// this crate's business, not the pure-geometry one's.
+fn build_stroke_spec(path: &mg_hir::model::PathDecl, width: f64) -> mg_geom::stroke::StrokeSpec {
+    let (start_cap, end_cap) = match &path.caps {
+        Some(caps) => (parse_cap(&caps.start), parse_cap(&caps.end)),
+        None => (mg_geom::stroke::Cap::Butt, mg_geom::stroke::Cap::Butt),
+    };
+    let drawn = &path.segments[1..]; // skip `start`
+    let join_overrides = path
+        .join_at
+        .iter()
+        .filter_map(|(name, kind)| {
+            drawn
+                .iter()
+                .position(|seg| seg.name.as_deref() == Some(name.as_str()))
+                .map(|index| (index, parse_join(kind)))
+        })
+        .collect();
+    mg_geom::stroke::StrokeSpec {
+        width,
+        start_cap,
+        end_cap,
+        default_join: parse_join(&path.joins),
+        join_overrides,
+    }
+}
+
+fn parse_cap(s: &str) -> mg_geom::stroke::Cap {
+    match s {
+        "butt" => mg_geom::stroke::Cap::Butt,
+        "round" => mg_geom::stroke::Cap::Round,
+        "square" => mg_geom::stroke::Cap::Square,
+        _ => unreachable!("mg-hir already validated `caps`"),
+    }
+}
+
+fn parse_join(s: &str) -> mg_geom::stroke::JoinKind {
+    match s {
+        "miter" => mg_geom::stroke::JoinKind::Miter,
+        "round" => mg_geom::stroke::JoinKind::Round,
+        "bevel" => mg_geom::stroke::JoinKind::Bevel,
+        _ => unreachable!("mg-hir already validated `joins`/`joinAt`"),
+    }
+}
+
+/// Where a stroke-stage error's diagnostic should point: a curvature
+/// violation names its own segment (spec §7.2: "Report... the segment,
+/// the parameter interval"), everything else the whole path.
+fn stroke_error_to_eval(
+    path: &mg_hir::model::PathDecl,
+    err: mg_geom::stroke::StrokeError,
+) -> (Range<usize>, EvalError) {
+    match err {
+        mg_geom::stroke::StrokeError::ZeroLengthPath => (
+            mg_syntax::trimmed_range(&path.syntax),
+            EvalError::ZeroLengthPath,
+        ),
+        mg_geom::stroke::StrokeError::NonPositiveStroke => (
+            mg_syntax::trimmed_range(&path.syntax),
+            EvalError::NonPositiveStroke,
+        ),
+        mg_geom::stroke::StrokeError::Curvature(violation) => {
+            // `+ 1` skips `start`, which the curvature check never sees.
+            let segment = &path.segments[violation.segment_index + 1];
+            (
+                mg_syntax::trimmed_range(&segment.syntax),
+                EvalError::CurvatureLimitExceeded {
+                    segment_index: violation.segment_index,
+                    local_t: violation.local_t,
+                },
+            )
+        }
+    }
+}
+
+/// A component's placement (spec §5.8): `transform` verbatim, `offset` as
+/// a pure translation, or the identity when neither is given.
+pub(crate) fn component_affine(ctx: &mut EvalCtx, component: &ComponentDecl) -> Result<Affine, ()> {
+    if let Some(transform) = &component.transform {
+        Ok(eval_expr(ctx, transform)?
+            .as_transform()
+            .expect("mg-hir already type-checked `transform`"))
+    } else if let Some(offset) = &component.offset {
+        Ok(Affine::translate(
+            eval_expr(ctx, offset)?
+                .as_pair()
+                .expect("mg-hir already type-checked `offset`")
+                .to_vec2(),
+        ))
+    } else {
+        Ok(Affine::IDENTITY)
+    }
 }
 
 fn eval_glyph_bbox(
@@ -743,20 +937,7 @@ fn eval_glyph_bbox(
             .as_rect()
             .expect("GlyphBbox always evaluates to a Value::Rect");
 
-        let affine = if let Some(transform) = &component.transform {
-            eval_expr(&mut ctx, transform)?
-                .as_transform()
-                .expect("mg-hir already type-checked `transform`")
-        } else if let Some(offset) = &component.offset {
-            Affine::translate(
-                eval_expr(&mut ctx, offset)?
-                    .as_pair()
-                    .expect("mg-hir already type-checked `offset`")
-                    .to_vec2(),
-            )
-        } else {
-            Affine::IDENTITY
-        };
+        let affine = component_affine(&mut ctx, component)?;
 
         let transformed = transform_rect(target_rect, affine);
         union = Some(union.map_or(transformed, |u| union_rect(u, transformed)));
@@ -812,9 +993,11 @@ fn diagnostic_for(span: Range<usize>, err: EvalError) -> Diagnostic {
         EvalError::GlyphHasNoInk => codes::GLYPH_HAS_NO_INK,
         EvalError::NoAxisAlignedEllipse => codes::NO_AXIS_ALIGNED_ELLIPSE,
         EvalError::RadiiTooSmallForChord => codes::RADII_TOO_SMALL_FOR_CHORD,
-        EvalError::StrokingNotYetImplemented => codes::STROKING_NOT_YET_IMPLEMENTED,
         EvalError::ZeroLengthSegment => codes::ZERO_LENGTH_SEGMENT,
-        EvalError::NeedsBezierClipping => codes::NEEDS_BEZIER_CLIPPING,
+        EvalError::ZeroLengthPath => codes::ZERO_LENGTH_PATH,
+        EvalError::NonPositiveStroke => codes::NON_POSITIVE_STROKE,
+        EvalError::CurvatureLimitExceeded { .. } => codes::CURVATURE_LIMIT_EXCEEDED,
+        EvalError::SelfIntersectingFill { .. } => codes::SELF_INTERSECTING_FILL,
     };
     let diagnostic = Diagnostic::error(code, err.to_string(), Label::new(span, "here"));
     match err {

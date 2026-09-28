@@ -1,8 +1,6 @@
 //! Integration tests for `mg_eval::evaluate` (spec §4): build real HIR
 //! from source text, evaluate it for the (implicit) `Regular` instance,
-//! and check the results. Per spec plan M3's own scoping note, a
-//! rendering path's `.bbox` always fails here (stroking is M4's), so
-//! every fixture below either avoids it or tests the failure itself.
+//! and check the results.
 
 use mg_eval::NodeId;
 use mg_eval::value::Value;
@@ -142,7 +140,7 @@ fn glyph_bbox_of_an_empty_glyph_is_a_domain_error() {
 }
 
 #[test]
-fn rendering_path_bbox_is_deferred_to_m4() {
+fn rendering_path_bbox_is_the_stroked_outline() {
     let source = format!(
         r#"{PREAMBLE}
 glyph A (advance: 10) {{
@@ -157,16 +155,65 @@ let w = glyphs.A.bbox.x1;
     let hir = lower(&source);
     let instance = regular(&hir);
     let (_, outcome) = mg_eval::evaluate(&hir, instance);
+    assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
 
+    // A horizontal line stroked with the default "butt" caps: the offset
+    // boundary is exactly the line's own extent in x, grown by `r = 2.5`
+    // in y, with no extension past the endpoints.
+    let bbox = outcome.values[&NodeId::PathBbox("A".into(), 0)]
+        .as_rect()
+        .unwrap();
+    assert_eq!((bbox.x0, bbox.y0, bbox.x1, bbox.y1), (0.0, -2.5, 10.0, 2.5));
+    assert_eq!(num(&outcome.values, NodeId::TopLevel("w".into())), 10.0);
+}
+
+#[test]
+fn a_curvature_violation_is_reported_before_stroking() {
+    let source = format!(
+        r#"{PREAMBLE}
+glyph A (advance: 10) {{
+  path p (stroke: 20) {{
+    start (at: (2, 0))
+    arc (to: (-2, 0), center: (0, 0), sweep: "ccw")
+    arc (to: (2, 0),  center: (0, 0), sweep: "ccw")
+  }}
+}}
+"#
+    );
+    let hir = lower(&source);
+    let instance = regular(&hir);
+    let (_, outcome) = mg_eval::evaluate(&hir, instance);
     assert!(outcome.failed.contains(&NodeId::PathBbox("A".into(), 0)));
-    assert!(outcome.failed.contains(&NodeId::GlyphBbox("A".into())));
-    assert!(outcome.failed.contains(&NodeId::TopLevel("w".into())));
-    // Exactly one diagnostic for the whole chain (spec §4.6: "a failed
-    // top-level node is reported once... not once per dependent").
     assert_eq!(outcome.diagnostics.len(), 1, "{:#?}", outcome.diagnostics);
     assert_eq!(
         outcome.diagnostics[0].code,
-        mg_diag::codes::STROKING_NOT_YET_IMPLEMENTED
+        mg_diag::codes::CURVATURE_LIMIT_EXCEEDED
+    );
+}
+
+#[test]
+fn a_self_intersecting_fill_is_an_error() {
+    let source = format!(
+        r#"{PREAMBLE}
+glyph A (advance: 10) {{
+  path p (fill: true) {{
+    start (at: (-10, 10))
+    line (to: (10, -10))
+    line (to: (10, 10))
+    line (to: (-10, -10))
+    close
+  }}
+}}
+"#
+    );
+    let hir = lower(&source);
+    let instance = regular(&hir);
+    let (_, outcome) = mg_eval::evaluate(&hir, instance);
+    assert!(outcome.failed.contains(&NodeId::PathBbox("A".into(), 0)));
+    assert_eq!(outcome.diagnostics.len(), 1, "{:#?}", outcome.diagnostics);
+    assert_eq!(
+        outcome.diagnostics[0].code,
+        mg_diag::codes::SELF_INTERSECTING_FILL
     );
 }
 

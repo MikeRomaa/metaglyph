@@ -403,8 +403,8 @@ fn solve_center_from_radii(
 }
 
 /// The skeleton's tight bounding box (spec §5.5 `path.bbox`, for a
-/// construction path). Rendering paths use the stroked/filled outline's
-/// bounds instead (spec plan M3; `stroke` itself is M4's).
+/// construction path). A rendering path's `.bbox` uses the stroked/filled
+/// outline's bounds instead (`crate::stroke`, `crate::fill`), not this.
 pub fn bounding_box(path: &BezPath) -> kurbo::Rect {
     use kurbo::Shape;
     path.bounding_box()
@@ -472,7 +472,11 @@ pub fn resolve_param(skeleton: &Skeleton, t: f64) -> Result<(PathSeg, f64), Para
 /// The inverse of [`resolve_param`]'s piece lookup: given a 0-based index
 /// into the *flattened* underlying pieces and a local parameter within
 /// it, the authored-domain global parameter (spec §5.9).
-fn piece_to_authored_param(skeleton: &Skeleton, piece_index: usize, local_t: f64) -> f64 {
+pub(crate) fn piece_to_authored_param(
+    skeleton: &Skeleton,
+    piece_index: usize,
+    local_t: f64,
+) -> f64 {
     let mut offset = 0;
     for (seg_index, &m) in skeleton.piece_counts.iter().enumerate() {
         if piece_index < offset + m {
@@ -531,49 +535,26 @@ pub fn curvature_at(seg: &PathSeg, t: f64) -> f64 {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct NeedsBezierClipping;
-
 /// `a`'s global parameters (spec §5.9 domain `[0, n]`, over authored
 /// segments — see [`resolve_param`]) where `a` crosses `b`, ascending.
-/// Handles every pair where at least one side is a straight `Line` piece,
-/// via kurbo's own line–curve intersection. A genuine curve-against-curve
-/// crossing (a `Quad`/`Cubic` piece against another) has no such
-/// shortcut; kurbo has no curve–curve solver, and Bézier clipping is
-/// deferred to M4 (spec plan M3), so that pair reports
-/// [`NeedsBezierClipping`] instead of a parameter.
-pub fn intersect(a: &Skeleton, b: &BezPath) -> Result<Vec<f64>, NeedsBezierClipping> {
+/// Every pair is handled: a line-involving pair via kurbo's own
+/// closed-form solver, a cubic-against-cubic pair via
+/// `crate::intersect`'s recursive subdivision (spec plan M4).
+pub fn intersect(a: &Skeleton, b: &BezPath, tolerance: f64) -> Vec<f64> {
     let a_segs = segments(&a.path);
     let b_segs = segments(b);
     let mut hits = Vec::new();
 
-    for (i, seg_a) in a_segs.iter().enumerate() {
-        for seg_b in &b_segs {
-            match (as_line(seg_a), as_line(seg_b)) {
-                (Some(line_a), _) => {
-                    for hit in seg_b.intersect_line(line_a) {
-                        hits.push(piece_to_authored_param(a, i, hit.line_t));
-                    }
-                }
-                (None, Some(line_b)) => {
-                    for hit in seg_a.intersect_line(line_b) {
-                        hits.push(piece_to_authored_param(a, i, hit.segment_t));
-                    }
-                }
-                (None, None) => return Err(NeedsBezierClipping),
+    for (i, &seg_a) in a_segs.iter().enumerate() {
+        for &seg_b in &b_segs {
+            for crossing in crate::intersect::segment_intersections(seg_a, seg_b, tolerance) {
+                hits.push(piece_to_authored_param(a, i, crossing.t_a));
             }
         }
     }
 
     hits.sort_by(|x, y| x.partial_cmp(y).expect("path parameters are always finite"));
-    Ok(hits)
-}
-
-fn as_line(seg: &PathSeg) -> Option<kurbo::Line> {
-    match seg {
-        PathSeg::Line(line) => Some(*line),
-        _ => None,
-    }
+    hits
 }
 
 #[cfg(test)]

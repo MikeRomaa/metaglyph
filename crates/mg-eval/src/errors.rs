@@ -1,8 +1,11 @@
-//! Evaluation-time errors (spec §13 Domain class, plus this milestone's
-//! own scope markers). Span-free by design: [`crate::construct`] and the
-//! rest of the evaluator only know *what* went wrong, never *where* —
-//! the caller walking the expression tree is the one holding a span, and
-//! attaches it when building the [`mg_diag::Diagnostic`].
+//! Evaluation-time errors (spec §13 Domain and Geometry classes).
+//! Span-free by design: [`crate::construct`] and the rest of the
+//! evaluator only know *what* went wrong, never *where* — the caller
+//! walking the expression tree is the one holding a span, and attaches it
+//! when building the [`mg_diag::Diagnostic`]. A curvature violation is the
+//! one exception carrying its own extra detail (the segment and parameter
+//! interval, spec §7.2): those numbers aren't visible from a span alone,
+//! unlike the glyph/path/instance the span's own location already names.
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum EvalError {
@@ -33,13 +36,24 @@ pub enum EvalError {
     /// A radii-mode `arc`'s chord is longer than `rx`/`ry` can span, or
     /// `rx`/`ry` is non-positive (spec §6.3, §13 Geometry class).
     RadiiTooSmallForChord,
-    /// A rendering path's `.bbox` needs the stroked/filled outline;
-    /// stroking is deferred to M4 (spec plan M3).
-    StrokingNotYetImplemented,
     ZeroLengthSegment,
-    /// `intersect` between two curved segments needs Bézier clipping,
-    /// deferred to M4 (spec plan M3).
-    NeedsBezierClipping,
+    /// A path being stroked or filled has zero total arc length — no
+    /// drawn segment beyond `start` (spec §7.3).
+    ZeroLengthPath,
+    /// `stroke` is not greater than zero (spec §7.3).
+    NonPositiveStroke,
+    /// The curvature radius drops below `stroke / 2` somewhere in a
+    /// segment's interior (spec §7.2). `local_t` is that segment's own
+    /// `[0, 1]` domain, not the spec §5.9 path-query one.
+    CurvatureLimitExceeded {
+        segment_index: usize,
+        local_t: std::ops::Range<f64>,
+    },
+    /// A filled contour crosses itself (spec §8.3); each pair is the two
+    /// crossing segments' own spec §5.9 path-query parameters.
+    SelfIntersectingFill {
+        crossings: Vec<(f64, f64)>,
+    },
 }
 
 impl std::fmt::Display for EvalError {
@@ -78,18 +92,29 @@ impl std::fmt::Display for EvalError {
                     "no ellipse with these `rx`/`ry` radii passes through both endpoints"
                 )
             }
-            EvalError::StrokingNotYetImplemented => {
+            EvalError::ZeroLengthSegment => write!(f, "zero-length segment"),
+            EvalError::ZeroLengthPath => write!(f, "path has zero total arc length"),
+            EvalError::NonPositiveStroke => write!(f, "`stroke` must be greater than 0"),
+            EvalError::CurvatureLimitExceeded {
+                segment_index,
+                local_t,
+            } => {
                 write!(
                     f,
-                    "stroking is not yet implemented (M4); `.bbox` on a rendering path needs it"
+                    "curvature radius drops below `stroke / 2` in segment {segment_index} \
+                     over parameters {:.4}..{:.4}",
+                    local_t.start, local_t.end
                 )
             }
-            EvalError::ZeroLengthSegment => write!(f, "zero-length segment"),
-            EvalError::NeedsBezierClipping => {
-                write!(
-                    f,
-                    "intersecting two curved segments needs Bézier clipping, not yet implemented (M4)"
-                )
+            EvalError::SelfIntersectingFill { crossings } => {
+                write!(f, "self-intersecting filled contour, crossing itself at ")?;
+                for (i, (t_a, t_b)) in crossings.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "({t_a:.4}, {t_b:.4})")?;
+                }
+                Ok(())
             }
         }
     }
@@ -106,11 +131,5 @@ impl From<mg_geom::skeleton::SkeletonError> for EvalError {
                 EvalError::RadiiTooSmallForChord
             }
         }
-    }
-}
-
-impl From<mg_geom::skeleton::NeedsBezierClipping> for EvalError {
-    fn from(_: mg_geom::skeleton::NeedsBezierClipping) -> Self {
-        EvalError::NeedsBezierClipping
     }
 }

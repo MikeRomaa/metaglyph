@@ -12,9 +12,9 @@ use mg_geom::skeleton;
 use crate::errors::EvalError;
 use crate::value::{Rect, Value};
 
-/// Arc-length numerics have no spec-named tolerance (unlike the M4
-/// constants in spec §14); this is just "close enough" for `mg dump-graph`
-/// and M3's own tests.
+/// Arc-length and curve–curve intersection numerics have no spec-named
+/// tolerance (unlike the M4 constants in spec §14); this is just "close
+/// enough" for `mg dump-graph` and this crate's own tests.
 const ARC_ACCURACY: f64 = 1e-6;
 
 fn num(v: &Value) -> f64 {
@@ -200,7 +200,7 @@ pub fn call(name: &str, args: &[Value]) -> Result<Value, EvalError> {
         ))),
         "pointAtLength" => Ok(Value::Pair(point_at_length(path(&args[0]), num(&args[1])))),
         "intersect" => {
-            let hits = skeleton::intersect(path(&args[0]), &path(&args[1]).path)?;
+            let hits = skeleton::intersect(path(&args[0]), &path(&args[1]).path, ARC_ACCURACY);
             Ok(Value::List(hits.into_iter().map(Value::Num).collect()))
         }
         "subpath" => {

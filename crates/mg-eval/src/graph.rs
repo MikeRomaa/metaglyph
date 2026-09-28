@@ -223,10 +223,14 @@ fn build_glyph(
             deps,
         );
 
+        let mut bbox_own_deps = vec![NodeId::PathRealized(name.to_string(), i)];
+        if let Some(stroke) = &path.stroke {
+            collect_refs(stroke, hir, instance, Some(name), &mut bbox_own_deps);
+        }
         graph.insert(
             NodeId::PathBbox(name.to_string(), i),
             span_start(&path.syntax),
-            vec![NodeId::PathRealized(name.to_string(), i)],
+            bbox_own_deps,
         );
         if path.renders() {
             bbox_deps.push(NodeId::PathBbox(name.to_string(), i));
