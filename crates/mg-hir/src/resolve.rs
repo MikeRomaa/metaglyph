@@ -1,5 +1,5 @@
-//! Reserved words and the value namespaces (spec §5.4, §5.11 rules 2–6).
-//! The glyph namespace, glyph-set namespace, and segment namespace are
+//! Reserved words and the value namespaces (spec §5.4, §5.11 rules 3, 4,
+//! and 6). The glyph namespace, glyph-set namespace, and segment namespace are
 //! simple enough (existence checks over an already-built `IndexMap`) that
 //! [`crate::lower`] checks them directly; this module owns the one
 //! namespace shape that repeats — top-level scope and each glyph's own
@@ -143,17 +143,6 @@ pub fn unresolved_name<'a>(
     }
 }
 
-/// Two names equal after Unicode case folding, but not equal themselves
-/// (spec §5.11 rule 5: glyph and group names). Simple-case-fold via
-/// `to_lowercase` is a deliberate approximation of full Unicode default
-/// case folding; the glyph/group namespace is ASCII-heavy in practice and
-/// ambiguity elsewhere is safely conservative (worst case, a false
-/// negative on the diagnostic, never a false positive that blocks a valid
-/// pair of names — no font we've tested exercises the difference).
-pub fn case_folds_equal(a: &str, b: &str) -> bool {
-    a != b && a.to_lowercase() == b.to_lowercase()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -186,12 +175,5 @@ mod tests {
         assert!(inner.declare("stem", 10..11, Some(&outer), &mut diags));
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].code, codes::SHADOWS_TOP_LEVEL);
-    }
-
-    #[test]
-    fn detects_case_fold_collision() {
-        assert!(case_folds_equal("Aacute", "aacute"));
-        assert!(!case_folds_equal("A", "A"));
-        assert!(!case_folds_equal("A", "B"));
     }
 }

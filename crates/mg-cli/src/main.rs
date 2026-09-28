@@ -105,15 +105,26 @@ fn cmd_check(files: &[PathBuf]) -> ExitCode {
         let parsed = mg_syntax::parse(&source);
         let filename = path.display().to_string();
 
+        let mut file_had_errors = false;
         for diagnostic in &parsed.diagnostics {
             print_diagnostic(&mut stderr, diagnostic, &filename, &source);
-            had_errors |= diagnostic.severity == mg_diag::Severity::Error;
+            file_had_errors |= diagnostic.severity == mg_diag::Severity::Error;
         }
+        had_errors |= file_had_errors;
 
-        // One file at a time, same simplification M1's parser made: spec
-        // §5.6's multi-file merge (every directive from every file visible
-        // everywhere) is not yet implemented, so this checks each file as
-        // if it were the whole font.
+        // A parse error's recovery can misplace whole declarations (a
+        // misspelled block keyword's `{` gets skipped right along with
+        // it, so what follows is lowered at the wrong scope entirely —
+        // see `mg-syntax`'s recovery doc comments), which would otherwise
+        // cascade into HIR diagnostics that just restate the same typo in
+        // confusing, unrelated-looking ways. One file at a time, same
+        // simplification M1's parser made: spec §5.6's multi-file merge
+        // (every directive from every file visible everywhere) is not
+        // yet implemented, so this checks each file as if it were the
+        // whole font.
+        if file_had_errors {
+            continue;
+        }
         let source_file = mg_syntax::ast::SourceFile::cast(parsed.syntax())
             .expect("SOURCE_FILE always casts from a parse's root node");
         let (_, hir_diagnostics) = mg_hir::lower(&source_file);

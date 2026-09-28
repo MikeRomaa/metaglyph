@@ -115,7 +115,7 @@ Every error in spec §13's "field validation", "name resolution", "type", and "p
   - glyph sets
   - segment names (per path)
 
-  Call position resolves only against spec §5.9 functions. Case-fold collisions are checked in the glyph namespace. Near-miss suggestions come from the `mg-diag` edit-distance helper.
+  Call position resolves only against spec §5.9 functions. Near-miss suggestions come from the `mg-diag` edit-distance helper.
 - **One table-driven field schema per block kind.** Each entry records the field's name, type, and required/optional status, plus:
   - default value
   - mutual exclusions

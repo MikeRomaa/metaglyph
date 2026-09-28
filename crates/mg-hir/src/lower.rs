@@ -1599,28 +1599,6 @@ fn check_glyph_and_group_namespace(hir: &Hir, diagnostics: &mut Vec<Diagnostic>)
             distinct_names.insert(group_name.clone(), group.syntax.text_range().into());
         }
     }
-
-    let all: Vec<(String, Range<usize>)> = distinct_names
-        .iter()
-        .map(|(n, s)| (n.clone(), s.clone()))
-        .collect();
-    for i in 0..all.len() {
-        for j in (i + 1)..all.len() {
-            if resolve::case_folds_equal(&all[i].0, &all[j].0) {
-                diagnostics.push(
-                    Diagnostic::error(
-                        codes::CASE_FOLD_COLLISION,
-                        format!(
-                            "`{}` and `{}` are the same name after case folding",
-                            all[i].0, all[j].0
-                        ),
-                        Label::new(all[j].1.clone(), "collides after case folding"),
-                    )
-                    .with_secondary(Label::new(all[i].1.clone(), "first defined here")),
-                );
-            }
-        }
-    }
 }
 
 fn resolve_glyph_sets(hir: &mut Hir, diagnostics: &mut Vec<Diagnostic>) {

@@ -5,6 +5,21 @@ use SyntaxKind::*;
 pub(super) fn source_file(p: &mut Parser) {
     p.start_node(SOURCE_FILE);
     while !p.at(EOF) {
+        // `recover_declaration` deliberately leaves a `}` unconsumed for
+        // whichever `body()` call is waiting to close on it (see its own
+        // doc comment) — but at the top level there is no such call, no
+        // matching `{`, and nothing else will ever consume it. Without
+        // this guard a stray top-level `}` (e.g. one orphaned by a
+        // misspelled declaration keyword swallowing the real `{`) makes
+        // `declaration` return having bumped nothing, and this loop spins
+        // on the same token forever.
+        if p.at(R_BRACE) {
+            p.error_expected(TokenSet::new(&[LET_KW, GLYPH_KW, PATH_KW]));
+            p.start_node(ERROR);
+            p.bump();
+            p.finish_node();
+            continue;
+        }
         declaration(p);
     }
     p.bump(); // EOF, flushing any trailing trivia first

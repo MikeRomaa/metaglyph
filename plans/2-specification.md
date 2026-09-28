@@ -446,9 +446,8 @@ Rules:
 2. Any other bare identifier in value position resolves, in order: the enclosing glyph scope → the top-level scope → §5.10 built-in constants. Anything else is an unresolved-name error.
 3. Shadowing is an error: a glyph-scope name may not reuse a top-level name.
 4. A duplicate name within one namespace is an error. Glyph and group names share one namespace. Glyph-set alternates share their default glyph's name by design (§5.6) and are not duplicates.
-5. Two glyph or group names that are equal after Unicode case folding are an error.
-6. Reserved words (§5.4) may not be declaration names in any namespace.
-7. Declaration order is irrelevant; only cycles are errors.
+5. Reserved words (§5.4) may not be declaration names in any namespace.
+6. Declaration order is irrelevant; only cycles are errors.
 
 Enum values are string literals and never enter any namespace.
 
@@ -913,7 +912,7 @@ Every diagnostic names a source location, an entity, and where possible a fix. D
 | Syntax | Unexpected token; unclosed block; malformed segment declaration; malformed range; hex integer above 2^53; codepoint above `U+10FFFF`; character literal empty, holding more than one scalar value, or with an unknown escape (§5.1) |
 | Type | `pair` where `num` expected; `path` argument to a scalar function; `.bbox` on a value that has no extent; a mixed tuple; non-integral value in an `int` field |
 | Field validation | Unknown field; unknown enum value, with the legal set enumerated; missing required field; mutually exclusive fields both present; a field illegal in its position (§5.7); non-constant expression where one is required; param default or instance override outside `range`; param named after an instance field; alternate glyph with no default glyph, or with `codepoint`; `codepoint` value outside `0`–`0x10FFFF`; unknown glyph set |
-| Name resolution | Unresolved identifier with scope and near-miss suggestions; duplicate definition; case-fold collision; shadowing a top-level name; reserved word as a declaration name; anchor named `advance` or `bbox` |
+| Name resolution | Unresolved identifier with scope and near-miss suggestions; duplicate definition; shadowing a top-level name; reserved word as a declaration name; anchor named `advance` or `bbox` |
 | Cycle | Circular definition, reported as the full cycle path with file and line per hop, plus a suggested edge to break (§4.3) |
 | Domain | `sqrt` of a negative; division by zero; `asin`/`acos` out of range; `meet` on parallel lines; path parameter out of domain; `minOf`/`maxOf` of an empty list; `.bbox` of a glyph with no ink |
 | Geometry | Zero-length path or segment; `stroke` ≤ 0; curvature radius below `stroke/2` (§7.2), naming glyph, path, segment, parameter interval, and instance; a self-intersecting filled contour (§8.3) |

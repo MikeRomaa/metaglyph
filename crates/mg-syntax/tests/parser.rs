@@ -131,3 +131,30 @@ fn conformance_sample_parses_with_zero_diagnostics_and_round_trips() {
     assert!(parsed.diagnostics.is_empty(), "{:#?}", parsed.diagnostics);
     assert_eq!(parsed.syntax().text().to_string(), source);
 }
+
+/// Regression test for a real hang: a misspelled declaration keyword
+/// (`glpyh` for `glyph`) isn't itself special-cased, so `declaration()`
+/// falls into `recover_declaration`, which skips to the next `;`, `}`, or
+/// declaration keyword — and stops *before* consuming that boundary,
+/// trusting whichever `body()` call is waiting to close on it. At the top
+/// level there is no such call and no matching `{`, so the swallowed `{`
+/// leaves its `}` orphaned with nothing left to ever consume it.
+/// `source_file`'s loop used to call `declaration()` unconditionally and
+/// spun forever on that same unconsumed `}`. Runs the parse on a thread
+/// with a hard timeout, so a regression fails fast instead of hanging the
+/// whole test binary (and CI) the way the original bug did.
+#[test]
+fn orphaned_top_level_brace_does_not_hang() {
+    let source = "glpyh C (advance: 1) {\n  let a = 1;\n}\n";
+    let (tx, rx) = std::sync::mpsc::channel();
+    let owned = source.to_string();
+    std::thread::spawn(move || {
+        let parsed = parse(&owned);
+        let _ = tx.send(parsed.diagnostics.len());
+    });
+    let diagnostic_count = rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("parse must terminate: an orphaned top-level `}` must not hang the parser");
+    // One for the unrecognized `glpyh`, one for the now-orphaned `}`.
+    assert_eq!(diagnostic_count, 2);
+}

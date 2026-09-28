@@ -46,11 +46,10 @@ pub const CHAR_LITERAL_MULTIPLE_SCALARS: Code = Code::new("MG0110");
 
 pub const UNRESOLVED_NAME: Code = Code::new("MG0201");
 pub const DUPLICATE_DEFINITION: Code = Code::new("MG0202");
-pub const CASE_FOLD_COLLISION: Code = Code::new("MG0203");
-pub const SHADOWS_TOP_LEVEL: Code = Code::new("MG0204");
-pub const RESERVED_WORD_NAME: Code = Code::new("MG0205");
-pub const RESERVED_ANCHOR_NAME: Code = Code::new("MG0206");
-pub const CALL_TO_NON_FUNCTION: Code = Code::new("MG0207");
+pub const SHADOWS_TOP_LEVEL: Code = Code::new("MG0203");
+pub const RESERVED_WORD_NAME: Code = Code::new("MG0204");
+pub const RESERVED_ANCHOR_NAME: Code = Code::new("MG0205");
+pub const CALL_TO_NON_FUNCTION: Code = Code::new("MG0206");
 
 // -- MG03xx: type checking (mg-hir) ---------------------------------------
 

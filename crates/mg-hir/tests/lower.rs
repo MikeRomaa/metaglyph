@@ -96,7 +96,7 @@ fn glyph_scope_shadowing_top_level_is_an_error() {
         }
     "#;
     let (_, diagnostics) = lower(src);
-    assert!(codes(&diagnostics).contains(&"MG0204"), "{diagnostics:#?}");
+    assert!(codes(&diagnostics).contains(&"MG0203"), "{diagnostics:#?}");
 }
 
 #[test]
@@ -111,7 +111,7 @@ fn reserved_word_as_declaration_name_is_an_error() {
         let glyphs = 1;
     "#;
     let (_, diagnostics) = lower(src);
-    assert!(codes(&diagnostics).contains(&"MG0205"), "{diagnostics:#?}");
+    assert!(codes(&diagnostics).contains(&"MG0204"), "{diagnostics:#?}");
 }
 
 #[test]
@@ -128,23 +128,7 @@ fn anchor_named_bbox_is_an_error() {
         }
     "#;
     let (_, diagnostics) = lower(src);
-    assert!(codes(&diagnostics).contains(&"MG0206"), "{diagnostics:#?}");
-}
-
-#[test]
-fn case_fold_collision_between_glyph_names_is_an_error() {
-    let src = r#"
-        font (name: "T", em: 1000)
-        metric baseline (y: 0, align: "bottom")
-        metric xHeight (y: 500)
-        metric capHeight (y: 700)
-        metric ascender (y: 740)
-        metric descender (y: -200)
-        glyph aacute (advance: 1) {}
-        glyph Aacute (advance: 1) {}
-    "#;
-    let (_, diagnostics) = lower(src);
-    assert!(codes(&diagnostics).contains(&"MG0203"), "{diagnostics:#?}");
+    assert!(codes(&diagnostics).contains(&"MG0205"), "{diagnostics:#?}");
 }
 
 // ---------------------------------------------------------------------
