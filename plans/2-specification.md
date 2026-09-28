@@ -217,7 +217,7 @@ Types are checked statically after name resolution. Every type error is reported
 | `zone` | `.y` `.ink` `.overshoot`; from a `metric` declaration |
 | `range` | `a..b` (§5.2); only as `param` `range:` |
 | `list<T>` | `[ a, b, c ]`, homogeneous |
-| `map<K,V>` | `{ k: v, … }`; used by `caps` and `joinAt` |
+| `map<K,V>` | `{ k: v, … }`; used by `joinAt` |
 
 No value is ever partially determined.
 
@@ -225,7 +225,7 @@ No value is ever partially determined.
 
 | Field | Legal values |
 |---|---|
-| `caps.start`, `caps.end` | `"butt"` `"round"` `"square"` |
+| `caps`, and each element of a `caps` tuple | `"butt"` `"round"` `"square"` |
 | `joins`, `joinAt.*` | `"miter"` `"round"` `"bevel"` |
 | `align` | `"top"` `"bottom"` |
 | `arc` `sweep` | `"ccw"` `"cw"` |
@@ -306,7 +306,7 @@ When the source declares no instance, the build uses one implicit instance, `ins
 | `follows` | `pathref` | optional; mutually exclusive with a body |
 | `stroke` | `num` | optional. Constant along the path; must be > 0 |
 | `fill` | `bool` | optional, default `false`. Requires the path to be closed. Combines freely with `stroke` |
-| `caps` | `{ start: string?, end: string? }` | optional; each defaults to `"butt"`. Requires `stroke` and an open path |
+| `caps` | `string` or `(string, string)` | optional, default `"butt"`. A string sets both ends; a 2-tuple sets `(start, end)`. Requires `stroke` and an open path |
 | `joins` | `string` | optional, default `"miter"`. Requires `stroke` |
 | `joinAt` | `map<segmentName, string>` | optional. Requires `stroke` |
 | `enabled` | `bool` | optional, default `true` |
@@ -390,6 +390,7 @@ Highest binding first; all binary operators are left-associative except `^`.
 |---|---|
 | exactly two, both `num` | `pair` |
 | two or more, all `transform` | transform sequence (a `transform`) |
+| exactly two, both `string` | string pair; legal only as `caps` (§5.7) |
 | anything else | type error |
 
 A transform sequence composes its elements in reading order: `(rotate(180deg), translate(w, h))` rotates first, then translates. A single transform needs no parentheses.
@@ -597,7 +598,7 @@ The miter limit is `MITER_LIMIT` = 4 (§14). `joinAt` overrides `joins` at the n
 **Angled terminals** come from the end tangents (§6.3). The start cap is perpendicular to the first segment's departure tangent; the end cap is perpendicular to the final segment's arrival tangent. On a curve, those are set by the first and last control points:
 
 ```
-path arm (stroke: hair, caps: { end: "butt" }) {
+path arm (stroke: hair, caps: "butt") {
   start (at: b)
   cube  (c1: polar(b, k, 0deg), c2: polar(t, k, 70deg + 180deg), to: t)   // arrives at 70°
 }
@@ -1135,7 +1136,7 @@ glyph C (codepoint: U+0043, advance: glyph.bbox.x1 + sidebear) {
 
   path bowl (
     stroke: stem,
-    caps:  { start: "butt", end: "butt" },
+    caps:  "butt",
   ) {
     start (at: tU)
     cube  (c1: polar(tU, hk, 152deg), c2: polar(top, hk, 0deg), to: top)

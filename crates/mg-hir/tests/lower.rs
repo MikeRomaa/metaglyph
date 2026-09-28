@@ -542,3 +542,95 @@ fn arc_negative_rx_is_an_error() {
     let (_, diagnostics) = lower(src);
     assert!(codes(&diagnostics).contains(&"MG0407"), "{diagnostics:#?}");
 }
+
+fn glyph_path<'a>(hir: &'a mg_hir::Hir, glyph: &str, path: &str) -> &'a mg_hir::model::PathDecl {
+    hir.glyphs[&(glyph.to_string(), None)]
+        .path_named(path)
+        .unwrap_or_else(|| panic!("no path named `{path}` in glyph `{glyph}`"))
+}
+
+#[test]
+fn caps_bare_string_sets_both_ends() {
+    let src = r#"
+        font (name: "T", em: 1000)
+        metric baseline (y: 0, align: "bottom")
+        metric xHeight (y: 500)
+        metric capHeight (y: 700)
+        metric ascender (y: 740)
+        metric descender (y: -200)
+        glyph A (advance: 1) {
+            path p (stroke: 10, caps: "round") {
+                start (at: (0,0))
+                line (to: (10,10))
+            }
+        }
+    "#;
+    let (hir, diagnostics) = lower(src);
+    assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+    let caps = glyph_path(&hir, "A", "p").caps.as_ref().unwrap();
+    assert_eq!(caps.start, "round");
+    assert_eq!(caps.end, "round");
+}
+
+#[test]
+fn caps_tuple_sets_start_and_end_separately() {
+    let src = r#"
+        font (name: "T", em: 1000)
+        metric baseline (y: 0, align: "bottom")
+        metric xHeight (y: 500)
+        metric capHeight (y: 700)
+        metric ascender (y: 740)
+        metric descender (y: -200)
+        glyph A (advance: 1) {
+            path p (stroke: 10, caps: ("butt", "square")) {
+                start (at: (0,0))
+                line (to: (10,10))
+            }
+        }
+    "#;
+    let (hir, diagnostics) = lower(src);
+    assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+    let caps = glyph_path(&hir, "A", "p").caps.as_ref().unwrap();
+    assert_eq!(caps.start, "butt");
+    assert_eq!(caps.end, "square");
+}
+
+#[test]
+fn caps_tuple_with_wrong_arity_is_an_error() {
+    let src = r#"
+        font (name: "T", em: 1000)
+        metric baseline (y: 0, align: "bottom")
+        metric xHeight (y: 500)
+        metric capHeight (y: 700)
+        metric ascender (y: 740)
+        metric descender (y: -200)
+        glyph A (advance: 1) {
+            path p (stroke: 10, caps: ("butt", "round", "square")) {
+                start (at: (0,0))
+                line (to: (10,10))
+            }
+        }
+    "#;
+    let (_, diagnostics) = lower(src);
+    assert!(codes(&diagnostics).contains(&"MG0301"), "{diagnostics:#?}");
+}
+
+#[test]
+fn caps_unknown_value_is_an_error() {
+    let src = r#"
+        font (name: "T", em: 1000)
+        metric baseline (y: 0, align: "bottom")
+        metric xHeight (y: 500)
+        metric capHeight (y: 700)
+        metric ascender (y: 740)
+        metric descender (y: -200)
+        glyph A (advance: 1) {
+            path p (stroke: 10, caps: "pointy") {
+                start (at: (0,0))
+                line (to: (10,10))
+            }
+        }
+    "#;
+    let (_, diagnostics) = lower(src);
+    assert!(codes(&diagnostics).contains(&"MG0402"), "{diagnostics:#?}");
+}

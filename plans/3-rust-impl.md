@@ -94,7 +94,7 @@ Parses `samples/metaglyph-sans.mg` with zero diagnostics, and `print(parse(src))
   The CST keeps the source spelling, so `mg fmt` never rewrites `'A'` as `65`.
 - **One generic block routine** parses `<kind> <name>? ( config )? { body }?`. Kind-specific field rules belong to M2.
 - **`range` is a grammar production**, `"-"? number ".." "-"? number` (spec §5.2), so negative bounds parse.
-- **`(a, b, …)` emits a single `TUPLE` node** with its elements. The parser does not decide pair versus transform sequence; M2 types it from its elements (spec §5.8).
+- **`(a, b, …)` emits a single `TUPLE` node** with its elements. The parser does not decide pair versus transform sequence versus `caps` string pair; M2 types it from its elements (spec §5.8).
 - **`{ … }` is a body after a block header and a map literal in expression position.** The parser knows which from position.
 - **Operator precedence per spec §5.8**: `^` binds tighter than unary minus, and its right operand may be unary.
 - **Error recovery** at `;`, `}`, and declaration-keyword boundaries, so partially typed source still yields a tree with `ERROR` nodes and one bad glyph does not swallow the rest of the file.
@@ -119,7 +119,7 @@ Every error in spec §13's "field validation", "name resolution", "type", and "p
 - **One table-driven field schema per block kind.** Each entry records the field's name, type, and required/optional status, plus:
   - default value
   - mutual exclusions (`arc`: `center` excludes `rx`/`ry`, which require each other; `large` only with `rx`/`ry`)
-  - legal enum set (including `arc`'s `sweep`)
+  - legal enum set (including `arc`'s `sweep`, and each element of a `caps` tuple)
   - value constraints checked at evaluation (`arc`'s `rx`/`ry` > 0)
   - position rules (`caps` needs `stroke` and an open path; an omitted `c1`/`c` only after a segment of the same kind; …)
   - whether a constant expression is required

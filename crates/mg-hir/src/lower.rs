@@ -801,63 +801,63 @@ fn lower_path(
     }
 }
 
+/// `caps` (spec §5.7): a bare string sets both ends, a 2-tuple sets
+/// `(start, end)` — the spec's "string pair" type (§5.5), legal only
+/// here, so (like `sweep`/`joins`/`align`) this matches the AST shape by
+/// hand rather than going through the general expression type-checker.
 fn lower_caps(expr: &ast::Expr, diagnostics: &mut Vec<Diagnostic>) -> CapsSpec {
-    let mut start = "butt".to_string();
-    let mut end = "butt".to_string();
-    let legal = ["butt", "round", "square"];
+    const DEFAULT: &str = "butt";
 
-    let ast::Expr::Map(map) = expr else {
-        diagnostics.push(Diagnostic::error(
-            codes::TYPE_MISMATCH,
-            "`caps` must be a map, e.g. `{ start: \"butt\", end: \"round\" }`",
-            Label::new(expr.syntax().text_range().into(), "expected a map"),
-        ));
-        return CapsSpec { start, end };
-    };
-
-    for entry in map.entries() {
-        let Some(key_token) = entry.key_token() else {
-            continue;
-        };
-        let key = key_token.text().to_string();
-        let Some(value_expr) = entry.value() else {
-            continue;
-        };
-        if key != "start" && key != "end" {
-            diagnostics.push(Diagnostic::error(
-                codes::UNKNOWN_FIELD,
-                format!("`caps` has no field `{key}`"),
-                Label::new(key_token.text_range().into(), "unknown field"),
-            ));
-            continue;
+    match expr {
+        ast::Expr::Tuple(tuple) => {
+            let elements: Vec<ast::Expr> = tuple.elements().collect();
+            if elements.len() != 2 {
+                diagnostics.push(Diagnostic::error(
+                    codes::TYPE_MISMATCH,
+                    "`caps` tuple must have exactly two elements: `(start, end)`",
+                    Label::new(expr.syntax().text_range().into(), "expected a 2-tuple"),
+                ));
+                return CapsSpec {
+                    start: DEFAULT.to_string(),
+                    end: DEFAULT.to_string(),
+                };
+            }
+            let start = lower_cap_value(&elements[0], diagnostics).unwrap_or(DEFAULT.to_string());
+            let end = lower_cap_value(&elements[1], diagnostics).unwrap_or(DEFAULT.to_string());
+            CapsSpec { start, end }
         }
-        let Some(value) = string_literal_value(&value_expr) else {
-            diagnostics.push(Diagnostic::error(
-                codes::TYPE_MISMATCH,
-                format!("`caps.{key}` must be a string literal"),
-                Label::new(value_expr.syntax().text_range().into(), "expected a string"),
-            ));
-            continue;
-        };
-        if !legal.contains(&value.as_str()) {
-            diagnostics.push(Diagnostic::error(
-                codes::UNKNOWN_ENUM_VALUE,
-                format!(
-                    "unknown cap \"{value}\"; expected one of: {}",
-                    legal.join(", ")
-                ),
-                Label::new(value_expr.syntax().text_range().into(), "not a legal value"),
-            ));
-            continue;
-        }
-        if key == "start" {
-            start = value;
-        } else {
-            end = value;
+        _ => {
+            let value = lower_cap_value(expr, diagnostics).unwrap_or(DEFAULT.to_string());
+            CapsSpec {
+                start: value.clone(),
+                end: value,
+            }
         }
     }
+}
 
-    CapsSpec { start, end }
+fn lower_cap_value(expr: &ast::Expr, diagnostics: &mut Vec<Diagnostic>) -> Option<String> {
+    let legal = ["butt", "round", "square"];
+    let Some(value) = string_literal_value(expr) else {
+        diagnostics.push(Diagnostic::error(
+            codes::TYPE_MISMATCH,
+            "`caps` must be a string literal or a 2-tuple of string literals",
+            Label::new(expr.syntax().text_range().into(), "expected a string"),
+        ));
+        return None;
+    };
+    if !legal.contains(&value.as_str()) {
+        diagnostics.push(Diagnostic::error(
+            codes::UNKNOWN_ENUM_VALUE,
+            format!(
+                "unknown cap \"{value}\"; expected one of: {}",
+                legal.join(", ")
+            ),
+            Label::new(expr.syntax().text_range().into(), "not a legal value"),
+        ));
+        return None;
+    }
+    Some(value)
 }
 
 fn lower_join_at(

@@ -95,7 +95,7 @@ The spec's pipeline (spec §3) refines this sketch in two places. Instance slant
 | `transform` | Affine 2×3. Composable. |
 | `path` | Ordered chain of SVG-style segments (`start`, `line`, `quad`, `cube`, `arc`), open or closed. Each segment names the point it arrives at and carries only the fields its own kind admits (§7.2.1). Realized as cubic Béziers. |
 | — | There is no width or profile *type*. The stroke width is a single `num` on the path, the `stroke` field (§7.3); it does not vary along a path. |
-| `cap` | End treatment for an open stroke. A **closed set of string literals**, no arguments, not user-extensible: `"butt"` (default), `"round"`, `"square"` (§7.3). Settable per end. |
+| `cap` | End treatment for an open stroke. A **closed set of string literals**, no arguments, not user-extensible: `"butt"` (default), `"round"`, `"square"` (§7.3). Settable per end: one string for both, or a `(start, end)` 2-tuple. |
 | `join` | Corner treatment where two segments meet. Likewise a string literal: `"miter"` (default), `"round"`, `"bevel"`. Settable per path and per segment. |
 | — | There is no filled-area type. Stroking produces ink inside the compiler, but the language never names a region value: it cannot be combined, cut, subtracted, or measured for area. Extent is reachable only through `.bbox` on a `path` or a glyph (§6.5). |
 | `line` | Infinite line (construction only). Represented as point + direction. |
@@ -259,7 +259,7 @@ The cost is real and worth stating: a glyph can no longer name a path after a pa
 
 **A block's body is a grouping, not a scope.** Names declared inside live in the block's own namespace, which is what lets a header expression reference a body declaration. The forward reference is fine because the dependency graph is built from references rather than statement order (§5.2) — config may depend on a body declaration and vice versa, as long as there is no cycle. An implementer who assumes the body opens a scope will break every `advance:` expression that mentions a local, so this is stated rather than left to inference.
 
-**One parsing note for §17.1:** `{ … }` is a body after a block header and a **map literal** in expression position (`caps: { start: "butt", end: "round" }`). The two never occur in the same position, so the grammar is unambiguous, but the parser must be written knowing it.
+**One parsing note for §17.1:** `{ … }` is a body after a block header and a **map literal** in expression position (`joinAt: { elbow: "bevel", wrist: "round" }`). The two never occur in the same position, so the grammar is unambiguous, but the parser must be written knowing it.
 
 #### Structure is never infix
 
@@ -391,7 +391,7 @@ For the rare per-instance conditional. Most per-instance variation should go thr
 
 **Functions** (§6.3) are bare. A bare identifier followed by `(` is a call, so functions occupy a syntactically distinct position and cannot collide with values.
 
-**Enum-valued fields take string literals**, not keywords: `caps: { end: "round" }`, `joins: "miter"`, `align: "bottom"`. The legal set is enforced by each field's own validator (spec §5.5).
+**Enum-valued fields take string literals**, not keywords: `caps: "round"`, `joins: "miter"`, `align: "bottom"`. The legal set is enforced by each field's own validator (spec §5.5).
 
 That choice removes an entire mechanism. The alternative — bare keywords resolved against the field's expected type — is workable but it forces a type-directed name lookup into the resolver purely so that `round` can be a cap value, a join value, **and** the function `round(x)` at once. With strings there is no relationship between `"round"` and `round`, so no rule is needed and the resolver stays a plain scope chain.
 
@@ -462,7 +462,7 @@ path <name> (
   // rendering — omit both and the path never renders:
   stroke:   <num>,                    // constant along the whole path
   fill:     <bool>,                   // requires `close`; combines with stroke
-  caps:     { start: <string>, end: <string> },
+  caps:     <string> | (<string>, <string>),   // both ends, or (start, end)
   joins:    <string>,
   joinAt:   { segmentName: <string>, … },
   enabled:  <bool>,                   // conditional rendering
@@ -566,7 +566,7 @@ path bowl (stroke: stem) { … close }         // close: no caps
 
 path spine (
   stroke: stem,
-  caps:  { start: "butt", end: "round" },             // asymmetric ends
+  caps:  ("butt", "round"),                           // asymmetric ends: (start, end)
 ) { … }
 
 path arm (
@@ -608,7 +608,7 @@ Since the implicit pen is a circle, there is no "untreated envelope" case to nam
 A `"butt"` cap is perpendicular to the tangent, and that tangent is yours to set: it points from the final segment's last control point to its endpoint. So the cut angle is fully controllable — not by a cap parameter, but by the segment:
 
 ```
-path arm (stroke: hairline, caps: { end: "butt" }) {
+path arm (stroke: hairline, caps: "butt") {
   start (at: b)
   cube  (c1: polar(b, k, 0deg), c2: polar(t, k, 70deg + 180deg), to: t)   // butt cap lands at 70deg + 90deg
 }

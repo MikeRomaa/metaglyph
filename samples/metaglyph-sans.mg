@@ -86,7 +86,7 @@ glyph C (codepoint: U+0043, advance: glyph.bbox.x1 + sidebear) {
 
   path bowl (
     stroke: stem,
-    caps:  { start: "butt", end: "butt" },
+    caps:  "butt",
   ) {
     start (at: tU)
     cube  (c1: polar(tU, hk, 152deg), c2: polar(top, hk, 0deg), to: top)
