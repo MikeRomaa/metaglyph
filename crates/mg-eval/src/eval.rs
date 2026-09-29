@@ -12,7 +12,8 @@ use kurbo::{Affine, Point, Shape};
 use mg_diag::{Diagnostic, Label};
 use mg_hir::const_eval;
 use mg_hir::model::{
-    Align, ComponentDecl, GlyphDecl, Hir, InstanceDecl, MetricDecl, ParamDecl, SegmentKind, Sweep,
+    Align, ComponentDecl, GlyphDecl, Hir, InstanceDecl, MetricDecl, ParamDecl, SegmentDecl,
+    SegmentKind, Sweep,
 };
 use mg_syntax::ast::{self, AstNode};
 use mg_syntax::syntax_kind::SyntaxKind;
@@ -888,12 +889,13 @@ pub fn render_path(
     if let Some(stroke_expr) = &path.stroke {
         let mut ctx = EvalCtx::new(hir, instance, Some(glyph_name), values, diagnostics);
         let width = value_num(&mut ctx, stroke_expr)?;
-        let spec = build_stroke_spec(path, width);
+        let drawn = drawn_segments(glyph, path);
+        let spec = build_stroke_spec(path, drawn, width);
         let offset_tolerance = tolerances(hir).offset;
         match mg_geom::stroke::stroke_path(skeleton, path.closed, &spec, offset_tolerance) {
             Ok(mut stroke_contours) => contours.append(&mut stroke_contours),
             Err(err) => {
-                let (span, eval_err) = stroke_error_to_eval(path, err);
+                let (span, eval_err) = stroke_error_to_eval(path, drawn, err);
                 diagnostics.push(diagnostic_for(span, eval_err));
                 return Err(());
             }
@@ -903,16 +905,38 @@ pub fn render_path(
     Ok(contours)
 }
 
+/// The segments a path draws, `start` excluded: its own, or — for a
+/// `follows` path, which has none (spec §5.7) — those of the path it
+/// follows, whose skeleton it shares. `joinAt` keys and stroke errors
+/// index into these.
+fn drawn_segments<'a>(
+    glyph: &'a GlyphDecl,
+    path: &'a mg_hir::model::PathDecl,
+) -> &'a [SegmentDecl] {
+    let own = if path.segments.is_empty() {
+        path.follows
+            .as_deref()
+            .and_then(|name| glyph.path_named(name))
+            .map_or(&[][..], |followed| &followed.segments[..])
+    } else {
+        &path.segments[..]
+    };
+    own.get(1..).unwrap_or(&[])
+}
+
 /// Builds `mg-geom`'s stroke configuration from a `PathDecl`'s already
 /// HIR-validated fields (spec §5.7). `joinAt`'s segment names are
 /// resolved to 0-based drawn-segment indices here, since name lookup is
 /// this crate's business, not the pure-geometry one's.
-fn build_stroke_spec(path: &mg_hir::model::PathDecl, width: f64) -> mg_geom::stroke::StrokeSpec {
+fn build_stroke_spec(
+    path: &mg_hir::model::PathDecl,
+    drawn: &[SegmentDecl],
+    width: f64,
+) -> mg_geom::stroke::StrokeSpec {
     let (start_cap, end_cap) = match &path.caps {
         Some(caps) => (parse_cap(&caps.start), parse_cap(&caps.end)),
         None => (mg_geom::stroke::Cap::Butt, mg_geom::stroke::Cap::Butt),
     };
-    let drawn = &path.segments[1..]; // skip `start`
     let join_overrides = path
         .join_at
         .iter()
@@ -955,8 +979,16 @@ fn parse_join(s: &str) -> mg_geom::stroke::JoinKind {
 /// §7.2/§7.4), everything else the whole path.
 fn stroke_error_to_eval(
     path: &mg_hir::model::PathDecl,
+    drawn: &[SegmentDecl],
     err: mg_geom::stroke::StrokeError,
 ) -> (Range<usize>, EvalError) {
+    // A drawn segment's own span, or the path's if it has none here.
+    let span_of = |index: usize| {
+        drawn.get(index).map_or_else(
+            || mg_syntax::trimmed_range(&path.syntax),
+            |segment| mg_syntax::trimmed_range(&segment.syntax),
+        )
+    };
     match err {
         mg_geom::stroke::StrokeError::ZeroLengthPath => (
             mg_syntax::trimmed_range(&path.syntax),
@@ -966,25 +998,17 @@ fn stroke_error_to_eval(
             mg_syntax::trimmed_range(&path.syntax),
             EvalError::NonPositiveStroke,
         ),
-        mg_geom::stroke::StrokeError::Curvature(violation) => {
-            // `+ 1` skips `start`, which the curvature check never sees.
-            let segment = &path.segments[violation.segment_index + 1];
-            (
-                mg_syntax::trimmed_range(&segment.syntax),
-                EvalError::CurvatureLimitExceeded {
-                    segment_index: violation.segment_index,
-                    local_t: violation.local_t,
-                },
-            )
-        }
-        mg_geom::stroke::StrokeError::InnerCornerNoCrossing { segment_index } => {
-            // `+ 1` skips `start`, matching `corners()`'s own indexing.
-            let segment = &path.segments[segment_index + 1];
-            (
-                mg_syntax::trimmed_range(&segment.syntax),
-                EvalError::InnerCornerNoCrossing { segment_index },
-            )
-        }
+        mg_geom::stroke::StrokeError::Curvature(violation) => (
+            span_of(violation.segment_index),
+            EvalError::CurvatureLimitExceeded {
+                segment_index: violation.segment_index,
+                local_t: violation.local_t,
+            },
+        ),
+        mg_geom::stroke::StrokeError::InnerCornerNoCrossing { segment_index } => (
+            span_of(segment_index),
+            EvalError::InnerCornerNoCrossing { segment_index },
+        ),
     }
 }
 
