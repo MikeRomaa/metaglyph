@@ -17,6 +17,23 @@ pub use ops::{Change, EditResult, Op};
 pub use view::{FontData, GlyphScene, font_data, format_num, glyph_scene};
 use wasm_bindgen::prelude::*;
 
+/// Sends `log` records to the browser console, and panics through them,
+/// so a panic reports its message and location. Once per module instance.
+fn init_logging() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        wasm_logger::init(wasm_logger::Config::default());
+        std::panic::set_hook(Box::new(|info| log::error!("{info}")));
+    });
+}
+
+/// Milliseconds on the JS clock, for timing calls in debug logs:
+/// `std::time::Instant` is unavailable on `wasm32-unknown-unknown`. Only
+/// called from [`Engine`] methods, which only run in the browser.
+fn now() -> f64 {
+    js_sys::Date::now()
+}
+
 /// One open document.
 #[wasm_bindgen]
 #[derive(Default)]
@@ -33,17 +50,36 @@ pub struct Engine {
 impl Engine {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Engine {
+        init_logging();
+        log::info!(
+            "mg-web {} ({} build) started",
+            env!("CARGO_PKG_VERSION"),
+            if cfg!(debug_assertions) {
+                "debug"
+            } else {
+                "release"
+            },
+        );
         Engine::default()
     }
 
     /// Checks `source`, tagging the result with `version` so the caller can
     /// drop a result computed for text it has since changed.
     pub fn update(&mut self, source: &str, version: u32) -> Result<JsValue, JsError> {
+        let start = now();
         let (state, model) = analyze(source, version);
         if model.is_some() {
             self.model = model;
         }
         self.current = Some((source.to_string(), version));
+        log::debug!(
+            "update v{version}: {} bytes, parsed: {}, evaluated: {}, {} diagnostics, {:.1} ms",
+            source.len(),
+            state.parse_ok,
+            state.evaluated,
+            state.diagnostics.len(),
+            now() - start,
+        );
         Ok(serde_wasm_bindgen::to_value(&state)?)
     }
 
@@ -51,28 +87,67 @@ impl Engine {
     /// any text parsed or for an unknown instance.
     #[wasm_bindgen(js_name = fontData)]
     pub fn font_data(&self, instance: &str) -> Result<JsValue, JsError> {
+        let start = now();
         let data = self.model.as_ref().and_then(|m| font_data(m, instance));
+        match &data {
+            Some(d) => log::debug!(
+                "font data {instance}: {} glyphs, {} kerns, {:.1} ms",
+                d.glyphs.len(),
+                d.kerns.len(),
+                now() - start,
+            ),
+            None => log::debug!("font data {instance}: none (no model, or no such instance)"),
+        }
         Ok(serde_wasm_bindgen::to_value(&data)?)
     }
 
     /// Runs an edit op (an [`Op`] as JSON) against document `version`,
     /// returning an [`EditResult`]: the changes to apply, or why not.
     pub fn edit(&self, op: JsValue, version: u32) -> Result<JsValue, JsError> {
+        let start = now();
         let op: Op = serde_wasm_bindgen::from_value(op)?;
         let result = match &self.current {
             Some((source, current)) if *current == version => ops::run(source, version, &op),
             _ => EditResult::Stale,
         };
+        let outcome = match &result {
+            EditResult::Ok { steps, created, .. } => format!(
+                "ok, {} step(s){}",
+                steps.len(),
+                created
+                    .as_ref()
+                    .map(|c| format!(", created {} {}", c.kind, c.name))
+                    .unwrap_or_default(),
+            ),
+            EditResult::Stale => format!(
+                "stale (engine is at v{})",
+                self.current.as_ref().map_or(0, |(_, v)| *v)
+            ),
+            EditResult::ReadOnly => "read-only (syntax errors)".to_string(),
+            EditResult::Invalid { message } => format!("invalid: {message}"),
+        };
+        log::debug!("edit v{version} {op:?}: {outcome}, {:.1} ms", now() - start);
         Ok(serde_wasm_bindgen::to_value(&result)?)
     }
 
     /// [`GlyphScene`] for `glyph` in `instance`, from the last good text.
     #[wasm_bindgen(js_name = glyphScene)]
     pub fn glyph_scene(&self, instance: &str, glyph: &str) -> Result<JsValue, JsError> {
+        let start = now();
         let scene = self
             .model
             .as_ref()
             .and_then(|m| glyph_scene(m, instance, glyph));
+        match &scene {
+            Some(s) => log::debug!(
+                "scene {instance}/{glyph}: {} paths, {} points, {} lines, {:.1} ms",
+                s.paths.len(),
+                s.points.len(),
+                s.lines.len(),
+                now() - start,
+            ),
+            None => log::debug!("scene {instance}/{glyph}: none"),
+        }
         Ok(serde_wasm_bindgen::to_value(&scene)?)
     }
 }

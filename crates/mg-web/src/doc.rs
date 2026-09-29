@@ -107,8 +107,13 @@ pub fn analyze(source: &str, version: u32) -> (DocState, Option<Model>) {
         // a call with the wrong arguments): it panics otherwise. The LSP
         // makes the same check. The views keep the last text that
         // evaluated.
-        let hir_ok = !diagnostics.iter().any(|d| d.severity == Severity::Error);
-        if hir_ok {
+        let errors = diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .count();
+        if errors > 0 {
+            log::debug!("v{version}: not evaluating, {errors} error(s) after lowering");
+        } else {
             let outcomes: IndexMap<String, EvalOutcome> = hir
                 .instances
                 .values()
