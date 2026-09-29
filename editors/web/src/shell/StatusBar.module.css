@@ -1,0 +1,44 @@
+.bar {
+    height: 1.625rem;
+    flex: none;
+    display: flex;
+    border-top: 2px solid var(--ink);
+    font: 400 0.625rem var(--font-mono);
+    color: var(--mid);
+}
+
+.bar > span {
+    display: flex;
+    align-items: center;
+    padding: 0 0.625rem;
+    white-space: nowrap;
+}
+
+.font {
+    border-right: 1px solid var(--ink);
+    font: 600 0.5625rem var(--font-cond);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink);
+}
+
+.cell {
+    border-right: 1px solid var(--rule);
+}
+
+.fill {
+    flex: 1;
+}
+
+.end {
+    border-left: 1px solid var(--rule);
+}
+
+.block {
+    border-left: 1px solid var(--ink);
+}
+
+.sheetNo {
+    font-weight: 600;
+    color: var(--ink);
+}

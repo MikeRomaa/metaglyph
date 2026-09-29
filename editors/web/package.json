@@ -1,0 +1,46 @@
+{
+    "name": "metaglyph",
+    "private": true,
+    "version": "0.0.0",
+    "type": "module",
+    "scripts": {
+        "wasm": "wasm-pack build ../../crates/mg-web --target web --out-dir ../../editors/web/src/wasm",
+        "dev": "npm run wasm && vite",
+        "build": "npm run wasm && tsc -b && vite build",
+        "lint": "biome check .",
+        "format": "biome check --write .",
+        "test": "vitest run",
+        "preview": "vite preview"
+    },
+    "dependencies": {
+        "@codemirror/commands": "6.11.1",
+        "@codemirror/language": "6.12.4",
+        "@codemirror/lint": "6.9.7",
+        "@codemirror/state": "6.7.6",
+        "@codemirror/view": "6.43.13",
+        "@fontsource/ibm-plex-mono": "5.3.0",
+        "@fontsource/ibm-plex-sans": "5.3.0",
+        "@fontsource/ibm-plex-sans-condensed": "5.3.0",
+        "@lezer/highlight": "1.2.5",
+        "codemirror": "6.0.2",
+        "comlink": "4.4.2",
+        "idb": "8.0.3",
+        "react": "^19.2.8",
+        "react-dom": "^19.2.8",
+        "zustand": "5.0.15"
+    },
+    "devDependencies": {
+        "@babel/core": "^7.29.7",
+        "@biomejs/biome": "2.5.14",
+        "@rolldown/plugin-babel": "^0.2.3",
+        "@types/babel__core": "^7.20.5",
+        "@types/node": "^24.13.3",
+        "@types/react": "^19.2.18",
+        "@types/react-dom": "^19.2.7",
+        "@vitejs/plugin-react": "^6.1.1",
+        "babel-plugin-react-compiler": "^1.0.0",
+        "typescript": "~6.0.2",
+        "vite": "^8.3.0",
+        "vitest": "5.0.2"
+    }
+}

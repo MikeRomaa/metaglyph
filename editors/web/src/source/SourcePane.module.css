@@ -1,0 +1,61 @@
+.pane {
+    width: 25rem;
+    flex: none;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    border-left: 2px solid var(--ink);
+    background: var(--panel2);
+}
+
+.head {
+    height: 1.75rem;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 0.625rem;
+    background: var(--inv);
+    color: var(--oninv);
+}
+
+.title {
+    font: 600 0.6875rem var(--font-cond);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
+
+.status {
+    font: 400 0.625rem var(--font-mono);
+    opacity: 0.7;
+}
+
+.editor {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.foot {
+    height: 1.5rem;
+    flex: none;
+    display: flex;
+    align-items: stretch;
+    border-top: 1px solid var(--ink);
+    font: 400 0.625rem var(--font-mono);
+    color: var(--mid);
+}
+
+.problems {
+    display: flex;
+    align-items: center;
+    padding: 0 0.625rem;
+    border-right: 1px solid var(--rule);
+    text-transform: uppercase;
+}
+
+.undo {
+    display: flex;
+    align-items: center;
+    padding: 0 0.625rem;
+}

@@ -1,0 +1,23 @@
+[package]
+name = "mg-web"
+version = "0.1.0"
+# Literal, not `workspace = true`: wasm-pack parses this manifest itself
+# and does not understand workspace inheritance.
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+mg-diag = { workspace = true }
+mg-eval = { workspace = true }
+mg-font = { workspace = true }
+mg-hir = { workspace = true }
+mg-syntax = { workspace = true }
+
+indexmap = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde-wasm-bindgen = { workspace = true }
+wasm-bindgen = { workspace = true }

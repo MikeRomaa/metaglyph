@@ -1,0 +1,27 @@
+/* Type roles used across the design. */
+.label {
+    font: 600 0.625rem var(--font-cond);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--mid);
+}
+
+.tab {
+    font: 600 0.6875rem var(--font-cond);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+.mono {
+    font: 400 0.6875rem var(--font-mono);
+}
+
+.note {
+    font: 400 0.6875rem / 1.45 var(--font-sans);
+    color: var(--mid);
+    text-wrap: pretty;
+}
+
+.hatched {
+    background: var(--hatch-bg);
+}

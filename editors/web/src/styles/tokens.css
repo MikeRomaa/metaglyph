@@ -1,0 +1,61 @@
+/* Design tokens, verbatim from design/Metaglyph Hybrid.dc.html. */
+:root {
+    --page: #dcd8cf;
+    --bg: #f6f4ee;
+    --panel: #efece4;
+    --panel2: #fbfaf6;
+    --ink: #22303f;
+    --mid: #5c6773;
+    --faint: #8b95a1;
+    --rule: #c9cfd6;
+    --grid: #e6e8e6;
+    --acc: oklch(0.58 0.16 40);
+    --onacc: #fff;
+    --con: oklch(0.52 0.12 250);
+    --err: oklch(0.52 0.19 25);
+    --hi: #efe6dc;
+    --tok: #f4dccf;
+    --wash: #dfe4e9;
+    --hatch: #d6d0c3;
+    --inv: #22303f;
+    --oninv: #f6f4ee;
+    --str: oklch(0.45 0.1 150);
+
+    --hatch-bg: repeating-linear-gradient(
+        135deg,
+        transparent 0 0.375rem,
+        var(--hatch) 0.375rem 0.4375rem
+    );
+
+    --font-sans: "IBM Plex Sans", system-ui, sans-serif;
+    --font-cond:
+        "IBM Plex Sans Condensed", "IBM Plex Sans", system-ui, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+    color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+    --page: #0b0c0e;
+    --bg: #15171a;
+    --panel: #1b1e22;
+    --panel2: #111316;
+    --ink: #e4e6e9;
+    --mid: #9aa1aa;
+    --faint: #6b727c;
+    --rule: #2e333a;
+    --grid: #1c1f23;
+    --acc: oklch(0.8 0.13 70);
+    --onacc: #1a1408;
+    --con: oklch(0.8 0.12 210);
+    --err: oklch(0.7 0.17 25);
+    --hi: #2b2720;
+    --tok: #4a3a1c;
+    --wash: #30363e;
+    --hatch: #2c3138;
+    --inv: #e4e6e9;
+    --oninv: #15171a;
+    --str: oklch(0.8 0.1 150);
+
+    color-scheme: dark;
+}

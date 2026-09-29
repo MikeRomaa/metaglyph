@@ -1,0 +1,64 @@
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+/* The UI scale. Sizes are in rem (the design's px ÷ 16), so this scales
+ * every font and panel together, like browser zoom; hairline borders stay
+ * in px. 120% reads better than the design's 1:1. */
+html {
+    font-size: 120%;
+}
+
+html,
+body,
+#root {
+    height: 100%;
+    margin: 0;
+}
+
+body {
+    background: var(--page);
+    color: var(--ink);
+    font-family: var(--font-sans);
+}
+
+a {
+    color: var(--acc);
+}
+
+a:hover {
+    color: var(--ink);
+}
+
+button {
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+}
+
+button:disabled {
+    cursor: not-allowed;
+}
+
+input[type="range"] {
+    accent-color: var(--acc);
+}
+
+::-webkit-scrollbar {
+    width: 0.5rem;
+    height: 0.5rem;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--rule);
+}
+
+:focus-visible {
+    outline: 2px solid var(--acc);
+    outline-offset: -2px;
+}
