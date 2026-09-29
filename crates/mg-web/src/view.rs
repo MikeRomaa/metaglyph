@@ -114,6 +114,8 @@ pub struct GlyphScene {
     pub paths: Vec<PathInfo>,
     pub points: Vec<PointInfo>,
     pub lines: Vec<LineInfo>,
+    /// Measurements, `let dN = length(b - a);`, drawn as dimensions.
+    pub measures: Vec<MeasureInfo>,
 }
 
 #[derive(Debug, Serialize)]
@@ -174,6 +176,10 @@ pub struct ArcInfo {
     /// radii are solved.
     pub rx_expr: Option<String>,
     pub ry_expr: Option<String>,
+    /// `"ccw"` or `"cw"`.
+    pub sweep: &'static str,
+    /// Radii mode's `large`; `None` in centre mode.
+    pub large: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -188,6 +194,16 @@ pub struct PointInfo {
     /// The called function's name when the expression is a call, e.g.
     /// `meet` — the design labels construction points with it.
     pub callee: Option<String>,
+    pub span: Span,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeasureInfo {
+    pub name: String,
+    pub a: Pt,
+    pub b: Pt,
+    pub value: f64,
     pub span: Span,
 }
 
@@ -529,6 +545,7 @@ pub fn glyph_scene(model: &Model, instance: &str, name: &str) -> Option<GlyphSce
 
     let mut points = Vec::new();
     let mut lines = Vec::new();
+    let mut measures = Vec::new();
     for decl in glyph.lets.values() {
         let node = NodeId::GlyphLocal(name.to_string(), decl.name.clone());
         let expr = ctx.expr_text(decl.value.as_ref());
@@ -582,6 +599,17 @@ pub fn glyph_scene(model: &Model, instance: &str, name: &str) -> Option<GlyphSce
                 of: None,
                 radius_expr: None,
             }),
+            Some(Value::Num(value)) => {
+                if let Some((a, b)) = measured(&ctx, name, decl.value.as_ref()) {
+                    measures.push(MeasureInfo {
+                        name: decl.name.clone(),
+                        a,
+                        b,
+                        value: *value,
+                        span,
+                    });
+                }
+            }
             _ => {}
         }
     }
@@ -594,7 +622,32 @@ pub fn glyph_scene(model: &Model, instance: &str, name: &str) -> Option<GlyphSce
         paths,
         points,
         lines,
+        measures,
     })
+}
+
+/// The two ends of a measurement, `length(b - a)` (plan 5, §1.4), when
+/// `expr` is one.
+fn measured(ctx: &Ctx, glyph: &str, expr: Option<&ast::Expr>) -> Option<(Pt, Pt)> {
+    let ast::Expr::Call(call) = expr? else {
+        return None;
+    };
+    if ctx.text(call.callee()?.syntax()) != "length" {
+        return None;
+    }
+    let ast::Expr::Bin(diff) = call.arg_list()?.args().next()? else {
+        return None;
+    };
+    if diff.op_token()?.kind() != mg_syntax::SyntaxKind::MINUS {
+        return None;
+    }
+    let eval = |e: ast::Expr| {
+        mg_eval::eval_subexpr(&ctx.model.hir, ctx.instance, Some(glyph), ctx.values, &e)?
+            .as_pair()
+    };
+    let b = eval(diff.lhs()?)?;
+    let a = eval(diff.rhs()?)?;
+    Some((pt(a), pt(b)))
 }
 
 /// An `arc` segment's ellipse, from its evaluated `center` or `rx`/`ry`.
@@ -617,7 +670,8 @@ fn arc_info(
             large: seg.large,
         },
     };
-    let sweep = match seg.sweep? {
+    let authored = seg.sweep?;
+    let sweep = match authored {
         mg_hir::model::Sweep::Ccw => Sweep::Ccw,
         mg_hir::model::Sweep::Cw => Sweep::Cw,
     };
@@ -644,6 +698,8 @@ fn arc_info(
         from,
         rx_expr: radius_text(&seg.rx),
         ry_expr: radius_text(&seg.ry),
+        sweep: authored.as_str(),
+        large: seg.center.is_none().then_some(seg.large),
     })
 }
 

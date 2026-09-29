@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { redoEdit, undoEdit } from "../source/editor.ts";
-import { deleteSelection } from "./actions.ts";
+import { deleteSelection, endPath } from "./actions.ts";
 import { useStore } from "./store.ts";
 
 /** Whether a key event belongs to something the user is typing in. */
@@ -28,8 +28,11 @@ export function useEditShortcuts() {
                 if (!useStore.getState().selection) return;
                 e.preventDefault();
                 deleteSelection();
-            } else if (e.key === "Escape") {
-                useStore.getState().select(null);
+            } else if (e.key === "Escape" || e.key === "Enter") {
+                // Ends a path in progress first; then clears the selection.
+                const s = useStore.getState();
+                if (s.draft) endPath();
+                else if (e.key === "Escape") s.select(null);
             }
         };
         window.addEventListener("keydown", onKey);

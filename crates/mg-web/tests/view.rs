@@ -144,3 +144,14 @@ fn path_anchor_lies_on_the_skeleton() {
     let stem = &a.paths[0];
     assert_eq!(stem.anchor, Some([125.0, 500.0]));
 }
+
+#[test]
+fn measurements_report_their_ends() {
+    let source = "font (name: \"T\", em: 1000)\nmetric baseline (y: 0)\nmetric xHeight (y: 500)\nmetric capHeight (y: 700)\nmetric ascender (y: 800)\nmetric descender (y: -200)\ninstance Regular ()\nglyph A (advance: 500) {\n    let a = (0, 0);\n    let b = (30, 40);\n    let d0 = length(b - a);\n    let half = 250;\n}\n";
+    let model = analyze(source, 0).1.expect("parses");
+    let scene = glyph_scene(&model, "Regular", "A").expect("glyph A");
+    assert_eq!(scene.measures.len(), 1, "only `length(b - a)` is a measurement");
+    let d0 = &scene.measures[0];
+    assert_eq!(d0.name, "d0");
+    assert_eq!((d0.a, d0.b, d0.value), ([0.0, 0.0], [30.0, 40.0], 50.0));
+}

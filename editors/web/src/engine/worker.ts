@@ -46,7 +46,9 @@ const api = {
     ): Promise<EngineResult> {
         const engine = await ready;
         const doc = engine.update(source, version) as DocState;
-        if (doc.parseOk) instances = doc.instances;
+        // The views come from the last text that evaluated; so do its
+        // instances.
+        if (doc.evaluated) instances = doc.instances;
         return { doc, view: view(engine, instance, glyph) };
     },
 

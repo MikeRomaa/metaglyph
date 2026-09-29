@@ -1,7 +1,23 @@
 import { history, redo, undo, undoDepth } from "@codemirror/commands";
 import { EditorState, type TransactionSpec } from "@codemirror/state";
 import { describe, expect, it } from "vitest";
-import { editSpec, Gesture } from "./history.ts";
+import { composeSteps, editSpec, Gesture } from "./history.ts";
+
+describe("composeSteps", () => {
+    it("applies steps each against the text the previous made", () => {
+        const doc = "glyph A {\n}\n";
+        // Step 1 inserts a let; step 2's offsets already include it.
+        const steps = [
+            [{ from: 9, to: 9, insert: "\n    let p0 = (1, 2);" }],
+            [{ from: 30, to: 30, insert: "\n    path p {}" }],
+        ];
+        const set = composeSteps(doc.length, steps);
+        const state = EditorState.create({ doc });
+        expect(state.update({ changes: set }).state.doc.toString()).toBe(
+            "glyph A {\n    let p0 = (1, 2);\n    path p {}\n}\n",
+        );
+    });
+});
 
 function start(doc: string) {
     let state = EditorState.create({ doc, extensions: [history()] });

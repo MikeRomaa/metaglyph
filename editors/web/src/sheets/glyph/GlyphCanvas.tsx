@@ -1,4 +1,4 @@
-import { type ReactNode, useRef } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import type {
     ArcInfo,
     FontData,
@@ -8,6 +8,14 @@ import type {
     Pt,
 } from "../../engine/types.ts";
 import { fmt, pathKey, verticalExtent } from "../../font/lookup.ts";
+import {
+    addGuide,
+    addLineThrough,
+    addMeasure,
+    addPoint,
+    pathClick,
+    placeComponent,
+} from "../../state/actions.ts";
 import type { Selection } from "../../state/store.ts";
 import { useStore } from "../../state/store.ts";
 import { type Box, useViewport, viewBox } from "../../svg/viewport.ts";
@@ -56,8 +64,15 @@ export function GlyphCanvas({
     const select = useStore((s) => s.select);
     const setGlyph = useStore((s) => s.setGlyph);
     const setPointer = useStore((s) => s.setPointer);
+    const pointer = useStore((s) => s.pointer);
+    const tool = useStore((s) => s.tool);
+    const draft = useStore((s) => s.draft);
     const vp = useViewport(glyphBox(font, glyph), INSETS);
     const pan = useRef<{ x: number; y: number } | null>(null);
+    // A tool click in progress: where it went down, snapped.
+    const down = useRef<{ snap: Snap; x: number; y: number } | null>(null);
+    // The first point of a two-point tool (line through, measure).
+    const [first, setFirst] = useState<string | null>(null);
 
     const { w, h } = vp.size;
     const vb = viewBox(vp.view, w, h);
@@ -71,12 +86,85 @@ export function GlyphCanvas({
     const top = vb[1];
     const bottom = vb[1] + vb[3];
 
+    // Only the select tool picks; other tools pass clicks to the canvas,
+    // which snaps them to the point under the pointer.
     const pick =
         (sel: Omit<Selection, "origin">) => (e: React.PointerEvent) => {
-            if (e.button !== 0) return;
+            if (e.button !== 0 || e.altKey || tool !== "V") return;
             e.stopPropagation();
             select({ ...sel, origin: "canvas" });
         };
+
+    /** `raw` snapped (plan 5, "Snapping": position only, never a
+     * reference): to a point within 8 px, else to the 10-unit grid. */
+    const snap = (raw: Pt): Snap => {
+        let best: { d: number; at: Pt; name?: string } | null = null;
+        const consider = (at: Pt, name?: string) => {
+            const d = Math.hypot(at[0] - raw[0], at[1] - raw[1]) / k;
+            if (d <= 8 && (!best || d < best.d)) best = { d, at, name };
+        };
+        for (const p of scene.points) consider(p.at, p.name);
+        for (const path of scene.paths) {
+            for (const seg of path.segments)
+                if (seg.to) consider(seg.to, seg.toRef);
+        }
+        const hit = best as { d: number; at: Pt; name?: string } | null;
+        if (hit) return { at: hit.at, point: hit.name };
+        return {
+            at: [Math.round(raw[0] / 10) * 10, Math.round(raw[1] / 10) * 10],
+        };
+    };
+
+    const toolClick = (at: Snap, handle: Pt | null, shift: boolean) => {
+        const notice = useStore.getState().setNotice;
+        switch (tool) {
+            case ".":
+                addPoint(at.at);
+                return;
+            case "G":
+                addGuide(at.at, shift);
+                return;
+            case "L":
+            case "M": {
+                if (!at.point) {
+                    notice("Click a named point.", "info");
+                    return;
+                }
+                if (!first) {
+                    setFirst(at.point);
+                    return;
+                }
+                if (first !== at.point) {
+                    if (tool === "L") addLineThrough(first, at.point);
+                    else addMeasure(first, at.point);
+                }
+                setFirst(null);
+                return;
+            }
+            case "P": {
+                const onStart =
+                    !!draft &&
+                    Math.hypot(
+                        at.at[0] - draft.start[0],
+                        at.at[1] - draft.start[1],
+                    ) /
+                        k <=
+                        8;
+                void pathClick(at.at, handle, onStart);
+                return;
+            }
+            case "C": {
+                const target = useStore.getState().componentTarget;
+                if (!target)
+                    notice(
+                        "Pick a glyph to place in the tool palette.",
+                        "info",
+                    );
+                else placeComponent(target, at.at);
+                return;
+            }
+        }
+    };
     const isSelected = (kind: Selection["kind"], name: string) =>
         selection?.kind === kind && selection.name === name;
 
@@ -387,6 +475,57 @@ export function GlyphCanvas({
         );
     }
 
+    for (const m of scene.measures) {
+        dims.push(
+            <AlignedDim
+                key={`measure-${m.name}`}
+                a={m.a}
+                b={m.b}
+                k={k}
+                label={`${m.name} = ${fmt(m.value)}`}
+                on={isSelected("measure", m.name)}
+                onPick={pick({ kind: "measure", name: m.name, span: m.span })}
+            />,
+        );
+    }
+
+    // ── tool feedback ───────────────────────────────────────────────────
+    const firstPoint = first
+        ? scene.points.find((p) => p.name === first)
+        : undefined;
+    const toolOverlay = (
+        <g className={styles.toolOverlay}>
+            {draft && pointer && (
+                <line
+                    x1={draft.last[0]}
+                    y1={Y(draft.last[1])}
+                    x2={pointer[0]}
+                    y2={Y(pointer[1])}
+                    className={styles.rubber}
+                />
+            )}
+            {draft && (
+                <circle
+                    cx={draft.start[0]}
+                    cy={Y(draft.start[1])}
+                    r={7 * k}
+                    className={styles.startMark}
+                >
+                    <title>Click to close the path</title>
+                </circle>
+            )}
+            {firstPoint && pointer && (
+                <line
+                    x1={firstPoint.at[0]}
+                    y1={Y(firstPoint.at[1])}
+                    x2={pointer[0]}
+                    y2={Y(pointer[1])}
+                    className={styles.rubber}
+                />
+            )}
+        </g>
+    );
+
     // ── skeleton ────────────────────────────────────────────────────────
     const labelled = new Set<string>();
     const skeleton = (
@@ -506,13 +645,21 @@ export function GlyphCanvas({
             ref={vp.ref}
             className={styles.canvas}
             viewBox={w > 0 ? vb.join(" ") : undefined}
+            data-tool={tool}
             onPointerDown={(e) => {
                 if (e.button === 1 || (e.button === 0 && e.altKey)) {
                     pan.current = { x: e.clientX, y: e.clientY };
                     e.currentTarget.setPointerCapture(e.pointerId);
                     e.preventDefault();
-                } else if (e.button === 0) {
+                } else if (e.button === 0 && tool === "V") {
                     select(null);
+                } else if (e.button === 0) {
+                    down.current = {
+                        snap: snap(vp.toFont(e.clientX, e.clientY)),
+                        x: e.clientX,
+                        y: e.clientY,
+                    };
+                    e.currentTarget.setPointerCapture(e.pointerId);
                 }
             }}
             onPointerMove={(e) => {
@@ -525,8 +672,19 @@ export function GlyphCanvas({
                     pan.current = { x: e.clientX, y: e.clientY };
                 }
             }}
-            onPointerUp={() => {
+            onPointerUp={(e) => {
                 pan.current = null;
+                const start = down.current;
+                down.current = null;
+                if (!start) return;
+                // A path-tool drag sets the new point's handle.
+                const dragged =
+                    Math.hypot(e.clientX - start.x, e.clientY - start.y) > 6;
+                const handle =
+                    tool === "P" && dragged
+                        ? snap(vp.toFont(e.clientX, e.clientY)).at
+                        : null;
+                toolClick(start.snap, handle, e.shiftKey);
             }}
             onPointerLeave={() => setPointer(null)}
             onWheel={(e) =>
@@ -546,9 +704,79 @@ export function GlyphCanvas({
                     {layers.construction && construction}
                     {layers.dims && dims}
                     {layers.skeleton && skeleton}
+                    {toolOverlay}
                 </>
             )}
         </svg>
+    );
+}
+
+/** A snapped canvas position, and the named point it snapped to. */
+interface Snap {
+    at: Pt;
+    point?: string;
+}
+
+/** A measurement: a dimension along `a`–`b`, offset to one side. */
+function AlignedDim({
+    a,
+    b,
+    k,
+    label,
+    on,
+    onPick,
+}: {
+    a: Pt;
+    b: Pt;
+    k: number;
+    label: string;
+    on: boolean;
+    onPick: (e: React.PointerEvent) => void;
+}) {
+    const [ax, ay, bx, by] = [a[0], Y(a[1]), b[0], Y(b[1])];
+    const len = Math.hypot(bx - ax, by - ay) || 1;
+    // Offset 14 px to the left of a→b, in SVG coordinates.
+    const [nx, ny] = [((ay - by) / len) * 14 * k, ((bx - ax) / len) * 14 * k];
+    const [p0, p1]: Pt[] = [
+        [ax + nx, ay + ny],
+        [bx + nx, by + ny],
+    ];
+    const [mx, my] = [(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2];
+    let angle = (Math.atan2(p1[1] - p0[1], p1[0] - p0[0]) * 180) / Math.PI;
+    if (angle > 90) angle -= 180;
+    if (angle < -90) angle += 180;
+    return (
+        <g className={styles.dim} data-accent={on || undefined}>
+            <line
+                x1={ax}
+                y1={ay}
+                x2={p0[0]}
+                y2={p0[1]}
+                className={`${styles.dimLine} ${styles.ext}`}
+            />
+            <line
+                x1={bx}
+                y1={by}
+                x2={p1[0]}
+                y2={p1[1]}
+                className={`${styles.dimLine} ${styles.ext}`}
+            />
+            <path
+                d={`M${p0[0]} ${p0[1]} L${p1[0]} ${p1[1]}`}
+                className={`${styles.dimLine} ${styles.measureHit}`}
+                onPointerDown={onPick}
+            />
+            <text
+                x={mx}
+                y={my - 4 * k}
+                fontSize={10.5 * k}
+                textAnchor="middle"
+                transform={`rotate(${angle} ${mx} ${my})`}
+                className={styles.dimText}
+            >
+                {label}
+            </text>
+        </g>
     );
 }
 

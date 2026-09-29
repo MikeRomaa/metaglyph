@@ -116,7 +116,9 @@ export function selectionAt(offset: number): {
     kern?: number;
 } | null {
     const s = useStore.getState();
-    if (!s.doc?.parseOk || s.doc.version !== s.version || !s.font) return null;
+    // The views' spans match the text only when it evaluated.
+    if (!s.doc?.evaluated || s.doc.version !== s.version || !s.font)
+        return null;
 
     const candidates: { sel: Omit<Selection, "origin">; kern?: number }[] = [];
     const add = (
@@ -136,6 +138,7 @@ export function selectionAt(offset: number): {
             // A `polar` ray shares its point's declaration.
             if (!l.of) add("line", l.name, l.span);
         }
+        for (const m of s.scene.measures) add("measure", m.name, m.span);
         s.scene.components.forEach((c, i) => {
             add("component", `${i}`, c.span);
         });

@@ -15,6 +15,19 @@ import type {
 } from "@codemirror/state";
 import { ChangeSet, Transaction } from "@codemirror/state";
 
+/** One change set from an op's sequential steps: each step's offsets are
+ * in the text after the steps before it. */
+export function composeSteps(
+    length: number,
+    steps: { from: number; to: number; insert: string }[][],
+): ChangeSet {
+    let set = ChangeSet.empty(length);
+    for (const step of steps) {
+        set = set.compose(ChangeSet.of(step, set.newLength));
+    }
+    return set;
+}
+
 /** One edit as its own undo step, labelled `mg.<label>`. */
 export function editSpec(changes: ChangeSpec, label: string): TransactionSpec {
     return {

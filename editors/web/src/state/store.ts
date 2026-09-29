@@ -44,6 +44,7 @@ export type SelectionKind =
     | "path"
     | "segment"
     | "component"
+    | "measure"
     | "glyph"
     | "kern"
     | "metric"
@@ -93,10 +94,22 @@ interface Store {
     notice: { text: string; tone: "error" | "info" } | null;
     /** The label of the last canvas edit (`rename`, `delete`, …). */
     lastOp: string | null;
+    /** A declaration an edit just created: selected once a result shows
+     * it, and offered for rename (plan 5, §1.3). */
+    pending: { kind: SelectionKind; name: string; rename: boolean } | null;
+    /** `kind:name` of the selection whose name field is open. */
+    renaming: string | null;
 
     // Glyph sheet (canvas settings are not in the source).
     layers: Record<Layer, boolean>;
     tool: Tool;
+    /** The path the path tool is drawing, and its first and last points. */
+    draft: { path: string; start: Pt; last: Pt } | null;
+    /** The path edited last in the active glyph: new paths copy its
+     * `stroke`, `caps` and `joins` (plan 5, §1.4). */
+    lastPath: string | null;
+    /** The glyph the component tool places. */
+    componentTarget: string | null;
     // Glyphs sheet.
     charset: number;
     picked: number[];
@@ -119,8 +132,13 @@ interface Store {
     setPointer(pointer: Pt | null): void;
     setNotice(text: string, tone?: "error" | "info"): void;
     setLastOp(op: string | null): void;
+    setPending(kind: SelectionKind, name: string, rename: boolean): void;
+    setRenaming(key: string | null): void;
     toggleLayer(layer: Layer): void;
     setTool(tool: Tool): void;
+    setDraft(draft: Store["draft"]): void;
+    setLastPath(path: string | null): void;
+    setComponentTarget(glyph: string | null): void;
     setCharset(charset: number): void;
     setPicked(picked: number[]): void;
     setSpacingText(text: string): void;
@@ -137,6 +155,7 @@ const IN_GLYPH = new Set<SelectionKind>([
     "path",
     "segment",
     "component",
+    "measure",
 ]);
 
 export const useStore = create<Store>()((set) => ({
@@ -160,6 +179,11 @@ export const useStore = create<Store>()((set) => ({
     pointer: null,
     notice: null,
     lastOp: null,
+    pending: null,
+    renaming: null,
+    draft: null,
+    lastPath: null,
+    componentTarget: null,
     layers: {
         metrics: true,
         guides: true,
@@ -193,11 +217,25 @@ export const useStore = create<Store>()((set) => ({
             kern: null,
             picked: [],
             lastOp: null,
+            pending: null,
+            renaming: null,
+            draft: null,
+            lastPath: null,
         })),
     setText: (text, version) => set({ text, version, saved: false }),
     applyResult: ({ doc, view }) =>
         set((s) => {
-            const lastGood = doc?.parseOk ? doc : s.lastGood;
+            const lastGood = doc?.evaluated ? doc : s.lastGood;
+            // A just-created declaration becomes the selection once it
+            // shows up.
+            const created =
+                s.pending && view.font
+                    ? locate(
+                          { ...s.pending, span: [0, 0], origin: "canvas" },
+                          view.font,
+                          view.scene,
+                      )
+                    : null;
             return {
                 doc: doc ?? s.doc,
                 lastGood,
@@ -205,15 +243,21 @@ export const useStore = create<Store>()((set) => ({
                 font: view.font,
                 glyph: view.glyph,
                 scene: view.scene,
+                pending: created ? null : s.pending,
+                renaming:
+                    created && s.pending?.rename
+                        ? `${created.kind}:${created.name}`
+                        : s.renaming,
                 // The selection follows its declaration through edits (its
                 // span moves), and is dropped when that is gone or in
                 // another glyph.
                 selection:
-                    s.selection &&
+                    created ??
+                    (s.selection &&
                     view.font &&
                     (view.glyph === s.glyph || !IN_GLYPH.has(s.selection.kind))
                         ? locate(s.selection, view.font, view.scene)
-                        : null,
+                        : null),
                 kern:
                     s.kern !== null &&
                     view.font &&
@@ -226,11 +270,17 @@ export const useStore = create<Store>()((set) => ({
     setSheet: (sheet) => set({ sheet }),
     setInstance: (instance) => set({ instance }),
     setGlyph: (glyph, sheet) =>
-        set((s) => ({
-            glyph,
-            sheet: sheet ?? s.sheet,
-            selection: s.glyph === glyph ? s.selection : null,
-        })),
+        set((s) =>
+            s.glyph === glyph
+                ? { sheet: sheet ?? s.sheet }
+                : {
+                      glyph,
+                      sheet: sheet ?? s.sheet,
+                      selection: null,
+                      draft: null,
+                      lastPath: null,
+                  },
+        ),
     select: (selection) => set({ selection }),
     setTheme: (theme) => set({ theme }),
     setCursor: (cursorLine, undoDepth) => set({ cursorLine, undoDepth }),
@@ -241,9 +291,16 @@ export const useStore = create<Store>()((set) => ({
         noticeTimer = setTimeout(() => set({ notice: null }), 4000);
     },
     setLastOp: (lastOp) => set({ lastOp }),
+    setPending: (kind, name, rename) =>
+        set({ pending: { kind, name, rename } }),
+    setRenaming: (renaming) => set({ renaming }),
     toggleLayer: (layer) =>
         set((s) => ({ layers: { ...s.layers, [layer]: !s.layers[layer] } })),
-    setTool: (tool) => set({ tool }),
+    // Switching tools ends a path in progress.
+    setTool: (tool) => set({ tool, draft: null }),
+    setDraft: (draft) => set({ draft }),
+    setLastPath: (lastPath) => set({ lastPath }),
+    setComponentTarget: (componentTarget) => set({ componentTarget }),
     setCharset: (charset) => set({ charset, picked: [] }),
     setPicked: (picked) => set({ picked }),
     setSpacingText: (spacingText) => set({ spacingText }),

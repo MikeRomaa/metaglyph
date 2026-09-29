@@ -23,6 +23,9 @@ export interface DocState {
     version: number;
     /** False when the text has syntax errors; the canvas goes read-only. */
     parseOk: boolean;
+    /** False when errors stop evaluation (syntax, an unresolved name, a
+     * mistyped call): the views keep the last text that evaluated. */
+    evaluated: boolean;
     diagnostics: DiagnosticInfo[];
     font?: FontInfo;
     instances: string[];
@@ -118,6 +121,9 @@ export interface ArcInfo {
     /** Radii mode's `rx`/`ry` source text; absent in centre mode. */
     rxExpr?: string;
     ryExpr?: string;
+    sweep: "ccw" | "cw";
+    /** Radii mode's `large`; absent in centre mode. */
+    large?: boolean;
 }
 
 export interface PathInfo {
@@ -169,6 +175,16 @@ export interface GlyphScene {
     paths: PathInfo[];
     points: PointInfo[];
     lines: LineInfo[];
+    /** Measurements, `let dN = length(b - a);`. */
+    measures: MeasureInfo[];
+}
+
+export interface MeasureInfo {
+    name: string;
+    a: Pt;
+    b: Pt;
+    value: number;
+    span: Span;
 }
 
 /** What the views render: one instance's data and the active glyph. */
@@ -185,17 +201,60 @@ export interface View {
  * their source span in the version the op is sent with. */
 export type Op =
     | { op: "rename"; span: Span; name: string }
-    | { op: "delete"; span: Span };
+    | { op: "delete"; span: Span }
+    | { op: "addPoint"; glyph: string; at: Pt }
+    | { op: "addLine"; glyph: string; line: LineSpec }
+    | { op: "addMeasure"; glyph: string; a: string; b: string }
+    | { op: "pathStart"; glyph: string; at: Pt; copyFrom?: string }
+    | {
+          op: "pathAppend";
+          glyph: string;
+          path: string;
+          at: Pt;
+          c1?: Pt;
+          c2?: Pt;
+      }
+    | { op: "pathClose"; glyph: string; path: string }
+    | { op: "setSegmentKind"; span: Span; kind: SegmentKind; controls: Pt[] }
+    | { op: "setField"; span: Span; name: string; value: FieldValue }
+    | { op: "removeField"; span: Span; name: string }
+    | { op: "setFill"; span: Span; on: boolean }
+    | { op: "duplicateFollower"; span: Span }
+    | { op: "addComponent"; glyph: string; target: string; offset: Pt };
 
-/** One replacement, in UTF-16 offsets of the op's version. */
+export type LineSpec =
+    | { kind: "through"; a: string; b: string }
+    | { kind: "hline"; y: number }
+    | { kind: "vline"; x: number };
+
+/** `expr` is text the user typed, spliced as-is. */
+export type FieldValue =
+    | { type: "str"; value: string }
+    | { type: "num"; value: number }
+    | { type: "bool"; value: boolean }
+    | { type: "expr"; value: string };
+
+/** One replacement, in UTF-16 offsets of the text its step applies to. */
 export interface Change {
     from: number;
     to: number;
     insert: string;
 }
 
+/** A declaration an op created, to select and offer to rename. */
+export interface Created {
+    kind: "point" | "line" | "path" | "let" | "component";
+    name: string;
+}
+
 export type EditResult =
-    | { status: "ok"; version: number; changes: Change[] }
+    | {
+          status: "ok";
+          version: number;
+          /** `steps[i]` applies to the text after `steps[..i]`. */
+          steps: Change[][];
+          created?: Created;
+      }
     | { status: "stale" }
     | { status: "readOnly" }
     | { status: "invalid"; message: string };

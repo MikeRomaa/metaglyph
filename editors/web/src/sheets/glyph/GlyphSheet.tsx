@@ -4,23 +4,47 @@ import type {
     GlyphInfo,
     GlyphScene,
     PathInfo,
+    SegmentKind,
 } from "../../engine/types.ts";
 import { fmt, hex, pathKey } from "../../font/lookup.ts";
-import { renameSelection } from "../../state/actions.ts";
+import {
+    duplicateFollower,
+    removePathField,
+    renameSelection,
+    setFill,
+    setPathField,
+    setSegmentField,
+    setSegmentKind,
+} from "../../state/actions.ts";
 import type { Tool } from "../../state/store.ts";
 import { LAYERS, useStore } from "../../state/store.ts";
 import { Centre, Empty, LeftColumn, Section, sheet } from "../../ui/Sheet.tsx";
 import { GlyphCanvas } from "./GlyphCanvas.tsx";
 import styles from "./GlyphSheet.module.css";
 
-const TOOLS: { key: Tool; glyph: string; name: string }[] = [
-    { key: "V", glyph: "↖", name: "Select / drag" },
-    { key: "P", glyph: "✎", name: "Path" },
-    { key: ".", glyph: "+", name: "Constr. point" },
-    { key: "L", glyph: "/", name: "Line through" },
-    { key: "G", glyph: "┼", name: "Guide" },
-    { key: "M", glyph: "↔", name: "Measure" },
-    { key: "C", glyph: "◫", name: "Component" },
+const TOOLS: { key: Tool; glyph: string; name: string; hint: string }[] = [
+    { key: "V", glyph: "↖", name: "Select / drag", hint: "click to select" },
+    {
+        key: "P",
+        glyph: "✎",
+        name: "Path",
+        hint: "click: line · drag: curve · start: close · Esc ends",
+    },
+    { key: ".", glyph: "+", name: "Constr. point", hint: "click to place" },
+    { key: "L", glyph: "/", name: "Line through", hint: "click two points" },
+    {
+        key: "G",
+        glyph: "┼",
+        name: "Guide",
+        hint: "click: horizontal · ⇧: vertical",
+    },
+    { key: "M", glyph: "↔", name: "Measure", hint: "click two points" },
+    {
+        key: "C",
+        glyph: "◫",
+        name: "Component",
+        hint: "pick a glyph, click to place",
+    },
 ];
 
 export function GlyphSheet() {
@@ -179,7 +203,7 @@ function ToolPalette() {
                     key={t.key}
                     className={styles.tool}
                     data-on={tool === t.key || undefined}
-                    title={`${t.name} (${t.key}) · editing arrives in W4`}
+                    title={`${t.name} (${t.key}) · ${t.hint}`}
                     onClick={() => setTool(t.key)}
                 >
                     <span className={styles.toolGlyph}>{t.glyph}</span>
@@ -189,8 +213,38 @@ function ToolPalette() {
             <div className={styles.active}>
                 <span className="label">Active</span>
                 <span className={styles.activeName}>{active?.name}</span>
+                {tool === "C" ? (
+                    <ComponentTarget />
+                ) : (
+                    <span className={styles.activeHint}>{active?.hint}</span>
+                )}
             </div>
         </div>
+    );
+}
+
+/** The glyph the component tool places. */
+function ComponentTarget() {
+    const glyphs = useStore((s) => s.font?.glyphs);
+    const current = useStore((s) => s.glyph);
+    const target = useStore((s) => s.componentTarget);
+    const setTarget = useStore((s) => s.setComponentTarget);
+    return (
+        <select
+            className={styles.targetSelect}
+            value={target ?? ""}
+            aria-label="Glyph to place"
+            onChange={(e) => setTarget(e.target.value || null)}
+        >
+            <option value="">Pick a glyph…</option>
+            {glyphs
+                ?.filter((g) => g.name !== current)
+                .map((g) => (
+                    <option key={g.name} value={g.name}>
+                        {g.name}
+                    </option>
+                ))}
+        </select>
     );
 }
 
@@ -215,9 +269,17 @@ function Inspector({ glyph, scene }: { glyph: GlyphInfo; scene: GlyphScene }) {
         selection?.kind === "segment" && path
             ? path.segments[Number(selection.name.split("/")[1])]
             : undefined;
+    const segmentIndex =
+        selection?.kind === "segment"
+            ? Number(selection.name.split("/")[1])
+            : -1;
     const component =
         selection?.kind === "component"
             ? scene.components[Number(selection.name)]
+            : undefined;
+    const measure =
+        selection?.kind === "measure"
+            ? scene.measures.find((m) => m.name === selection.name)
             : undefined;
 
     let body = (
@@ -231,6 +293,7 @@ function Inspector({ glyph, scene }: { glyph: GlyphInfo; scene: GlyphScene }) {
             <>
                 <Title
                     key={`point:${point.name}`}
+                    selectionKey={`point:${point.name}`}
                     keyword="let"
                     name={point.name}
                     kind={`point · glyph ${glyph.name}`}
@@ -254,6 +317,7 @@ function Inspector({ glyph, scene }: { glyph: GlyphInfo; scene: GlyphScene }) {
             <>
                 <Title
                     key={`line:${cline.name}`}
+                    selectionKey={`line:${cline.name}`}
                     keyword="let"
                     name={cline.name}
                     kind={`line · glyph ${glyph.name}`}
@@ -293,6 +357,7 @@ function Inspector({ glyph, scene }: { glyph: GlyphInfo; scene: GlyphScene }) {
         body = (
             <Title
                 key={`path:${pathKey(path)}`}
+                selectionKey={`path:${pathKey(path)}`}
                 keyword="path"
                 name={pathKey(path)}
                 kind={`glyph ${glyph.name}`}
@@ -307,6 +372,17 @@ function Inspector({ glyph, scene }: { glyph: GlyphInfo; scene: GlyphScene }) {
                 kind="double-click to open"
             />
         );
+    } else if (measure) {
+        body = (
+            <Title
+                key={`measure:${measure.name}`}
+                selectionKey={`measure:${measure.name}`}
+                keyword="let"
+                name={measure.name}
+                kind={`measurement · ${fmt(measure.value)}`}
+                renameable
+            />
+        );
     }
 
     return (
@@ -314,8 +390,69 @@ function Inspector({ glyph, scene }: { glyph: GlyphInfo; scene: GlyphScene }) {
             <Section title="Selection" aside={line ? `ln ${line}` : undefined}>
                 {body}
             </Section>
+            {segment && path && segmentIndex > 0 && (
+                <SegmentProps path={path} index={segmentIndex} />
+            )}
             {path && <PathProps path={path} />}
         </>
+    );
+}
+
+const KINDS: SegmentKind[] = ["line", "quad", "cube", "arc"];
+
+/** A segment's kind (plan 5, §1.4: converting seeds new control points
+ * from the current shape) and, for an arc, its sweep. */
+function SegmentProps({ path, index }: { path: PathInfo; index: number }) {
+    const segment = path.segments[index];
+    if (!segment || segment.kind === "start") return null;
+    return (
+        <Section title={`Segment · ${segment.name ?? `#${index}`}`}>
+            <div className={styles.props}>
+                <span className={sheet.key}>Kind</span>
+                <Segmented
+                    options={KINDS}
+                    value={segment.kind}
+                    onPick={(kind) =>
+                        setSegmentKind(path, index, kind as SegmentKind)
+                    }
+                />
+                {segment.arc && (
+                    <>
+                        <span className={sheet.key}>Sweep</span>
+                        <Segmented
+                            options={["ccw", "cw"]}
+                            value={segment.arc.sweep}
+                            onPick={(sweep) =>
+                                void setSegmentField(path, index, "sweep", {
+                                    type: "str",
+                                    value: sweep,
+                                })
+                            }
+                        />
+                        {segment.arc.large !== undefined && (
+                            <>
+                                <span className={sheet.key}>Large</span>
+                                <Segmented
+                                    options={["false", "true"]}
+                                    value={String(segment.arc.large)}
+                                    onPick={(large) =>
+                                        void setSegmentField(
+                                            path,
+                                            index,
+                                            "large",
+                                            {
+                                                type: "bool",
+                                                value: large === "true",
+                                            },
+                                        )
+                                    }
+                                />
+                            </>
+                        )}
+                    </>
+                )}
+            </div>
+        </Section>
     );
 }
 
@@ -326,14 +463,30 @@ function Title({
     name,
     kind,
     renameable,
+    selectionKey,
 }: {
     keyword: string;
     name: string;
     kind: string;
     renameable?: boolean;
+    /** `kind:name`: the field opens by itself when an edit just created
+     * this declaration (plan 5, §1.3: Enter keeps the placeholder). */
+    selectionKey?: string;
 }) {
-    const [draft, setDraft] = useState<string | null>(null);
+    const [draft, setDraft] = useState<string | null>(() =>
+        renameable &&
+        selectionKey !== undefined &&
+        useStore.getState().renaming === selectionKey
+            ? name
+            : null,
+    );
     const [error, setError] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (selectionKey && useStore.getState().renaming === selectionKey) {
+            useStore.getState().setRenaming(null);
+        }
+    }, [selectionKey]);
 
     const commit = async () => {
         if (draft === null) return;
@@ -417,32 +570,62 @@ function selectedPath(
     return undefined;
 }
 
+/** A path's rendering fields (plan 5, §1.4). Each control is one edit. */
 function PathProps({ path }: { path: PathInfo }) {
     const caps = path.caps;
     const capsLabel =
         caps && caps[0] !== caps[1] ? `${caps[0]} / ${caps[1]}` : caps?.[0];
+    const str = (value: string) => ({ type: "str" as const, value });
     return (
         <Section title={`Path · ${pathKey(path)}`}>
             <div className={styles.props}>
                 <span className={sheet.key}>Stroke</span>
-                <span>{path.stroke ?? "—"}</span>
+                <ExprField
+                    key={path.stroke ?? ""}
+                    value={path.stroke ?? ""}
+                    placeholder="none · construction"
+                    onCommit={(text) =>
+                        text === ""
+                            ? removePathField(path, "stroke")
+                            : setPathField(path, "stroke", {
+                                  type: "expr",
+                                  value: text,
+                              })
+                    }
+                />
                 <span className={sheet.key}>Caps</span>
                 <Segmented
                     options={["butt", "round", "square"]}
-                    value={capsLabel}
+                    value={capsLabel ?? "butt"}
+                    onPick={(cap) => void setPathField(path, "caps", str(cap))}
                 />
                 <span className={sheet.key}>Joins</span>
                 <Segmented
                     options={["miter", "round", "bevel"]}
                     value={path.joins}
+                    onPick={(join) =>
+                        void setPathField(path, "joins", str(join))
+                    }
                 />
                 <span className={sheet.key}>Fill</span>
-                <span style={{ color: path.fill ? undefined : "var(--mid)" }}>
-                    {path.fill ? "on" : "off"} ·{" "}
-                    {path.closed ? "closed" : "open"}
-                </span>
+                <Segmented
+                    options={["off", "on"]}
+                    value={path.fill ? "on" : "off"}
+                    onPick={(fill) => void setFill(path, fill === "on")}
+                />
                 <span className={sheet.key}>Enabled</span>
-                <span>{path.enabled ? "✓ true" : "false"}</span>
+                <Segmented
+                    options={["false", "true"]}
+                    value={String(path.enabled)}
+                    onPick={(on) =>
+                        void (on === "true"
+                            ? removePathField(path, "enabled")
+                            : setPathField(path, "enabled", {
+                                  type: "bool",
+                                  value: false,
+                              }))
+                    }
+                />
                 {path.follows && (
                     <>
                         <span className={sheet.key}>Follows</span>
@@ -450,20 +633,82 @@ function PathProps({ path }: { path: PathInfo }) {
                     </>
                 )}
             </div>
+            {path.name && !path.follows && (
+                <button
+                    type="button"
+                    className={styles.action}
+                    onClick={() => void duplicateFollower(path)}
+                >
+                    Duplicate as follower
+                </button>
+            )}
         </Section>
     );
 }
 
-/** Read-only until W4 wires the edits. */
-function Segmented({ options, value }: { options: string[]; value?: string }) {
+/** One choice of several; `onPick` makes it an edit. */
+function Segmented({
+    options,
+    value,
+    onPick,
+}: {
+    options: string[];
+    value?: string;
+    onPick?: (option: string) => void;
+}) {
     return (
         <span className={styles.segmented}>
             {options.map((o) => (
-                <span key={o} data-on={o === value || undefined}>
+                <button
+                    type="button"
+                    key={o}
+                    data-on={o === value || undefined}
+                    disabled={!onPick}
+                    onClick={() => o !== value && onPick?.(o)}
+                >
                     {o}
-                </span>
+                </button>
             ))}
-            {value && !options.includes(value) && <span data-on>{value}</span>}
+            {value && !options.includes(value) && (
+                <button type="button" data-on disabled>
+                    {value}
+                </button>
+            )}
         </span>
+    );
+}
+
+/** An expression typed into the inspector, spliced as-is on Enter or
+ * blur (plan 5, §2.4); Escape reverts. */
+function ExprField({
+    value,
+    placeholder,
+    onCommit,
+}: {
+    value: string;
+    placeholder?: string;
+    onCommit: (text: string) => Promise<unknown>;
+}) {
+    const [text, setText] = useState(value);
+    const commit = () => {
+        const next = text.trim();
+        if (next !== value) void onCommit(next);
+    };
+    return (
+        <input
+            className={styles.exprField}
+            value={text}
+            placeholder={placeholder}
+            spellCheck={false}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+                if (e.key === "Enter") e.currentTarget.blur();
+                if (e.key === "Escape") {
+                    setText(value);
+                    e.currentTarget.blur();
+                }
+            }}
+            onBlur={commit}
+        />
     );
 }

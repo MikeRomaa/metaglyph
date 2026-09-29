@@ -49,8 +49,9 @@ function Globals() {
     );
 }
 
-/** The centre column, with its toolbar and a read-only banner while the
- * text has syntax errors. */
+/** The centre column, with its toolbar and a banner while the drawing is
+ * behind the text: read-only on syntax errors; still editable on errors
+ * that only stop evaluation (an unresolved name). */
 export function Centre({
     toolbar,
     children,
@@ -59,13 +60,21 @@ export function Centre({
     children: ReactNode;
 }) {
     const parseOk = useStore((s) => s.doc?.parseOk ?? true);
+    const evaluated = useStore((s) => s.doc?.evaluated ?? true);
     return (
         <main className={styles.centre}>
             <div className={styles.toolbar}>{toolbar}</div>
-            {!parseOk && (
+            {!parseOk ? (
                 <div className={styles.banner}>
                     ▲ Syntax errors · showing the last good state · read-only
                 </div>
+            ) : (
+                !evaluated && (
+                    <div className={styles.banner}>
+                        ▲ Errors in the source · showing the last state that
+                        evaluated
+                    </div>
+                )
             )}
             {children}
         </main>

@@ -5,7 +5,7 @@ import { redo, undo } from "@codemirror/commands";
 import type { EditorView } from "@codemirror/view";
 import type { Change } from "../engine/types.ts";
 import { flashEffect } from "./flash.ts";
-import { editSpec } from "./history.ts";
+import { composeSteps, editSpec } from "./history.ts";
 
 let current: EditorView | null = null;
 
@@ -13,12 +13,12 @@ export function setEditorView(view: EditorView | null) {
     current = view;
 }
 
-/** Applies an edit op's changes as one transaction and one undo step,
+/** Applies an edit op's steps as one transaction and one undo step,
  * flashing the text it inserted. */
-export function applyChanges(changes: Change[], label: string) {
+export function applyChanges(steps: Change[][], label: string) {
     const view = current;
     if (!view) return;
-    const set = view.state.changes(changes);
+    const set = composeSteps(view.state.doc.length, steps);
     view.dispatch({
         ...editSpec(set, label),
         effects: flashEffect(view, set),

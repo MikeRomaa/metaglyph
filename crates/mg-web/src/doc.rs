@@ -15,6 +15,10 @@ pub struct DocState {
     /// `false` when the text has syntax errors: the editor then keeps the
     /// last good scene and makes the canvas read-only (plan 5, §1.1).
     pub parse_ok: bool,
+    /// `false` when the text has errors short of evaluation (syntax, or an
+    /// unresolved name or a mistyped call): the views keep showing the last
+    /// text that evaluated.
+    pub evaluated: bool,
     pub diagnostics: Vec<DiagnosticInfo>,
     pub font: Option<FontInfo>,
     pub instances: Vec<String>,
@@ -60,7 +64,7 @@ pub fn check(source: &str, version: u32) -> DocState {
     analyze(source, version).0
 }
 
-/// [`check`], plus the [`Model`] when the text parsed.
+/// [`check`], plus the [`Model`] when the text evaluated.
 pub fn analyze(source: &str, version: u32) -> (DocState, Option<Model>) {
     let parsed = mg_syntax::parse(source);
     let parse_ok = !parsed
@@ -71,6 +75,7 @@ pub fn analyze(source: &str, version: u32) -> (DocState, Option<Model>) {
     let mut state = DocState {
         version,
         parse_ok,
+        evaluated: false,
         diagnostics: Vec::new(),
         font: None,
         instances: Vec::new(),
@@ -88,13 +93,6 @@ pub fn analyze(source: &str, version: u32) -> (DocState, Option<Model>) {
         diagnostics.extend(hir_diagnostics);
         diagnostics.extend(mg_font::build::check_codepoints(&hir));
 
-        let outcomes: IndexMap<String, EvalOutcome> = hir
-            .instances
-            .values()
-            .map(|instance| (instance.name.clone(), mg_eval::evaluate(&hir, instance).1))
-            .collect();
-        diagnostics.extend(evaluation_diagnostics(&outcomes));
-
         state.font = Some(FontInfo {
             name: hir.font.name.clone(),
             version: hir.font.version.clone(),
@@ -104,7 +102,22 @@ pub fn analyze(source: &str, version: u32) -> (DocState, Option<Model>) {
         });
         state.instances = hir.instances.keys().cloned().collect();
         state.glyph_count = hir.glyphs.len();
-        model = Some((hir, outcomes));
+
+        // The evaluator requires a HIR with no errors (an unresolved name,
+        // a call with the wrong arguments): it panics otherwise. The LSP
+        // makes the same check. The views keep the last text that
+        // evaluated.
+        let hir_ok = !diagnostics.iter().any(|d| d.severity == Severity::Error);
+        if hir_ok {
+            let outcomes: IndexMap<String, EvalOutcome> = hir
+                .instances
+                .values()
+                .map(|instance| (instance.name.clone(), mg_eval::evaluate(&hir, instance).1))
+                .collect();
+            diagnostics.extend(evaluation_diagnostics(&outcomes));
+            state.evaluated = true;
+            model = Some((hir, outcomes));
+        }
     }
 
     diagnostics.sort_by_key(|d| d.primary.span.start);

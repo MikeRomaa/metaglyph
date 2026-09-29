@@ -163,6 +163,8 @@ export function locate(
         }
         case "component":
             return found(scene?.components[Number(name)]?.span);
+        case "measure":
+            return found(scene?.measures.find((m) => m.name === name)?.span);
         case "glyph":
             return found(font.glyphs.find((g) => g.name === name)?.span);
         case "kern":

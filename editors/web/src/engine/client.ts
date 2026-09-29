@@ -3,10 +3,27 @@ import { useStore } from "../state/store.ts";
 import type { EditResult, EngineResult, Op } from "./types.ts";
 import type { EngineApi } from "./worker.ts";
 
-const worker = new Worker(new URL("./worker.ts", import.meta.url), {
-    type: "module",
-});
-const engine = Comlink.wrap<EngineApi>(worker);
+function start() {
+    const worker = new Worker(new URL("./worker.ts", import.meta.url), {
+        type: "module",
+    });
+    return { worker, engine: Comlink.wrap<EngineApi>(worker) };
+}
+
+let current = start();
+
+/** A failed engine call means a panic in the WebAssembly engine, which
+ * leaves it unusable. Start a fresh worker and re-check the current text,
+ * so the editor keeps working. */
+function restart() {
+    current.worker.terminate();
+    current = start();
+    const { text, version } = useStore.getState();
+    pendingText = { source: text, version };
+    useStore
+        .getState()
+        .setNotice("The engine failed and was restarted; see the console.");
+}
 
 let running = false;
 let pendingText: { source: string; version: number } | null = null;
@@ -49,6 +66,7 @@ export function runEdit(op: Op, version: number): Promise<EditResult> {
 
 async function drain() {
     running = true;
+    let failures = 0;
     while (pendingText || pendingView || pendingEdits.length > 0) {
         if (pendingText || pendingView) {
             const text = pendingText;
@@ -58,26 +76,31 @@ async function drain() {
             const { instance, glyph } = useStore.getState();
             try {
                 const result = text
-                    ? await engine.update(
+                    ? await current.engine.update(
                           text.source,
                           text.version,
                           instance,
                           glyph,
                       )
-                    : await engine.view(instance, glyph);
+                    : await current.engine.view(instance, glyph);
                 listener?.(result);
+                failures = 0;
             } catch (error) {
                 console.error("mg engine failed", error);
+                // Give up after repeated failures on the same text rather
+                // than restarting forever.
+                if (++failures <= 2) restart();
             }
             continue;
         }
         const job = pendingEdits.shift();
         if (!job) continue;
         try {
-            job.resolve(await engine.edit(job.op, job.version));
+            job.resolve(await current.engine.edit(job.op, job.version));
         } catch (error) {
             console.error("mg edit failed", error);
             job.resolve({ status: "invalid", message: "The edit failed." });
+            restart();
         }
     }
     running = false;

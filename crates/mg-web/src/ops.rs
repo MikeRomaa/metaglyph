@@ -1,10 +1,17 @@
-//! Edit ops (plan 5, §1.1): each reads the current text's CST and returns
-//! [`TextEdit`]s for the editor to apply as one CodeMirror transaction.
-//! The editor never builds `.mg` text itself.
+//! Edit ops (plan 5, §1.1, §1.4): each reads the current text's CST and
+//! returns the text changes for the editor to apply as one CodeMirror
+//! transaction. The editor never builds `.mg` text itself.
 //!
-//! Ops address declarations by their source span (UTF-16, as the views
-//! report it) in a given document version; a stale version or a text
-//! with syntax errors is refused.
+//! Ops address existing declarations by their source span (UTF-16, as the
+//! views report it) in a given document version, and glyphs and paths by
+//! name; a stale version or a text with syntax errors is refused.
+//!
+//! An op may take several steps (insert a `let`, then the segment that
+//! uses it): each step is computed on the text the previous one produced,
+//! so the primitives never see overlapping edits. The editor composes the
+//! steps into one change.
+
+use std::collections::HashSet;
 
 use mg_syntax::ast::{self, AstNode};
 use mg_syntax::edit::{self, TextEdit};
@@ -14,17 +21,102 @@ use serde::{Deserialize, Serialize};
 
 use crate::offsets::Utf16Index;
 
+type Pt = [f64; 2];
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase")]
 pub enum Op {
     /// Rename the declaration at `span`, and every reference to it.
     Rename { span: [usize; 2], name: String },
     /// Delete the declaration at `span` (plan 5: dangling references
-    /// become diagnostics, as intended).
+    /// become diagnostics, as intended). A segment takes the `let`s only
+    /// it used with it.
     Delete { span: [usize; 2] },
+    /// `let pN = (x, y);`
+    #[serde(rename_all = "camelCase")]
+    AddPoint { glyph: String, at: Pt },
+    /// `let lN = lineThrough(a, b);`, `hline(y)` or `vline(x)`.
+    #[serde(rename_all = "camelCase")]
+    AddLine { glyph: String, line: LineSpec },
+    /// `let dN = length(b - a);`
+    #[serde(rename_all = "camelCase")]
+    AddMeasure { glyph: String, a: String, b: String },
+    /// A new path from a new point: `let pN = (x, y);` and
+    /// `path pathN (<config copied from copy_from>) { start (at: pN) }`.
+    #[serde(rename_all = "camelCase")]
+    PathStart {
+        glyph: String,
+        at: Pt,
+        copy_from: Option<String>,
+    },
+    /// A new point and a segment to it at the end of `path` (before its
+    /// `close`): `line`, or `cube` when control points are given.
+    #[serde(rename_all = "camelCase")]
+    PathAppend {
+        glyph: String,
+        path: String,
+        at: Pt,
+        c1: Option<Pt>,
+        c2: Option<Pt>,
+    },
+    /// `close` at the end of `path`.
+    #[serde(rename_all = "camelCase")]
+    PathClose { glyph: String, path: String },
+    /// Rewrite the segment at `span` as `kind`, with new control `let`s at
+    /// `controls` (quad: `c`; cube: `c1`, `c2`; arc: its centre). Control
+    /// `let`s only the old segment used are removed.
+    #[serde(rename_all = "camelCase")]
+    SetSegmentKind {
+        span: [usize; 2],
+        kind: String,
+        controls: Vec<Pt>,
+    },
+    /// Set a config field of the declaration at `span`.
+    #[serde(rename_all = "camelCase")]
+    SetField {
+        span: [usize; 2],
+        name: String,
+        value: FieldValue,
+    },
+    /// Remove a config field of the declaration at `span`.
+    #[serde(rename_all = "camelCase")]
+    RemoveField { span: [usize; 2], name: String },
+    /// Fill on: `fill: true`, plus `close` if the path has none. Off:
+    /// remove `fill` (the `close` stays).
+    #[serde(rename_all = "camelCase")]
+    SetFill { span: [usize; 2], on: bool },
+    /// `path <name>_f (follows: <name>, stroke: …)` after the path.
+    #[serde(rename_all = "camelCase")]
+    DuplicateFollower { span: [usize; 2] },
+    /// `component (glyph: target, offset: (dx, dy))`.
+    #[serde(rename_all = "camelCase")]
+    AddComponent {
+        glyph: String,
+        target: String,
+        offset: Pt,
+    },
 }
 
-/// One replacement, in UTF-16 offsets of the text the op ran against.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum LineSpec {
+    Through { a: String, b: String },
+    Hline { y: f64 },
+    Vline { x: f64 },
+}
+
+/// A field value. `Expr` is text the user typed into the inspector, which
+/// is spliced as-is (plan 5, §2.4).
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", content = "value", rename_all = "camelCase")]
+pub enum FieldValue {
+    Str(String),
+    Num(f64),
+    Bool(bool),
+    Expr(String),
+}
+
+/// One replacement, in UTF-16 offsets of the text its step applies to.
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Change {
@@ -33,10 +125,25 @@ pub struct Change {
     pub insert: String,
 }
 
+/// A declaration an op created, for the editor to select and offer to
+/// rename (plan 5, §1.3).
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Created {
+    /// `point`, `line`, `path`, `let` (a measurement) or `component`.
+    pub kind: &'static str,
+    pub name: String,
+}
+
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", tag = "status")]
 pub enum EditResult {
-    Ok { version: u32, changes: Vec<Change> },
+    /// `steps[i]` applies to the text after `steps[..i]`.
+    Ok {
+        version: u32,
+        steps: Vec<Vec<Change>>,
+        created: Option<Created>,
+    },
     /// The text changed since `version`; ask again.
     Stale,
     /// The text has syntax errors; edits wait until it parses (plan 5,
@@ -46,10 +153,58 @@ pub enum EditResult {
     Invalid { message: String },
 }
 
-fn invalid(message: impl Into<String>) -> EditResult {
-    EditResult::Invalid {
-        message: message.into(),
+type OpResult<T> = Result<T, String>;
+
+/// The text as an op builds it up, one step at a time.
+struct Session {
+    src: String,
+    steps: Vec<Vec<Change>>,
+}
+
+impl Session {
+    /// Runs `f` on the current text and applies its edits as a step.
+    fn step(
+        &mut self,
+        f: impl FnOnce(&str, &SyntaxNode) -> OpResult<Vec<TextEdit>>,
+    ) -> OpResult<()> {
+        let root = mg_syntax::parse(&self.src).syntax();
+        let edits = merge_deletions(f(&self.src, &root)?);
+        if edits.is_empty() {
+            return Ok(());
+        }
+        let offsets = Utf16Index::new(&self.src);
+        self.steps.push(
+            edits
+                .iter()
+                .map(|e| Change {
+                    from: offsets.convert(e.range.start),
+                    to: offsets.convert(e.range.end),
+                    insert: e.text.clone(),
+                })
+                .collect(),
+        );
+        self.src = edit::apply(&self.src, &edits);
+        Ok(())
     }
+}
+
+/// Deletions that overlap (two removed lines sharing a collapsed blank
+/// line) merged into one.
+fn merge_deletions(mut edits: Vec<TextEdit>) -> Vec<TextEdit> {
+    edits.sort_by_key(|e| (e.range.start, e.range.end));
+    let mut out: Vec<TextEdit> = Vec::new();
+    for e in edits {
+        if let Some(last) = out.last_mut()
+            && last.text.is_empty()
+            && e.text.is_empty()
+            && e.range.start < last.range.end
+        {
+            last.range.end = last.range.end.max(e.range.end);
+            continue;
+        }
+        out.push(e);
+    }
+    out
 }
 
 /// Runs `op` against `source` (document `version`).
@@ -62,62 +217,322 @@ pub fn run(source: &str, version: u32, op: &Op) -> EditResult {
     {
         return EditResult::ReadOnly;
     }
-    let root = parsed.syntax();
     let offsets = Utf16Index::new(source);
     let span = |s: &[usize; 2]| offsets.to_byte(s[0])..offsets.to_byte(s[1]);
 
-    let edits = match op {
-        Op::Rename { span: s, name } => {
-            let Some(node) = decl_at(&root, span(s)) else {
-                return invalid("That declaration is no longer in the source.");
-            };
-            match rename(&root, &node, name) {
-                Ok(edits) => edits,
-                Err(message) => return invalid(message),
-            }
-        }
-        Op::Delete { span: s } => {
-            let Some(node) = decl_at(&root, span(s)) else {
-                return invalid("That declaration is no longer in the source.");
-            };
-            vec![edit::remove_decl(source, &node)]
-        }
+    let mut session = Session {
+        src: source.to_string(),
+        steps: Vec::new(),
     };
-
-    EditResult::Ok {
-        version,
-        changes: edits
-            .into_iter()
-            .map(|e| Change {
-                from: offsets.convert(e.range.start),
-                to: offsets.convert(e.range.end),
-                insert: e.text,
-            })
-            .collect(),
+    match apply(&mut session, op, &span) {
+        Ok(created) => EditResult::Ok {
+            version,
+            steps: session.steps,
+            created,
+        },
+        Err(message) => EditResult::Invalid { message },
     }
+}
+
+fn apply(
+    s: &mut Session,
+    op: &Op,
+    span: &dyn Fn(&[usize; 2]) -> std::ops::Range<usize>,
+) -> OpResult<Option<Created>> {
+    const GONE: &str = "That declaration is no longer in the source.";
+    match op {
+        Op::Rename { span: at, name } => {
+            let range = span(at);
+            s.step(|_, root| {
+                let node = decl_at(root, range).ok_or(GONE)?;
+                rename(root, &node, name)
+            })?;
+            Ok(None)
+        }
+        Op::Delete { span: at } => {
+            let range = span(at);
+            s.step(|src, root| {
+                let node = decl_at(root, range).ok_or(GONE)?;
+                let mut edits = vec![edit::remove_decl(src, &node)];
+                if is_segment(node.kind()) {
+                    for decl in lets_only_used_by(root, &node) {
+                        edits.push(edit::remove_decl(src, &decl));
+                    }
+                }
+                Ok(edits)
+            })?;
+            Ok(None)
+        }
+        Op::AddPoint { glyph, at } => {
+            let name = add_let(s, glyph, "p", |_| Ok(point_text(*at)))?;
+            Ok(Some(Created {
+                kind: "point",
+                name,
+            }))
+        }
+        Op::AddLine { glyph, line } => {
+            let name = add_let(s, glyph, "l", |_| {
+                Ok(match line {
+                    LineSpec::Through { a, b } => format!("lineThrough({a}, {b})"),
+                    LineSpec::Hline { y } => format!("hline({})", coord(*y)),
+                    LineSpec::Vline { x } => format!("vline({})", coord(*x)),
+                })
+            })?;
+            Ok(Some(Created { kind: "line", name }))
+        }
+        Op::AddMeasure { glyph, a, b } => {
+            let name = add_let(s, glyph, "d", |_| Ok(format!("length({b} - {a})")))?;
+            Ok(Some(Created { kind: "let", name }))
+        }
+        Op::PathStart {
+            glyph,
+            at,
+            copy_from,
+        } => {
+            let point = add_let(s, glyph, "p", |_| Ok(point_text(*at)))?;
+            let mut name = String::new();
+            s.step(|src, root| {
+                let g = glyph_named(root, glyph)?;
+                name = fresh(root, &g, "path");
+                let config = copy_from
+                    .as_ref()
+                    .and_then(|p| path_named(&g, p))
+                    .map(|p| copied_config(&p))
+                    .unwrap_or_default();
+                let body = g.body().ok_or("This glyph has no body.")?;
+                Ok(vec![insert_path(src, &body, &name, &config, &point)])
+            })?;
+            Ok(Some(Created { kind: "path", name }))
+        }
+        Op::PathAppend {
+            glyph,
+            path,
+            at,
+            c1,
+            c2,
+        } => {
+            let point = add_let(s, glyph, "p", |_| Ok(point_text(*at)))?;
+            // Smooth by reflection (spec §6.3): after a `cube`, `c1` is
+            // omitted.
+            let previous_cube = {
+                let root = mg_syntax::parse(&s.src).syntax();
+                let g = glyph_named(&root, glyph)?;
+                let p = path_named(&g, path).ok_or("That path is no longer in the source.")?;
+                last_segment(&p).is_some_and(|n| n.kind() == SyntaxKind::CUBE)
+            };
+            let segment = match c2 {
+                Some(c2) => {
+                    let c1_field = match (c1, previous_cube) {
+                        (Some(c1), false) => {
+                            let c1_name =
+                                add_named_let(s, glyph, &format!("{point}_c1"), point_text(*c1))?;
+                            format!("c1: {c1_name}, ")
+                        }
+                        _ => String::new(),
+                    };
+                    let c2_name = add_named_let(s, glyph, &format!("{point}_c2"), point_text(*c2))?;
+                    format!("cube  ({c1_field}c2: {c2_name}, to: {point})")
+                }
+                None => format!("line  (to: {point})"),
+            };
+            s.step(|src, root| {
+                let g = glyph_named(root, glyph)?;
+                let p = path_named(&g, path).ok_or("That path is no longer in the source.")?;
+                Ok(vec![append_segment(src, &p, &segment)?])
+            })?;
+            Ok(Some(Created {
+                kind: "point",
+                name: point,
+            }))
+        }
+        Op::PathClose { glyph, path } => {
+            s.step(|src, root| {
+                let g = glyph_named(root, glyph)?;
+                let p = path_named(&g, path).ok_or("That path is no longer in the source.")?;
+                if has_close(&p) {
+                    return Ok(Vec::new());
+                }
+                Ok(vec![append_segment(src, &p, "close")?])
+            })?;
+            Ok(None)
+        }
+        Op::SetSegmentKind {
+            span: at,
+            kind,
+            controls,
+        } => {
+            set_segment_kind(s, span(at), kind, controls)?;
+            Ok(None)
+        }
+        Op::SetField {
+            span: at,
+            name,
+            value,
+        } => {
+            let range = span(at);
+            let text = match value {
+                FieldValue::Str(v) => format!("{v:?}"),
+                FieldValue::Num(v) => number(*v),
+                FieldValue::Bool(v) => v.to_string(),
+                FieldValue::Expr(v) => {
+                    let v = v.trim();
+                    if v.is_empty() {
+                        return Err("Type a value.".to_string());
+                    }
+                    v.to_string()
+                }
+            };
+            s.step(|src, root| {
+                let node = decl_at(root, range).ok_or(GONE)?;
+                Ok(edit::set_field(src, &node, name, &text))
+            })?;
+            check_parses(s, "That value doesn't parse.")?;
+            Ok(None)
+        }
+        Op::RemoveField { span: at, name } => {
+            let range = span(at);
+            s.step(|src, root| {
+                let node = decl_at(root, range).ok_or(GONE)?;
+                Ok(edit::remove_field(src, &node, name).unwrap_or_default())
+            })?;
+            Ok(None)
+        }
+        Op::SetFill { span: at, on } => {
+            let range = span(at);
+            if *on {
+                s.step(|src, root| {
+                    let node = decl_at(root, range.clone()).ok_or(GONE)?;
+                    Ok(edit::set_field(src, &node, "fill", "true"))
+                })?;
+                // Adding a field never moves the path's start.
+                s.step(|src, root| {
+                    let p = root
+                        .descendants()
+                        .filter_map(ast::Path::cast)
+                        .find(|p| edit::node_range(p.syntax()).start == range.start)
+                        .ok_or(GONE)?;
+                    if has_close(&p) {
+                        return Ok(Vec::new());
+                    }
+                    Ok(vec![append_segment(src, &p, "close")?])
+                })?;
+            } else {
+                s.step(|src, root| {
+                    let node = decl_at(root, range).ok_or(GONE)?;
+                    Ok(edit::remove_field(src, &node, "fill").unwrap_or_default())
+                })?;
+            }
+            Ok(None)
+        }
+        Op::DuplicateFollower { span: at } => {
+            let range = span(at);
+            let mut created = String::new();
+            s.step(|src, root| {
+                let node = decl_at(root, range).ok_or(GONE)?;
+                ast::Path::cast(node.clone()).ok_or("Select a path.")?;
+                let name = name_of(&node).ok_or("Name the path first: `follows:` needs a name.")?;
+                let glyph = root
+                    .descendants()
+                    .filter_map(ast::Glyph::cast)
+                    .find(|g| g.syntax().text_range().contains_range(node.text_range()))
+                    .ok_or(GONE)?;
+                created = fresh_named(root, &glyph, &format!("{name}_f"));
+                let stroke = edit::find_field(&node, "stroke")
+                    .and_then(|f| f.value())
+                    .map(|v| format!(", stroke: {}", text_of(src, v.syntax())))
+                    .unwrap_or_default();
+                let body = glyph.body().ok_or(GONE)?;
+                Ok(vec![edit::insert_decl(
+                    src,
+                    &body,
+                    Some(&node),
+                    &format!("path {created} (follows: {name}{stroke})"),
+                )])
+            })?;
+            Ok(Some(Created {
+                kind: "path",
+                name: created,
+            }))
+        }
+        Op::AddComponent {
+            glyph,
+            target,
+            offset,
+        } => {
+            s.step(|src, root| {
+                let g = glyph_named(root, glyph)?;
+                if glyph_named(root, target).is_err() {
+                    return Err(format!("There is no glyph `{target}`."));
+                }
+                if target == glyph {
+                    return Err("A glyph can't contain itself.".to_string());
+                }
+                let body = g.body().ok_or("This glyph has no body.")?;
+                let last = body.items().last();
+                Ok(vec![edit::insert_decl(
+                    src,
+                    &body,
+                    last.as_ref(),
+                    &format!("component (glyph: {target}, offset: {})", point_text(*offset)),
+                )])
+            })?;
+            Ok(Some(Created {
+                kind: "component",
+                name: target.clone(),
+            }))
+        }
+    }
+}
+
+/// Fails the op if the text no longer parses (a typed value that isn't
+/// an expression).
+fn check_parses(s: &Session, message: &str) -> OpResult<()> {
+    let parsed = mg_syntax::parse(&s.src);
+    if parsed
+        .diagnostics
+        .iter()
+        .any(|d| d.severity == mg_diag::Severity::Error)
+    {
+        return Err(message.to_string());
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------
+// Numbers
+
+/// A raw-unit coordinate: whole units (plan 5, "Literal precision").
+fn coord(v: f64) -> String {
+    let r = v.round();
+    if r == 0.0 { "0".to_string() } else { format!("{r}") }
+}
+
+fn point_text(p: Pt) -> String {
+    format!("({}, {})", coord(p[0]), coord(p[1]))
+}
+
+/// A typed number: as short as it can be, up to 3 decimals.
+fn number(v: f64) -> String {
+    let s = format!("{v:.3}");
+    let s = s.trim_end_matches('0').trim_end_matches('.');
+    if s == "-0" { "0".to_string() } else { s.to_string() }
+}
+
+// ---------------------------------------------------------------------
+// Lookups
+
+fn is_segment(kind: SyntaxKind) -> bool {
+    use SyntaxKind::*;
+    matches!(kind, START | LINE | QUAD | CUBE | ARC | CLOSE)
 }
 
 fn is_decl(kind: SyntaxKind) -> bool {
     use SyntaxKind::*;
-    matches!(
-        kind,
-        LET_STMT
-            | PARAM
-            | METRIC
-            | GLYPH
-            | INSTANCE
-            | GROUP
-            | KERN
-            | PATH
-            | ANCHOR
-            | COMPONENT
-            | START
-            | LINE
-            | QUAD
-            | CUBE
-            | ARC
-            | CLOSE
-    )
+    is_segment(kind)
+        || matches!(
+            kind,
+            LET_STMT | PARAM | METRIC | GLYPH | INSTANCE | GROUP | KERN | PATH | ANCHOR | COMPONENT | FONT
+        )
 }
 
 /// The declaration whose trivia-trimmed range is exactly `range`.
@@ -133,10 +548,304 @@ fn name_token(node: &SyntaxNode) -> Option<SyntaxToken> {
         .find(|t| t.kind() == SyntaxKind::IDENT)
 }
 
+fn name_of(node: &SyntaxNode) -> Option<String> {
+    name_token(node).map(|t| t.text().to_string())
+}
+
+fn text_of(src: &str, node: &SyntaxNode) -> String {
+    src[edit::node_range(node)].to_string()
+}
+
+/// The default-set glyph `name` (no `glyphset:` field).
+fn glyph_named(root: &SyntaxNode, name: &str) -> OpResult<ast::Glyph> {
+    root.children()
+        .filter_map(ast::Glyph::cast)
+        .find(|g| {
+            g.name_token().is_some_and(|t| t.text() == name)
+                && edit::find_field(g.syntax(), "glyphset").is_none()
+        })
+        .ok_or_else(|| format!("There is no glyph `{name}`."))
+}
+
+fn enclosing_glyph_name(node: &SyntaxNode) -> Option<String> {
+    node.ancestors()
+        .find_map(ast::Glyph::cast)
+        .and_then(|g| g.name_token())
+        .map(|t| t.text().to_string())
+}
+
+fn path_named(glyph: &ast::Glyph, name: &str) -> Option<ast::Path> {
+    glyph
+        .body()?
+        .items()
+        .filter_map(ast::Path::cast)
+        .find(|p| p.name_token().is_some_and(|t| t.text() == name))
+}
+
+fn last_segment(path: &ast::Path) -> Option<SyntaxNode> {
+    path.body()?
+        .items()
+        .filter(|n| is_segment(n.kind()) && n.kind() != SyntaxKind::CLOSE)
+        .last()
+}
+
+fn has_close(path: &ast::Path) -> bool {
+    path.body()
+        .is_some_and(|b| b.items().any(|n| n.kind() == SyntaxKind::CLOSE))
+}
+
+/// Every name a new glyph-local declaration must avoid: the glyph's own
+/// `let`s, paths and anchors (one namespace), and the top level (which a
+/// local would shadow, spec §5.11).
+fn taken_names(root: &SyntaxNode, glyph: &ast::Glyph) -> HashSet<String> {
+    let mut names = HashSet::new();
+    for item in root.children() {
+        if matches!(item.kind(), SyntaxKind::LET_STMT | SyntaxKind::PARAM | SyntaxKind::METRIC)
+            && let Some(n) = name_of(&item)
+        {
+            names.insert(n);
+        }
+    }
+    if let Some(body) = glyph.body() {
+        for item in body.items() {
+            if let Some(n) = name_of(&item) {
+                names.insert(n);
+            }
+        }
+    }
+    names
+}
+
+/// The first of `prefix0`, `prefix1`, … that is free in `glyph` (plan 5,
+/// §1.3).
+fn fresh(root: &SyntaxNode, glyph: &ast::Glyph, prefix: &str) -> String {
+    let taken = taken_names(root, glyph);
+    (0..)
+        .map(|n| format!("{prefix}{n}"))
+        .find(|n| !taken.contains(n))
+        .expect("some name is free")
+}
+
+/// `name` if it is free in `glyph`, else `name2`, `name3`, ….
+fn fresh_named(root: &SyntaxNode, glyph: &ast::Glyph, name: &str) -> String {
+    let taken = taken_names(root, glyph);
+    if !taken.contains(name) {
+        return name.to_string();
+    }
+    (2..)
+        .map(|n| format!("{name}{n}"))
+        .find(|n| !taken.contains(n))
+        .expect("some name is free")
+}
+
+/// Adds `let <prefixN> = <value>;` to `glyph`, returning the name.
+fn add_let(
+    s: &mut Session,
+    glyph: &str,
+    prefix: &str,
+    value: impl FnOnce(&str) -> OpResult<String>,
+) -> OpResult<String> {
+    let mut name = String::new();
+    s.step(|src, root| {
+        let g = glyph_named(root, glyph)?;
+        name = fresh(root, &g, prefix);
+        let text = format!("let {name} = {};", value(&name)?);
+        let body = g.body().ok_or("This glyph has no body.")?;
+        Ok(vec![edit::insert_let(src, &body, &text)])
+    })?;
+    Ok(name)
+}
+
+/// Adds `let <name> = <value>;` (renamed if `name` is taken).
+fn add_named_let(s: &mut Session, glyph: &str, name: &str, value: String) -> OpResult<String> {
+    let mut out = String::new();
+    s.step(|src, root| {
+        let g = glyph_named(root, glyph)?;
+        out = fresh_named(root, &g, name);
+        let body = g.body().ok_or("This glyph has no body.")?;
+        Ok(vec![edit::insert_let(src, &body, &format!("let {out} = {value};"))])
+    })?;
+    Ok(out)
+}
+
+/// `stroke`, `caps` and `joins` of `path`, as config text.
+fn copied_config(path: &ast::Path) -> String {
+    let src = path.syntax().ancestors().last().expect("a root").to_string();
+    ["stroke", "caps", "joins"]
+        .iter()
+        .filter_map(|name| {
+            let value = edit::find_field(path.syntax(), name)?.value()?;
+            Some(format!("{name}: {}", text_of(&src, value.syntax())))
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// A new path after the glyph's last path (or its last item), separated
+/// by a blank line.
+fn insert_path(src: &str, body: &ast::Body, name: &str, config: &str, start: &str) -> TextEdit {
+    let config = if config.is_empty() {
+        String::new()
+    } else {
+        format!(" ({config})")
+    };
+    let after = body
+        .items()
+        .filter(|n| n.kind() == SyntaxKind::PATH)
+        .last()
+        .or_else(|| body.items().last());
+    let Some(after) = after else {
+        let text = format!("path {name}{config} {{\n    start (at: {start})\n}}");
+        return edit::insert_decl(src, body, None, &text);
+    };
+    let range = edit::node_range(&after);
+    let line_start = src[..range.start].rfind('\n').map_or(0, |i| i + 1);
+    let indent: String = src[line_start..range.start]
+        .chars()
+        .take_while(|c| c.is_whitespace())
+        .collect();
+    let text = format!(
+        "\n\n{indent}path {name}{config} {{\n{indent}    start (at: {start})\n{indent}}}"
+    );
+    TextEdit {
+        range: range.end..range.end,
+        text,
+    }
+}
+
+/// `segment` as a new line at the end of `path`, before its `close`.
+fn append_segment(src: &str, path: &ast::Path, segment: &str) -> OpResult<TextEdit> {
+    let body = path.body().ok_or("A `follows` path has no segments of its own.")?;
+    let after = last_segment(path);
+    Ok(edit::insert_decl(src, &body, after.as_ref(), segment))
+}
+
+/// Local `let`s that `segment`'s fields name directly and nothing else
+/// uses: its end point and controls, created with it.
+fn lets_only_used_by(root: &SyntaxNode, segment: &SyntaxNode) -> Vec<SyntaxNode> {
+    let file = ast::SourceFile::cast(root.clone()).expect("the root is a SOURCE_FILE");
+    let index = Index::new(&file);
+    let seg: std::ops::Range<usize> = segment.text_range().into();
+    let mut out = Vec::new();
+    for ident in segment
+        .descendants()
+        .filter_map(ast::IdentExpr::cast)
+        .filter(|i| i.syntax().parent().is_some_and(|p| p.kind() == SyntaxKind::FIELD))
+    {
+        let Some(token) = ident.token() else { continue };
+        let Some(def @ Def::GlyphLocal { .. }) = index.resolve(&token) else {
+            continue;
+        };
+        let Some(decl) = index.decl(&def) else { continue };
+        let refs = index.references(root, &def);
+        let outside = refs.iter().filter(|r| {
+            let inside = seg.start <= r.start && r.end <= seg.end;
+            !inside && r.start != decl.name_range.start
+        });
+        if outside.count() == 0
+            && let Some(node) = root
+                .descendants()
+                .filter(|n| n.kind() == SyntaxKind::LET_STMT)
+                .find(|n| edit::node_range(n) == decl.range)
+        {
+            out.push(node);
+        }
+    }
+    out
+}
+
+/// Rewrites a segment as another kind (plan 5, §1.4).
+fn set_segment_kind(
+    s: &mut Session,
+    range: std::ops::Range<usize>,
+    kind: &str,
+    controls: &[Pt],
+) -> OpResult<()> {
+    const GONE: &str = "That segment is no longer in the source.";
+    let (glyph, to_text, to_name, name) = {
+        let root = mg_syntax::parse(&s.src).syntax();
+        let node = decl_at(&root, range.clone()).ok_or(GONE)?;
+        if !matches!(
+            node.kind(),
+            SyntaxKind::LINE | SyntaxKind::QUAD | SyntaxKind::CUBE | SyntaxKind::ARC
+        ) {
+            return Err("Only line, quad, cube and arc segments change kind.".to_string());
+        }
+        let to = edit::find_field(&node, "to")
+            .and_then(|f| f.value())
+            .ok_or("This segment has no `to`.")?;
+        let to_name = match &to {
+            ast::Expr::Ident(i) => i.token().map(|t| t.text().to_string()),
+            _ => None,
+        };
+        (
+            enclosing_glyph_name(&node).ok_or(GONE)?,
+            text_of(&s.src, to.syntax()),
+            to_name,
+            name_of(&node),
+        )
+    };
+    let base = to_name.unwrap_or_else(|| name.clone().unwrap_or_else(|| "seg".to_string()));
+    let control = |i: usize| controls.get(i).copied().ok_or("Missing control point positions.");
+
+    // New control `let`s first, then the segment rewrite. The lets go at
+    // the end of the glyph's `let`s, before its paths, so the segment
+    // shifts by exactly their length.
+    let len_before = s.src.len();
+    let (fields, keyword) = match kind {
+        "line" => (format!("to: {to_text}"), "line"),
+        "quad" => {
+            let c = add_named_let(s, &glyph, &format!("{base}_c"), point_text(control(0)?))?;
+            (format!("c: {c}, to: {to_text}"), "quad")
+        }
+        "cube" => {
+            let c1 = add_named_let(s, &glyph, &format!("{base}_c1"), point_text(control(0)?))?;
+            let c2 = add_named_let(s, &glyph, &format!("{base}_c2"), point_text(control(1)?))?;
+            (format!("c1: {c1}, c2: {c2}, to: {to_text}"), "cube")
+        }
+        "arc" => {
+            let c = add_named_let(s, &glyph, &format!("{base}_ctr"), point_text(control(0)?))?;
+            (format!("to: {to_text}, center: {c}, sweep: \"ccw\""), "arc")
+        }
+        other => return Err(format!("`{other}` is not a segment kind.")),
+    };
+    let text = match &name {
+        Some(n) => format!("{keyword} {n} ({fields})"),
+        None => format!("{keyword:<5} ({fields})"),
+    };
+
+    let shift = s.src.len() - len_before;
+    s.step(|src, root| {
+        let node = decl_at(root, range.start + shift..range.end + shift)
+            .filter(|n| is_segment(n.kind()))
+            .ok_or(GONE)?;
+        let mut edits = vec![TextEdit {
+            range: edit::node_range(&node),
+            text: text.clone(),
+        }];
+        // Old control `let`s nothing else uses go with the old fields.
+        for decl in lets_only_used_by(root, &node) {
+            let used_by_new = decl_name_in(&decl, &text);
+            if !used_by_new {
+                edits.push(edit::remove_decl(src, &decl));
+            }
+        }
+        Ok(edits)
+    })
+}
+
+/// Whether the `let` `decl` is named in `text` (a rewritten segment).
+fn decl_name_in(decl: &SyntaxNode, text: &str) -> bool {
+    name_of(decl).is_some_and(|n| {
+        text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .any(|w| w == n)
+    })
+}
+
 /// A rename's edits, or why it can't happen: the name must be valid and
 /// not collide with a declaration it would duplicate or shadow (spec
 /// §5.4, §5.11).
-fn rename(root: &SyntaxNode, node: &SyntaxNode, name: &str) -> Result<Vec<TextEdit>, String> {
+fn rename(root: &SyntaxNode, node: &SyntaxNode, name: &str) -> OpResult<Vec<TextEdit>> {
     let token = name_token(node).ok_or("This declaration has no name to change.")?;
     if token.text() == name {
         return Ok(Vec::new());
@@ -200,25 +909,43 @@ fn rename(root: &SyntaxNode, node: &SyntaxNode, name: &str) -> Result<Vec<TextEd
 mod tests {
     use super::*;
 
-    const SRC: &str = "let h = 1000;\nglyph A (advance: h) {\n    let stem0 = (0, 0);\n    let stem1 = (1, 1);\n    path stem (stroke: 50) {\n        start (at: stem0)\n        line  (to: stem1)\n    }\n}\n";
+    const SRC: &str = "let h = 1000;\nglyph A (advance: h) {\n    let stem0 = (0, 0);\n    let stem1 = (1, 1);\n\n    path stem (stroke: 50, caps: \"round\") {\n        start (at: stem0)\n        line  (to: stem1)\n    }\n}\n\nglyph B (advance: h) {\n}\n";
 
-    fn span_of(text: &str) -> [usize; 2] {
-        let start = SRC.find(text).unwrap();
+    const STEM: &str = "path stem (stroke: 50, caps: \"round\") {\n        start (at: stem0)\n        line  (to: stem1)\n    }";
+
+    fn span_in(src: &str, text: &str) -> [usize; 2] {
+        let start = src.find(text).unwrap_or_else(|| panic!("{text}"));
         [start, start + text.len()]
     }
 
-    fn applied(result: EditResult) -> String {
-        let EditResult::Ok { changes, .. } = result else {
+    fn span_of(text: &str) -> [usize; 2] {
+        span_in(SRC, text)
+    }
+
+    /// Applies an op's steps in order; checks the result parses.
+    fn run_on(src: &str, op: &Op) -> (String, Option<Created>) {
+        let result = run(src, 1, op);
+        let EditResult::Ok { steps, created, .. } = result else {
             panic!("{result:?}");
         };
-        let edits: Vec<TextEdit> = changes
-            .into_iter()
-            .map(|c| TextEdit {
-                range: c.from..c.to,
-                text: c.insert,
-            })
-            .collect();
-        edit::apply(SRC, &edits)
+        let mut text = src.to_string();
+        for step in steps {
+            let edits: Vec<TextEdit> = step
+                .into_iter()
+                .map(|c| TextEdit {
+                    range: c.from..c.to,
+                    text: c.insert,
+                })
+                .collect();
+            text = edit::apply(&text, &edits);
+        }
+        let errors = mg_syntax::parse(&text).diagnostics;
+        assert!(errors.is_empty(), "{text}\n{errors:?}");
+        (text, created)
+    }
+
+    fn applied(op: &Op) -> String {
+        run_on(SRC, op).0
     }
 
     #[test]
@@ -227,10 +954,7 @@ mod tests {
             span: span_of("let stem0 = (0, 0);"),
             name: "base".into(),
         };
-        assert_eq!(
-            applied(run(SRC, 3, &op)),
-            SRC.replace("stem0", "base")
-        );
+        assert_eq!(applied(&op), SRC.replace("stem0", "base"));
     }
 
     #[test]
@@ -246,7 +970,13 @@ mod tests {
                 span: local,
                 name: name.into(),
             };
-            assert_eq!(run(SRC, 1, &op), invalid(message), "{name}");
+            assert_eq!(
+                run(SRC, 1, &op),
+                EditResult::Invalid {
+                    message: message.into()
+                },
+                "{name}"
+            );
         }
     }
 
@@ -255,9 +985,18 @@ mod tests {
         let op = Op::Delete {
             span: span_of("let stem1 = (1, 1);"),
         };
+        assert_eq!(applied(&op), SRC.replace("    let stem1 = (1, 1);\n", ""));
+    }
+
+    #[test]
+    fn deleting_a_segment_takes_its_own_point() {
+        let op = Op::Delete {
+            span: span_of("line  (to: stem1)"),
+        };
         assert_eq!(
-            applied(run(SRC, 1, &op)),
+            applied(&op),
             SRC.replace("    let stem1 = (1, 1);\n", "")
+                .replace("        line  (to: stem1)\n", "")
         );
     }
 
@@ -269,8 +1008,227 @@ mod tests {
     }
 
     #[test]
-    fn a_span_that_matches_nothing_is_invalid() {
-        let op = Op::Delete { span: [1, 3] };
-        assert!(matches!(run(SRC, 1, &op), EditResult::Invalid { .. }));
+    fn adds_points_with_fresh_names() {
+        let op = Op::AddPoint {
+            glyph: "A".into(),
+            at: [12.4, -30.6],
+        };
+        let (text, created) = run_on(SRC, &op);
+        assert_eq!(
+            text,
+            SRC.replace("(1, 1);\n", "(1, 1);\n    let p0 = (12, -31);\n")
+        );
+        assert_eq!(
+            created,
+            Some(Created {
+                kind: "point",
+                name: "p0".into()
+            })
+        );
+        // `p0` is now taken.
+        let (again, created) = run_on(&text, &op);
+        assert!(again.contains("let p1 = (12, -31);"));
+        assert_eq!(created.unwrap().name, "p1");
+    }
+
+    #[test]
+    fn adds_lines_and_measurements() {
+        for (line, expected) in [
+            (
+                LineSpec::Through {
+                    a: "stem0".into(),
+                    b: "stem1".into(),
+                },
+                "let l0 = lineThrough(stem0, stem1);",
+            ),
+            (LineSpec::Hline { y: 333.3 }, "let l0 = hline(333);"),
+            (LineSpec::Vline { x: -5.0 }, "let l0 = vline(-5);"),
+        ] {
+            let op = Op::AddLine {
+                glyph: "A".into(),
+                line,
+            };
+            assert!(applied(&op).contains(expected), "{expected}");
+        }
+        let op = Op::AddMeasure {
+            glyph: "A".into(),
+            a: "stem0".into(),
+            b: "stem1".into(),
+        };
+        assert!(applied(&op).contains("let d0 = length(stem1 - stem0);"));
+    }
+
+    #[test]
+    fn path_tool_start_append_close() {
+        // A new path in an empty glyph is a construction path.
+        let start = Op::PathStart {
+            glyph: "B".into(),
+            at: [10.0, 20.0],
+            copy_from: None,
+        };
+        let (text, created) = run_on(SRC, &start);
+        assert!(
+            text.contains("glyph B (advance: h) {\n    let p0 = (10, 20);\n\n    path path0 {\n        start (at: p0)\n    }\n}\n"),
+            "{text}"
+        );
+        assert_eq!(created.unwrap().name, "path0");
+
+        let line = Op::PathAppend {
+            glyph: "B".into(),
+            path: "path0".into(),
+            at: [100.0, 20.0],
+            c1: None,
+            c2: None,
+        };
+        let (text, _) = run_on(&text, &line);
+        let cube = Op::PathAppend {
+            glyph: "B".into(),
+            path: "path0".into(),
+            at: [100.0, 200.0],
+            c1: Some([150.0, 60.0]),
+            c2: Some([150.0, 160.0]),
+        };
+        let (text, _) = run_on(&text, &cube);
+        // After a cube, `c1` is left to reflection.
+        let smooth = Op::PathAppend {
+            glyph: "B".into(),
+            path: "path0".into(),
+            at: [10.0, 200.0],
+            c1: Some([0.0, 0.0]),
+            c2: Some([40.0, 240.0]),
+        };
+        let (text, _) = run_on(&text, &smooth);
+        let close = Op::PathClose {
+            glyph: "B".into(),
+            path: "path0".into(),
+        };
+        let (text, _) = run_on(&text, &close);
+        assert!(
+            text.ends_with("glyph B (advance: h) {\n    let p0 = (10, 20);\n    let p1 = (100, 20);\n    let p2 = (100, 200);\n    let p2_c1 = (150, 60);\n    let p2_c2 = (150, 160);\n    let p3 = (10, 200);\n    let p3_c2 = (40, 240);\n\n    path path0 {\n        start (at: p0)\n        line  (to: p1)\n        cube  (c1: p2_c1, c2: p2_c2, to: p2)\n        cube  (c2: p3_c2, to: p3)\n        close\n    }\n}\n"),
+            "{text}"
+        );
+        // Closing twice is a no-op.
+        assert_eq!(run_on(&text, &close).0, text);
+    }
+
+    #[test]
+    fn new_paths_copy_stroke_caps_joins() {
+        let op = Op::PathStart {
+            glyph: "A".into(),
+            at: [0.0, 500.0],
+            copy_from: Some("stem".into()),
+        };
+        let (text, _) = run_on(SRC, &op);
+        assert!(
+            text.contains("        line  (to: stem1)\n    }\n\n    path path0 (stroke: 50, caps: \"round\") {\n        start (at: p0)\n    }\n}"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn segment_kinds_round_trip() {
+        let to_cube = Op::SetSegmentKind {
+            span: span_of("line  (to: stem1)"),
+            kind: "cube".into(),
+            controls: vec![[0.0, 1.0], [1.0, 0.0]],
+        };
+        let (cube, _) = run_on(SRC, &to_cube);
+        assert!(
+            cube.contains("    let stem1_c1 = (0, 1);\n    let stem1_c2 = (1, 0);\n"),
+            "{cube}"
+        );
+        assert!(
+            cube.contains("        cube  (c1: stem1_c1, c2: stem1_c2, to: stem1)\n"),
+            "{cube}"
+        );
+
+        // Back to a line: its control lets go with it.
+        let span = span_in(&cube, "cube  (c1: stem1_c1, c2: stem1_c2, to: stem1)");
+        let to_line = Op::SetSegmentKind {
+            span,
+            kind: "line".into(),
+            controls: vec![],
+        };
+        assert_eq!(run_on(&cube, &to_line).0, SRC);
+
+        let to_arc = Op::SetSegmentKind {
+            span: span_of("line  (to: stem1)"),
+            kind: "arc".into(),
+            controls: vec![[0.5, 0.5]],
+        };
+        let (arc, _) = run_on(SRC, &to_arc);
+        assert!(
+            arc.contains("        arc   (to: stem1, center: stem1_ctr, sweep: \"ccw\")\n"),
+            "{arc}"
+        );
+    }
+
+    #[test]
+    fn path_fields() {
+        let path = span_of(STEM);
+        let joins = Op::SetField {
+            span: path,
+            name: "joins".into(),
+            value: FieldValue::Str("bevel".into()),
+        };
+        assert!(applied(&joins).contains("(stroke: 50, caps: \"round\", joins: \"bevel\")"));
+        let stroke = Op::SetField {
+            span: path,
+            name: "stroke".into(),
+            value: FieldValue::Expr("h / 20".into()),
+        };
+        assert!(applied(&stroke).contains("(stroke: h / 20, caps"));
+        let bad = Op::SetField {
+            span: path,
+            name: "stroke".into(),
+            value: FieldValue::Expr("h +".into()),
+        };
+        assert!(matches!(run(SRC, 1, &bad), EditResult::Invalid { .. }));
+        let caps = Op::RemoveField {
+            span: path,
+            name: "caps".into(),
+        };
+        assert!(applied(&caps).contains("path stem (stroke: 50) {"));
+
+        let fill = Op::SetFill {
+            span: path,
+            on: true,
+        };
+        let (filled, _) = run_on(SRC, &fill);
+        let closed = "path stem (stroke: 50, caps: \"round\", fill: true) {\n        start (at: stem0)\n        line  (to: stem1)\n        close\n    }";
+        assert!(filled.contains(closed), "{filled}");
+        let unfill = Op::SetFill {
+            span: span_in(&filled, closed),
+            on: false,
+        };
+        let (unfilled, _) = run_on(&filled, &unfill);
+        assert!(unfilled.contains("(stroke: 50, caps: \"round\") {\n        start (at: stem0)\n        line  (to: stem1)\n        close\n    }"));
+    }
+
+    #[test]
+    fn followers_and_components() {
+        let (text, created) = run_on(SRC, &Op::DuplicateFollower { span: span_of(STEM) });
+        assert!(
+            text.contains("    }\n    path stem_f (follows: stem, stroke: 50)\n}"),
+            "{text}"
+        );
+        assert_eq!(created.unwrap().name, "stem_f");
+
+        let op = Op::AddComponent {
+            glyph: "B".into(),
+            target: "A".into(),
+            offset: [40.0, 0.0],
+        };
+        let (text, _) = run_on(SRC, &op);
+        assert!(
+            text.ends_with("glyph B (advance: h) {\n    component (glyph: A, offset: (40, 0))\n}\n"),
+            "{text}"
+        );
+        let own = Op::AddComponent {
+            glyph: "B".into(),
+            target: "B".into(),
+            offset: [0.0, 0.0],
+        };
+        assert!(matches!(run(SRC, 1, &own), EditResult::Invalid { .. }));
     }
 }
