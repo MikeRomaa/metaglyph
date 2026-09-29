@@ -1,3 +1,4 @@
+import { fmt } from "../font/lookup.ts";
 import type { Sheet } from "../state/store.ts";
 import { useStore } from "../state/store.ts";
 import styles from "./StatusBar.module.css";
@@ -17,16 +18,38 @@ function withoutEmail(designer: string) {
 export function StatusBar() {
     const sheet = useStore((s) => s.sheet);
     const font = useStore((s) => s.lastGood?.font);
+    const pointer = useStore((s) => s.pointer);
+    const notice = useStore((s) => s.notice);
 
     return (
         <footer className={styles.bar}>
             <span className={styles.font}>{font?.name ?? "Untitled"}</span>
-            <span className={styles.cell}>x —</span>
-            <span className={styles.cell}>y —</span>
+            <span className={styles.cell}>
+                x {pointer ? fmt(pointer[0]) : "—"}
+            </span>
+            <span className={styles.cell}>
+                y {pointer ? fmt(pointer[1]) : "—"}
+            </span>
             <span className={styles.cell}>snap pts · lines · metrics</span>
             <span className={styles.cell}>grid 10</span>
             <div className={styles.fill} />
-            <span className={styles.end}>{HINTS[sheet]}</span>
+            {notice ? (
+                <span
+                    className={styles.end}
+                    role="status"
+                    style={{
+                        color:
+                            notice.tone === "error"
+                                ? "var(--err)"
+                                : "var(--ink)",
+                    }}
+                >
+                    {notice.tone === "error" ? "▲ " : ""}
+                    {notice.text}
+                </span>
+            ) : (
+                <span className={styles.end}>{HINTS[sheet]}</span>
+            )}
             {font?.designer && (
                 <span className={styles.block}>
                     DESIGNER {withoutEmail(font.designer)}

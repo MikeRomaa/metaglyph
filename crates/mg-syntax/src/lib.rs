@@ -1,5 +1,7 @@
 pub mod ast;
+pub mod edit;
 pub mod fmt;
+pub mod index;
 pub mod lexer;
 pub mod parser;
 pub mod stable_id;

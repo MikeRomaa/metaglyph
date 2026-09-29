@@ -1,10 +1,12 @@
 import type {
     FontData,
     GlyphInfo,
+    GlyphScene,
     KernInfo,
     PathInfo,
     Span,
 } from "../engine/types.ts";
+import type { Selection } from "../state/store.ts";
 
 /** A number as the design prints it: at most one decimal place. */
 export function fmt(n: number | undefined): string {
@@ -133,4 +135,43 @@ export function sideGlyph(
 /** A path's name, or `#<index>` for an anonymous one. */
 export function pathKey(path: PathInfo): string {
     return path.name ?? `#${path.index}`;
+}
+
+/** `selection` in new data: the same kind and name, with its current span;
+ * `null` if it no longer exists. */
+export function locate(
+    selection: Selection,
+    font: FontData,
+    scene: GlyphScene | null,
+): Selection | null {
+    const found = (span: Span | undefined) =>
+        span ? { ...selection, span } : null;
+    const { kind, name } = selection;
+    switch (kind) {
+        case "point":
+            return found(scene?.points.find((p) => p.name === name)?.span);
+        case "line":
+            return found(
+                scene?.lines.find((l) => !l.of && l.name === name)?.span,
+            );
+        case "path":
+            return found(scene?.paths.find((p) => pathKey(p) === name)?.span);
+        case "segment": {
+            const [path, i] = name.split("/");
+            const p = scene?.paths.find((x) => pathKey(x) === path);
+            return found(p?.segments[Number(i)]?.span);
+        }
+        case "component":
+            return found(scene?.components[Number(name)]?.span);
+        case "glyph":
+            return found(font.glyphs.find((g) => g.name === name)?.span);
+        case "kern":
+            return found(font.kerns[Number(name)]?.span);
+        case "metric":
+            return found(font.metrics.find((m) => m.name === name)?.span);
+        case "let":
+            return found(font.lets.find((l) => l.name === name)?.span);
+        case "group":
+            return found(font.groups.find((g) => g.name === name)?.span);
+    }
 }

@@ -59,6 +59,12 @@ impl Utf16Index {
         self.table[byte.min(self.table.len() - 1)] as usize
     }
 
+    /// The byte offset of UTF-16 offset `utf16` (the start of the
+    /// character it falls in).
+    pub fn to_byte(&self, utf16: usize) -> usize {
+        self.table.partition_point(|&u| (u as usize) < utf16)
+    }
+
     /// `range` as a `[from, to]` UTF-16 pair.
     pub fn span(&self, range: &Range<usize>) -> [usize; 2] {
         [self.convert(range.start), self.convert(range.end)]
@@ -85,5 +91,8 @@ mod tests {
             assert_eq!(index.convert(byte), Utf16Map::new(text).convert(byte));
         }
         assert_eq!(index.span(&(1..8)), [1, 4]);
+        for (utf16, byte) in [(0, 0), (1, 1), (2, 4), (4, 8), (5, 9)] {
+            assert_eq!(index.to_byte(utf16), byte);
+        }
     }
 }

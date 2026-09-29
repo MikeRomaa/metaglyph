@@ -181,6 +181,25 @@ export interface View {
     scene: GlyphScene | null;
 }
 
+/** An edit op (crates/mg-web/src/ops.rs). Declarations are addressed by
+ * their source span in the version the op is sent with. */
+export type Op =
+    | { op: "rename"; span: Span; name: string }
+    | { op: "delete"; span: Span };
+
+/** One replacement, in UTF-16 offsets of the op's version. */
+export interface Change {
+    from: number;
+    to: number;
+    insert: string;
+}
+
+export type EditResult =
+    | { status: "ok"; version: number; changes: Change[] }
+    | { status: "stale" }
+    | { status: "readOnly" }
+    | { status: "invalid"; message: string };
+
 export interface EngineResult {
     doc?: DocState;
     view: View;

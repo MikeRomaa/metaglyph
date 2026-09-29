@@ -9,11 +9,13 @@ import { Header } from "./shell/Header.tsx";
 import { StatusBar } from "./shell/StatusBar.tsx";
 import { SourcePane } from "./source/SourcePane.tsx";
 import { importFile } from "./state/files.ts";
+import { useEditShortcuts } from "./state/shortcuts.ts";
 import { useStore } from "./state/store.ts";
 
 export default function App() {
     const sheet = useStore((s) => s.sheet);
     const theme = useStore((s) => s.theme);
+    useEditShortcuts();
 
     useEffect(() => {
         document.documentElement.dataset.theme = theme;

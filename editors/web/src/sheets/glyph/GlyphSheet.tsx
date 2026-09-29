@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type {
     FontData,
     GlyphInfo,
@@ -6,6 +6,7 @@ import type {
     PathInfo,
 } from "../../engine/types.ts";
 import { fmt, hex, pathKey } from "../../font/lookup.ts";
+import { renameSelection } from "../../state/actions.ts";
 import type { Tool } from "../../state/store.ts";
 import { LAYERS, useStore } from "../../state/store.ts";
 import { Centre, Empty, LeftColumn, Section, sheet } from "../../ui/Sheet.tsx";
@@ -229,9 +230,11 @@ function Inspector({ glyph, scene }: { glyph: GlyphInfo; scene: GlyphScene }) {
         body = (
             <>
                 <Title
+                    key={`point:${point.name}`}
                     keyword="let"
                     name={point.name}
                     kind={`point · glyph ${glyph.name}`}
+                    renameable
                 />
                 <div className={styles.expr}>{point.expr}</div>
                 <div className={styles.xy}>
@@ -250,9 +253,11 @@ function Inspector({ glyph, scene }: { glyph: GlyphInfo; scene: GlyphScene }) {
         body = (
             <>
                 <Title
+                    key={`line:${cline.name}`}
                     keyword="let"
                     name={cline.name}
                     kind={`line · glyph ${glyph.name}`}
+                    renameable
                 />
                 <div className={styles.expr}>{cline.expr}</div>
             </>
@@ -261,12 +266,14 @@ function Inspector({ glyph, scene }: { glyph: GlyphInfo; scene: GlyphScene }) {
         body = (
             <>
                 <Title
+                    key={`segment:${selection?.name}:${segment.name}`}
                     keyword={segment.kind}
                     name={
                         segment.name ??
                         `#${Number(selection?.name.split("/")[1])}`
                     }
                     kind={`segment · path ${pathKey(path)}`}
+                    renameable={segment.name !== undefined}
                 />
                 {segment.to && (
                     <div className={styles.xy}>
@@ -285,9 +292,11 @@ function Inspector({ glyph, scene }: { glyph: GlyphInfo; scene: GlyphScene }) {
     } else if (path && selection?.kind === "path") {
         body = (
             <Title
+                key={`path:${pathKey(path)}`}
                 keyword="path"
                 name={pathKey(path)}
                 kind={`glyph ${glyph.name}`}
+                renameable={path.name !== undefined}
             />
         );
     } else if (component) {
@@ -310,21 +319,82 @@ function Inspector({ glyph, scene }: { glyph: GlyphInfo; scene: GlyphScene }) {
     );
 }
 
+/** The selection's keyword and name. A renameable name is a button that
+ * opens an inline field: Enter renames (plan 5, §1.3), Escape cancels. */
 function Title({
     keyword,
     name,
     kind,
+    renameable,
 }: {
     keyword: string;
     name: string;
     kind: string;
+    renameable?: boolean;
 }) {
+    const [draft, setDraft] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
+
+    const commit = async () => {
+        if (draft === null) return;
+        const next = draft.trim();
+        if (next === "" || next === name) {
+            setDraft(null);
+            return;
+        }
+        const result = await renameSelection(next);
+        if (result?.status === "invalid") {
+            setError(result.message);
+        } else {
+            setDraft(null);
+            setError(null);
+        }
+    };
+
     return (
-        <div className={styles.title}>
-            <span className={styles.keyword}>{keyword}</span>
-            <span className={styles.name}>{name}</span>
-            <span className={styles.kind}>{kind}</span>
-        </div>
+        <>
+            <div className={styles.title}>
+                <span className={styles.keyword}>{keyword}</span>
+                {draft !== null ? (
+                    <input
+                        className={styles.rename}
+                        value={draft}
+                        spellCheck={false}
+                        // biome-ignore lint/a11y/noAutofocus: opened by the user's click
+                        autoFocus
+                        aria-label={`New name for ${name}`}
+                        onChange={(e) => {
+                            setDraft(e.target.value);
+                            setError(null);
+                        }}
+                        onKeyDown={(e) => {
+                            if (e.key === "Enter") void commit();
+                            if (e.key === "Escape") {
+                                setDraft(null);
+                                setError(null);
+                            }
+                        }}
+                        onBlur={() => {
+                            setDraft(null);
+                            setError(null);
+                        }}
+                    />
+                ) : renameable ? (
+                    <button
+                        type="button"
+                        className={styles.name}
+                        title="Rename"
+                        onClick={() => setDraft(name)}
+                    >
+                        {name}
+                    </button>
+                ) : (
+                    <span className={styles.name}>{name}</span>
+                )}
+                <span className={styles.kind}>{kind}</span>
+            </div>
+            {error && <p className={styles.renameError}>▲ {error}</p>}
+        </>
     );
 }
 

@@ -7,6 +7,7 @@ import type {
     Pt,
     Span,
 } from "../engine/types.ts";
+import { locate } from "../font/lookup.ts";
 
 export type Sheet = 1 | 2 | 3 | 4;
 export type Theme = "light" | "dark";
@@ -88,6 +89,10 @@ interface Store {
     undoDepth: number;
     /** The pointer over a drawing, in font units. */
     pointer: Pt | null;
+    /** A short message in the status bar: why an edit didn't happen. */
+    notice: { text: string; tone: "error" | "info" } | null;
+    /** The label of the last canvas edit (`rename`, `delete`, …). */
+    lastOp: string | null;
 
     // Glyph sheet (canvas settings are not in the source).
     layers: Record<Layer, boolean>;
@@ -112,6 +117,8 @@ interface Store {
     setTheme(theme: Theme): void;
     setCursor(line: number, undoDepth: number): void;
     setPointer(pointer: Pt | null): void;
+    setNotice(text: string, tone?: "error" | "info"): void;
+    setLastOp(op: string | null): void;
     toggleLayer(layer: Layer): void;
     setTool(tool: Tool): void;
     setCharset(charset: number): void;
@@ -120,6 +127,17 @@ interface Store {
     setKernContext(text: string): void;
     setKern(kern: number | null): void;
 }
+
+let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Selections that live inside the active glyph's scene. */
+const IN_GLYPH = new Set<SelectionKind>([
+    "point",
+    "line",
+    "path",
+    "segment",
+    "component",
+]);
 
 export const useStore = create<Store>()((set) => ({
     fileName: "untitled.mg",
@@ -140,6 +158,8 @@ export const useStore = create<Store>()((set) => ({
     cursorLine: 1,
     undoDepth: 0,
     pointer: null,
+    notice: null,
+    lastOp: null,
     layers: {
         metrics: true,
         guides: true,
@@ -172,6 +192,7 @@ export const useStore = create<Store>()((set) => ({
             spacingText: "",
             kern: null,
             picked: [],
+            lastOp: null,
         })),
     setText: (text, version) => set({ text, version, saved: false }),
     applyResult: ({ doc, view }) =>
@@ -184,10 +205,14 @@ export const useStore = create<Store>()((set) => ({
                 font: view.font,
                 glyph: view.glyph,
                 scene: view.scene,
-                // A selection in another glyph no longer applies.
+                // The selection follows its declaration through edits (its
+                // span moves), and is dropped when that is gone or in
+                // another glyph.
                 selection:
-                    view.glyph === s.glyph || s.selection?.kind === "glyph"
-                        ? s.selection
+                    s.selection &&
+                    view.font &&
+                    (view.glyph === s.glyph || !IN_GLYPH.has(s.selection.kind))
+                        ? locate(s.selection, view.font, view.scene)
                         : null,
                 kern:
                     s.kern !== null &&
@@ -210,6 +235,12 @@ export const useStore = create<Store>()((set) => ({
     setTheme: (theme) => set({ theme }),
     setCursor: (cursorLine, undoDepth) => set({ cursorLine, undoDepth }),
     setPointer: (pointer) => set({ pointer }),
+    setNotice: (text, tone = "error") => {
+        set({ notice: { text, tone } });
+        clearTimeout(noticeTimer);
+        noticeTimer = setTimeout(() => set({ notice: null }), 4000);
+    },
+    setLastOp: (lastOp) => set({ lastOp }),
     toggleLayer: (layer) =>
         set((s) => ({ layers: { ...s.layers, [layer]: !s.layers[layer] } })),
     setTool: (tool) => set({ tool }),

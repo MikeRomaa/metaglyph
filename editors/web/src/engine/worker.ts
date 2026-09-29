@@ -2,9 +2,11 @@ import * as Comlink from "comlink";
 import init, { Engine } from "../wasm/mg_web.js";
 import type {
     DocState,
+    EditResult,
     EngineResult,
     FontData,
     GlyphScene,
+    Op,
     View,
 } from "./types.ts";
 
@@ -46,6 +48,11 @@ const api = {
         const doc = engine.update(source, version) as DocState;
         if (doc.parseOk) instances = doc.instances;
         return { doc, view: view(engine, instance, glyph) };
+    },
+
+    /** Runs an edit op against document `version`. */
+    async edit(op: Op, version: number): Promise<EditResult> {
+        return (await ready).edit(op, version) as EditResult;
     },
 
     /** Renders the view for `instance` / `glyph` from the last good text. */

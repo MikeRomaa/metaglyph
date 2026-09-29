@@ -234,12 +234,10 @@ impl<'a> Ctx<'a> {
     }
 
     /// A node's whitespace-trimmed source range.
+    /// A node's range without leading or trailing trivia — the same range
+    /// the edit ops look nodes up by.
     fn range(&self, node: &SyntaxNode) -> Range<usize> {
-        let full: Range<usize> = node.text_range().into();
-        let text = &self.model.source[full.clone()];
-        let start = full.start + (text.len() - text.trim_start().len());
-        let end = full.end - (text.len() - text.trim_end().len());
-        start..end.max(start)
+        mg_syntax::edit::node_range(node)
     }
 
     fn span(&self, node: &SyntaxNode) -> Span {

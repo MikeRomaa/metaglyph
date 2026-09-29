@@ -9,9 +9,11 @@
 
 mod doc;
 mod offsets;
+mod ops;
 mod view;
 
 pub use doc::{DiagnosticInfo, DocState, FontInfo, Model, analyze, check};
+pub use ops::{Change, EditResult, Op};
 pub use view::{FontData, GlyphScene, font_data, format_num, glyph_scene};
 use wasm_bindgen::prelude::*;
 
@@ -22,6 +24,9 @@ pub struct Engine {
     /// The last text that parsed. Kept while the text has syntax errors,
     /// so the views show the last good state (plan 5, §1.1).
     model: Option<Model>,
+    /// The newest text, parsed or not, and its version: edit ops run
+    /// against exactly this.
+    current: Option<(String, u32)>,
 }
 
 #[wasm_bindgen]
@@ -38,6 +43,7 @@ impl Engine {
         if model.is_some() {
             self.model = model;
         }
+        self.current = Some((source.to_string(), version));
         Ok(serde_wasm_bindgen::to_value(&state)?)
     }
 
@@ -47,6 +53,17 @@ impl Engine {
     pub fn font_data(&self, instance: &str) -> Result<JsValue, JsError> {
         let data = self.model.as_ref().and_then(|m| font_data(m, instance));
         Ok(serde_wasm_bindgen::to_value(&data)?)
+    }
+
+    /// Runs an edit op (an [`Op`] as JSON) against document `version`,
+    /// returning an [`EditResult`]: the changes to apply, or why not.
+    pub fn edit(&self, op: JsValue, version: u32) -> Result<JsValue, JsError> {
+        let op: Op = serde_wasm_bindgen::from_value(op)?;
+        let result = match &self.current {
+            Some((source, current)) if *current == version => ops::run(source, version, &op),
+            _ => EditResult::Stale,
+        };
+        Ok(serde_wasm_bindgen::to_value(&result)?)
     }
 
     /// [`GlyphScene`] for `glyph` in `instance`, from the last good text.

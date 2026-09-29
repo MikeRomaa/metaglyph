@@ -9,7 +9,7 @@ import { bracketMatching, indentUnit } from "@codemirror/language";
 import type { Diagnostic } from "@codemirror/lint";
 import { lintGutter, setDiagnostics } from "@codemirror/lint";
 import type { Extension } from "@codemirror/state";
-import { EditorState } from "@codemirror/state";
+import { EditorState, Transaction } from "@codemirror/state";
 import {
     drawSelection,
     EditorView,
@@ -22,6 +22,8 @@ import { useEffect, useRef } from "react";
 import { check, onResult } from "../engine/client.ts";
 import type { Sheet } from "../state/store.ts";
 import { useStore } from "../state/store.ts";
+import { setEditorView } from "./editor.ts";
+import { flashExtension } from "./flash.ts";
 import { mgHighlight, mgLanguage } from "./mgLanguage.ts";
 import styles from "./SourcePane.module.css";
 import { highlightExtension, selectionAt, setHighlight } from "./sync.ts";
@@ -42,6 +44,7 @@ function extensions(): Extension[] {
         mgTheme,
         lintGutter(),
         highlightExtension(),
+        flashExtension(),
         keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
         EditorView.updateListener.of((update) => {
             const store = useStore.getState();
@@ -50,6 +53,20 @@ function extensions(): Extension[] {
                 const version = store.version + 1;
                 store.setText(text, version);
                 check(text, version);
+                // The last change's kind, for the footer: a canvas edit's
+                // label (`mg.rename` → `rename`), or typing.
+                for (const tr of update.transactions) {
+                    if (!tr.docChanged) continue;
+                    const event = tr.annotation(Transaction.userEvent);
+                    if (event?.startsWith("mg."))
+                        store.setLastOp(event.slice(3));
+                    else if (
+                        event?.startsWith("input") ||
+                        event?.startsWith("delete")
+                    ) {
+                        store.setLastOp("typing");
+                    }
+                }
             }
             if (update.docChanged || update.selectionSet) {
                 const line = update.state.doc.lineAt(
@@ -91,11 +108,13 @@ export function SourcePane() {
     const depth = useStore((s) => s.undoDepth);
     const saved = useStore((s) => s.saved);
     const doc = useStore((s) => s.doc);
+    const lastOp = useStore((s) => s.lastOp);
 
     useEffect(() => {
         if (!host.current) return;
         const v = new EditorView({ parent: host.current });
         view.current = v;
+        setEditorView(v);
         onResult((result) => {
             useStore.getState().applyResult(result);
             const state = result.doc;
@@ -151,6 +170,7 @@ export function SourcePane() {
         });
         return () => {
             unsubscribe();
+            setEditorView(null);
             v.destroy();
         };
     }, []);
@@ -196,7 +216,14 @@ export function SourcePane() {
                         : `▲ ${problems} problem${problems === 1 ? "" : "s"}`}
                 </span>
                 <span className={styles.undo}>
-                    undo · {depth} step{depth === 1 ? "" : "s"}
+                    undo ·{" "}
+                    {lastOp === null
+                        ? "—"
+                        : lastOp === "typing"
+                          ? "typing"
+                          : `mg.${lastOp}`}
+                    {" · "}
+                    {depth} step{depth === 1 ? "" : "s"}
                 </span>
             </footer>
         </section>

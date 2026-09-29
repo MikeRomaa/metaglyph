@@ -13,7 +13,8 @@ pub mod completion;
 pub mod diagnostics;
 pub mod evaluation;
 pub mod hover;
-pub mod index;
+/// The symbol index, shared with the web editor.
+pub use mg_syntax::index;
 pub mod line_index;
 mod server;
 pub mod symbols;

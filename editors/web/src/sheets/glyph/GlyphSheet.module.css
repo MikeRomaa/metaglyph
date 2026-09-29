@@ -163,6 +163,34 @@
     text-overflow: ellipsis;
 }
 
+button.name {
+    text-decoration: underline dotted var(--rule);
+    text-underline-offset: 3px;
+    cursor: text;
+}
+
+button.name:hover {
+    text-decoration-color: var(--acc);
+}
+
+.rename {
+    min-width: 0;
+    flex: 1;
+    padding: 0 0.25rem;
+    border: 1.5px solid var(--acc);
+    border-radius: 0;
+    background: var(--panel2);
+    color: var(--acc);
+    font: 600 0.9375rem var(--font-mono);
+    outline: none;
+}
+
+.renameError {
+    margin: 0;
+    font: 400 0.6875rem / 1.45 var(--font-sans);
+    color: var(--err);
+}
+
 .kind {
     font: 400 0.6875rem var(--font-sans);
     color: var(--mid);

@@ -1,6 +1,7 @@
 //! Every declaration in one file, and what each name in it refers to
-//! (spec §5.11), for document symbols, go-to-definition, and references
-//! (plan 4, L1).
+//! (spec §5.11), for document symbols, go-to-definition, references
+//! (plan 4, L1) and rename (plan 5, §1.2). Lives here rather than in
+//! mg-lsp so the web editor can use it too.
 //!
 //! Built from the CST rather than the HIR. The HIR keeps expressions as
 //! unresolved `ast::Expr` handles, so it records no use sites to navigate,
@@ -24,8 +25,8 @@
 
 use std::ops::Range;
 
-use mg_syntax::ast::{self, AstNode};
-use mg_syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
+use crate::ast::{self, AstNode};
+use crate::{SyntaxKind, SyntaxNode, SyntaxToken};
 
 /// What a name refers to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,7 +112,7 @@ fn decl(node: &SyntaxNode, name: Option<SyntaxToken>) -> Option<Decl> {
     let name = name?;
     Some(Decl {
         name: name.text().to_string(),
-        range: mg_syntax::trimmed_range(node),
+        range: crate::trimmed_range(node),
         name_range: range_of(&name),
     })
 }
@@ -148,8 +149,8 @@ impl Index {
                         });
                     index.font = Some(Decl {
                         name: "font".to_string(),
-                        range: mg_syntax::trimmed_range(&item),
-                        name_range: mg_syntax::trimmed_range(&item),
+                        range: crate::trimmed_range(&item),
+                        name_range: crate::trimmed_range(&item),
                     });
                 }
                 SyntaxKind::PARAM => index.params.extend(
@@ -177,7 +178,7 @@ impl Index {
                 SyntaxKind::KERN => {
                     let kern = ast::Kern::cast(item.clone()).expect("KERN casts");
                     index.kerns.push(KernEntry {
-                        range: mg_syntax::trimmed_range(&item),
+                        range: crate::trimmed_range(&item),
                         left: ident_field(kern.config(), "left"),
                         right: ident_field(kern.config(), "right"),
                     });
@@ -490,7 +491,7 @@ fn glyph_entry(glyph: &ast::Glyph) -> Option<GlyphEntry> {
                     .unwrap_or_default();
                 entry.paths.push(PathEntry {
                     decl: decl(&item, path.name_token()),
-                    range: mg_syntax::trimmed_range(&item),
+                    range: crate::trimmed_range(&item),
                     segments,
                     follows: ident_field(path.config(), "follows"),
                     has_body: path.body().is_some(),
