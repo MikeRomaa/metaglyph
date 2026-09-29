@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { drivers as fetchDrivers } from "../../engine/client.ts";
 import type {
     FontData,
     GlyphInfo,
@@ -6,6 +7,7 @@ import type {
     PathInfo,
     SegmentKind,
 } from "../../engine/types.ts";
+import { lockText } from "../../engine/types.ts";
 import { fmt, hex, pathKey } from "../../font/lookup.ts";
 import {
     duplicateFollower,
@@ -16,6 +18,12 @@ import {
     setSegmentField,
     setSegmentKind,
 } from "../../state/actions.ts";
+import { dragging, endDrag, scrubDrag, startDrag } from "../../state/drag.ts";
+import {
+    disabledReason,
+    RELATE_TOOLS,
+    startRelate,
+} from "../../state/relate.ts";
 import type { Tool } from "../../state/store.ts";
 import { LAYERS, useStore } from "../../state/store.ts";
 import { Centre, Empty, LeftColumn, Section, sheet } from "../../ui/Sheet.tsx";
@@ -390,11 +398,182 @@ function Inspector({ glyph, scene }: { glyph: GlyphInfo; scene: GlyphScene }) {
             <Section title="Selection" aside={line ? `ln ${line}` : undefined}>
                 {body}
             </Section>
+            {point && <Drivers point={point.name} />}
+            {point && <Constraints point={point.name} scene={scene} />}
             {segment && path && segmentIndex > 0 && (
                 <SegmentProps path={path} index={segmentIndex} />
             )}
             {path && <PathProps path={path} />}
         </>
+    );
+}
+
+/** The literals a drag of `point` would rewrite (plan 5, §1.5): the
+ * driver of each axis marked, Tab to cycle, a slider to scrub the first. */
+function Drivers({ point }: { point: string }) {
+    const info = useStore((s) => s.drivers);
+    const drag = useStore((s) => s.drag);
+    const version = useStore((s) => (s.doc?.evaluated ? s.doc.version : null));
+    const instance = useStore((s) => s.instance);
+    const glyph = useStore((s) => s.glyph);
+
+    // Refresh after every evaluated change (not during a drag, which has
+    // its own).
+    useEffect(() => {
+        if (version === null || !instance || !glyph || drag) return;
+        let live = true;
+        void fetchDrivers(instance, glyph, point).then((next) => {
+            if (live) useStore.getState().setDrivers(next);
+        });
+        return () => {
+            live = false;
+        };
+    }, [point, version, instance, glyph, drag]);
+
+    const shown = drag?.info ?? (info?.target === point ? info : null);
+    if (!shown) return null;
+    const primary = shown.axis[0] ?? shown.axis[1];
+    const axisTitle = shown.track
+        ? "track"
+        : [shown.axis[0] !== null ? "X" : "", shown.axis[1] !== null ? "Y" : ""]
+              .filter(Boolean)
+              .join(" · ");
+    return (
+        <Section
+            title={`Drivers${axisTitle ? ` · ${axisTitle}` : ""}`}
+            aside="Tab cycles"
+        >
+            {shown.drivers.length === 0 && (
+                <p className="note" style={{ margin: 0 }}>
+                    No local literal: this point is set only by top-level
+                    values.
+                </p>
+            )}
+            <div className={styles.drivers}>
+                {shown.drivers.map((d, i) => {
+                    const axes = [
+                        shown.axis[0] === i ? "x" : "",
+                        shown.axis[1] === i ? "y" : "",
+                    ].join("");
+                    return (
+                        <div
+                            // biome-ignore lint/suspicious/noArrayIndexKey: drivers are positional
+                            key={i}
+                            className={styles.driver}
+                            data-on={axes ? true : undefined}
+                        >
+                            <span className={styles.driverMark}>
+                                {axes ? `●${axes}` : "–"}
+                            </span>
+                            <span>
+                                {d.literal} <i>in {d.owner}</i>
+                            </span>
+                            <span className={styles.driverSens}>
+                                {sensitivity(d.sens, d.linear)}
+                            </span>
+                        </div>
+                    );
+                })}
+            </div>
+            {primary !== null && (
+                <Scrub
+                    key={`${point}:${primary}:${shown.drivers[primary].value}`}
+                    point={point}
+                    index={primary}
+                    literal={shown.drivers[primary].literal}
+                    value={shown.drivers[primary].value}
+                />
+            )}
+            {([0, 1] as const).map((a) =>
+                shown.axis[a] === null ? (
+                    <p key={a} className="note" style={{ margin: 0 }}>
+                        <b className={styles.locked}>
+                            {a === 0 ? "X" : "Y"} locked
+                        </b>{" "}
+                        · set by <code>{lockText(shown, a)}</code>. A drag never
+                        moves other points or top-level lets.
+                    </p>
+                ) : null,
+            )}
+            {shown.anchors.length > 0 && shown.axis.some((a) => a !== null) && (
+                <p className={styles.constraintNote}>
+                    Placed from {shown.anchors.join(", ")}: drag those directly.
+                </p>
+            )}
+        </Section>
+    );
+}
+
+/** `×500 x · linear`: how far the point moves per unit of a driver. */
+function sensitivity(sens: [number, number], linear: boolean) {
+    const parts = [0, 1]
+        .filter((a) => Math.abs(sens[a]) > 1e-6)
+        .map((a) => `×${fmt(Math.abs(sens[a]))} ${a === 0 ? "x" : "y"}`);
+    if (parts.length === 0) return "no effect";
+    return `${parts.join(" ")}${linear ? "" : " · curve"}`;
+}
+
+/** Scrubs a driver's literal: one gesture from press to release. */
+function Scrub({
+    point,
+    index,
+    literal,
+    value,
+}: {
+    point: string;
+    index: number;
+    literal: string;
+    value: number;
+}) {
+    const places = literal.match(/\.(\d+)/)?.[1].length ?? 0;
+    const reach = Math.max(Math.abs(value), 1);
+    return (
+        <input
+            type="range"
+            className={styles.scrub}
+            aria-label={`Scrub ${literal}`}
+            min={value - reach}
+            max={value + reach}
+            step={10 ** -places}
+            defaultValue={value}
+            onPointerDown={() => void startDrag(point)}
+            onInput={(e) => scrubDrag(index, Number(e.currentTarget.value))}
+            onPointerUp={() => void endDrag()}
+            onKeyUp={() => void endDrag()}
+            onKeyDown={() => {
+                if (!dragging()) void startDrag(point);
+            }}
+        />
+    );
+}
+
+/** The relationship tools (plan 5, §1.4) for the selected point. */
+function Constraints({ point, scene }: { point: string; scene: GlyphScene }) {
+    const relate = useStore((s) => s.relate);
+    const reasons = RELATE_TOOLS.map((t) => disabledReason(t.kind, scene));
+    const firstReason = reasons.find(Boolean);
+    return (
+        <Section title="Constraints" aside={relate ? "Esc cancels" : undefined}>
+            <div className={styles.constraints}>
+                {RELATE_TOOLS.map((t, i) => (
+                    <button
+                        type="button"
+                        key={t.kind}
+                        className={styles.constraint}
+                        disabled={!!reasons[i]}
+                        data-on={relate?.kind === t.kind || undefined}
+                        title={reasons[i] ?? `${t.name}: ${t.prompt}`}
+                        onClick={() => startRelate(t.kind, point)}
+                    >
+                        <b>{t.kind}</b>
+                        {t.name}
+                    </button>
+                ))}
+            </div>
+            {firstReason && (
+                <p className={styles.constraintNote}>{firstReason}</p>
+            )}
+        </Section>
     );
 }
 

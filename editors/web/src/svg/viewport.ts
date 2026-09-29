@@ -46,11 +46,15 @@ export function viewBox(v: Viewport, w: number, h: number): Box {
 }
 
 /** Tracks an element's size and a zoomable, pannable viewport that fits
- * `box` until the user zooms or pans. */
+ * `box` until the user zooms or pans. The box is taken once, when the
+ * drawing first shows: edits change the content's bounds, and the view
+ * must not move under the pointer while they happen. `reset` fits again,
+ * to the box it is given. Remount (a `key`) to fit new content. */
 export function useViewport(box: Box, insets: Insets) {
     const ref = useRef<SVGSVGElement>(null);
     const [size, setSize] = useState({ w: 0, h: 0 });
     const [manual, setManual] = useState<Viewport | null>(null);
+    const [fitted, setFitted] = useState<Box>(box);
 
     useEffect(() => {
         const el = ref.current;
@@ -63,7 +67,7 @@ export function useViewport(box: Box, insets: Insets) {
         return () => observer.disconnect();
     }, []);
 
-    const view = manual ?? fitView(box, size.w, size.h, insets);
+    const view = manual ?? fitView(fitted, size.w, size.h, insets);
 
     /** The font-unit point under a client position. */
     const toFont = (clientX: number, clientY: number): Pt => {
@@ -100,6 +104,10 @@ export function useViewport(box: Box, insets: Insets) {
         toFont,
         zoomAt,
         panBy,
-        reset: () => setManual(null),
+        /** Fits `to` (the content now), dropping any zoom and pan. */
+        reset: (to: Box) => {
+            setFitted(to);
+            setManual(null);
+        },
     };
 }

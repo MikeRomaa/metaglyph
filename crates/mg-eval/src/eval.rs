@@ -225,6 +225,9 @@ pub(crate) struct EvalCtx<'a> {
     instance: &'a InstanceDecl,
     current_glyph: Option<&'a str>,
     values: &'a IndexMap<NodeId, Value>,
+    /// Values that take precedence over `values`: an editor's
+    /// what-if evaluation (see [`eval_subexpr_with`]).
+    overrides: Option<&'a IndexMap<NodeId, Value>>,
     diagnostics: &'a mut Vec<Diagnostic>,
 }
 
@@ -241,6 +244,7 @@ impl<'a> EvalCtx<'a> {
             instance,
             current_glyph,
             values,
+            overrides: None,
             diagnostics,
         }
     }
@@ -251,6 +255,9 @@ impl<'a> EvalCtx<'a> {
     }
 
     fn value_of(&self, node: &NodeId) -> Value {
+        if let Some(value) = self.overrides.and_then(|o| o.get(node)) {
+            return value.clone();
+        }
         self.values
             .get(node)
             .cloned()
@@ -279,6 +286,25 @@ pub fn eval_subexpr(
 ) -> Option<Value> {
     let mut diagnostics = Vec::new();
     let mut ctx = EvalCtx::new(hir, instance, glyph, values, &mut diagnostics);
+    eval_expr(&mut ctx, expr).ok()
+}
+
+/// [`eval_subexpr`], with `overrides` taking precedence over `values`:
+/// what `expr` would be if those bindings had other values. An editor's
+/// inverse drag (plan 5, §1.5) evaluates a glyph's local `let`s this way
+/// with one literal changed, without re-evaluating the font. `expr` need
+/// not come from the HIR's own syntax tree: names resolve by text.
+pub fn eval_subexpr_with(
+    hir: &Hir,
+    instance: &InstanceDecl,
+    glyph: Option<&str>,
+    values: &IndexMap<NodeId, Value>,
+    overrides: &IndexMap<NodeId, Value>,
+    expr: &ast::Expr,
+) -> Option<Value> {
+    let mut diagnostics = Vec::new();
+    let mut ctx = EvalCtx::new(hir, instance, glyph, values, &mut diagnostics);
+    ctx.overrides = Some(overrides);
     eval_expr(&mut ctx, expr).ok()
 }
 

@@ -61,6 +61,24 @@ export class Gesture {
         };
     }
 
+    /** A step given as the net change from the gesture's start (a drag
+     * solves against the drag-start text): applied now, out of history. */
+    retarget(changes: ChangeSpec): TransactionSpec {
+        const next = ChangeSet.of(changes, this.startDoc.length);
+        const step = this.net.invert(this.startDoc).compose(next);
+        this.net = next;
+        return {
+            changes: step,
+            userEvent: `mg.${this.label}`,
+            annotations: Transaction.addToHistory.of(false),
+        };
+    }
+
+    /** Back to the start, out of history (a cancelled drag). */
+    cancel(): TransactionSpec {
+        return this.retarget([]);
+    }
+
     /** Undo the steps outside history, then redo their net change as one
      * undo step. Dispatch both, in order; empty if nothing changed. */
     finish(): TransactionSpec[] {

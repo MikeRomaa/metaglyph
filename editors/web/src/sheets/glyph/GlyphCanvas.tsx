@@ -7,6 +7,7 @@ import type {
     PathInfo,
     Pt,
 } from "../../engine/types.ts";
+import { lockText } from "../../engine/types.ts";
 import { fmt, pathKey, verticalExtent } from "../../font/lookup.ts";
 import {
     addGuide,
@@ -16,6 +17,8 @@ import {
     pathClick,
     placeComponent,
 } from "../../state/actions.ts";
+import { endDrag, moveDrag, startDrag } from "../../state/drag.ts";
+import { relatePick } from "../../state/relate.ts";
 import type { Selection } from "../../state/store.ts";
 import { useStore } from "../../state/store.ts";
 import { type Box, useViewport, viewBox } from "../../svg/viewport.ts";
@@ -73,6 +76,16 @@ export function GlyphCanvas({
     const down = useRef<{ snap: Snap; x: number; y: number } | null>(null);
     // The first point of a two-point tool (line through, measure).
     const [first, setFirst] = useState<string | null>(null);
+    const relate = useStore((s) => s.relate);
+    const drag = useStore((s) => s.drag);
+    // A point press with the select tool, which becomes a drag once the
+    // pointer moves (plan 5, §1.5).
+    const press = useRef<{
+        target: string;
+        x: number;
+        y: number;
+        started: boolean;
+    } | null>(null);
 
     const { w, h } = vp.size;
     const vb = viewBox(vp.view, w, h);
@@ -86,20 +99,63 @@ export function GlyphCanvas({
     const top = vb[1];
     const bottom = vb[1] + vb[3];
 
-    // Only the select tool picks; other tools pass clicks to the canvas,
-    // which snaps them to the point under the pointer.
+    // A relationship tool takes the picks; otherwise only the select tool
+    // picks (and a point press may become a drag); other tools pass clicks
+    // to the canvas, which snaps them to the point under the pointer.
     const pick =
         (sel: Omit<Selection, "origin">) => (e: React.PointerEvent) => {
-            if (e.button !== 0 || e.altKey || tool !== "V") return;
+            if (e.button !== 0 || e.altKey) return;
+            if (relate) {
+                e.stopPropagation();
+                pickForRelate(sel, vp.toFont(e.clientX, e.clientY));
+                return;
+            }
+            if (tool !== "V") return;
             e.stopPropagation();
             select({ ...sel, origin: "canvas" });
+            if (sel.kind === "point") {
+                press.current = {
+                    target: sel.name,
+                    x: e.clientX,
+                    y: e.clientY,
+                    started: false,
+                };
+                (e.currentTarget as Element)
+                    .closest("svg")
+                    ?.setPointerCapture(e.pointerId);
+            }
         };
 
+    /** A pick for the relationship tool waiting on the canvas: a point, a
+     * named line, or the straight segment of a path nearest the click. */
+    const pickForRelate = (sel: Omit<Selection, "origin">, at: Pt) => {
+        if (sel.kind === "point") {
+            relatePick({ type: "point", name: sel.name });
+        } else if (sel.kind === "line") {
+            relatePick({ type: "line", line: { name: sel.name } });
+        } else if (sel.kind === "path" || sel.kind === "segment") {
+            const key = sel.name.split("/")[0];
+            const path = scene.paths.find((p) => pathKey(p) === key);
+            const line = path && nearestStraight(path, at);
+            if (line) relatePick({ type: "line", line: { through: line } });
+            else {
+                useStore
+                    .getState()
+                    .setNotice(
+                        "Pick a straight segment whose ends are named points.",
+                        "info",
+                    );
+            }
+        }
+    };
+
     /** `raw` snapped (plan 5, "Snapping": position only, never a
-     * reference): to a point within 8 px, else to the 10-unit grid. */
-    const snap = (raw: Pt): Snap => {
+     * reference): to a point within 8 px, else to the 10-unit grid. A
+     * dragged point never snaps to itself. */
+    const snap = (raw: Pt, exclude?: string): Snap => {
         let best: { d: number; at: Pt; name?: string } | null = null;
         const consider = (at: Pt, name?: string) => {
+            if (exclude && name === exclude) return;
             const d = Math.hypot(at[0] - raw[0], at[1] - raw[1]) / k;
             if (d <= 8 && (!best || d < best.d)) best = { d, at, name };
         };
@@ -651,6 +707,11 @@ export function GlyphCanvas({
                     pan.current = { x: e.clientX, y: e.clientY };
                     e.currentTarget.setPointerCapture(e.pointerId);
                     e.preventDefault();
+                } else if (e.button === 0 && relate) {
+                    // Empty canvas: the named point within snapping reach.
+                    const hit = snap(vp.toFont(e.clientX, e.clientY));
+                    if (hit.point)
+                        relatePick({ type: "point", name: hit.point });
                 } else if (e.button === 0 && tool === "V") {
                     select(null);
                 } else if (e.button === 0) {
@@ -671,9 +732,26 @@ export function GlyphCanvas({
                     );
                     pan.current = { x: e.clientX, y: e.clientY };
                 }
+                const p = press.current;
+                if (p && !p.started) {
+                    if (Math.hypot(e.clientX - p.x, e.clientY - p.y) > 3) {
+                        p.started = true;
+                        void startDrag(p.target).then((ok) => {
+                            if (!ok && press.current === p)
+                                press.current = null;
+                        });
+                    }
+                } else if (p?.started) {
+                    moveDrag(
+                        snap(vp.toFont(e.clientX, e.clientY), p.target).at,
+                    );
+                }
             }}
             onPointerUp={(e) => {
                 pan.current = null;
+                const p = press.current;
+                press.current = null;
+                if (p?.started) void endDrag();
                 const start = down.current;
                 down.current = null;
                 if (!start) return;
@@ -691,7 +769,8 @@ export function GlyphCanvas({
                 vp.zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0015))
             }
             onDoubleClick={(e) => {
-                if (e.target === e.currentTarget) vp.reset();
+                if (e.target === e.currentTarget)
+                    vp.reset(glyphBox(font, glyph));
             }}
         >
             <title>{`Glyph ${glyph.name}`}</title>
@@ -705,6 +784,7 @@ export function GlyphCanvas({
                     {layers.dims && dims}
                     {layers.skeleton && skeleton}
                     {toolOverlay}
+                    {drag && <DragTip drag={drag} k={k} />}
                 </>
             )}
         </svg>
@@ -715,6 +795,147 @@ export function GlyphCanvas({
 interface Snap {
     at: Pt;
     point?: string;
+}
+
+/** The straight segment of `path` nearest `at` whose ends are both named
+ * points, as those names. */
+function nearestStraight(path: PathInfo, at: Pt): [string, string] | null {
+    let best: { d: number; ends: [string, string] } | null = null;
+    path.segments.forEach((seg, i) => {
+        const prev = path.segments[i - 1];
+        if (
+            seg.kind !== "line" ||
+            !seg.to ||
+            !seg.toRef ||
+            !prev?.to ||
+            !prev.toRef
+        )
+            return;
+        const d = distanceToSegment(at, prev.to, seg.to);
+        if (!best || d < best.d) best = { d, ends: [prev.toRef, seg.toRef] };
+    });
+    return (best as { ends: [string, string] } | null)?.ends ?? null;
+}
+
+function distanceToSegment(p: Pt, a: Pt, b: Pt) {
+    const [dx, dy] = [b[0] - a[0], b[1] - a[1]];
+    const len2 = dx * dx + dy * dy || 1;
+    const t = Math.max(
+        0,
+        Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2),
+    );
+    return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy);
+}
+
+/** The drag tooltip (the design's INVERSE DRAG box) beside the point, and
+ * the track when one driver moves both axes. */
+function DragTip({
+    drag,
+    k,
+}: {
+    drag: NonNullable<ReturnType<typeof useStore.getState>["drag"]>;
+    k: number;
+}) {
+    const { info, step } = drag;
+    const at = step?.at ?? info.at;
+    const [x, y] = [at[0], Y(at[1])];
+    const axes = info.track
+        ? "track"
+        : [
+              info.axis[0] !== null ? "x" : "",
+              info.axis[1] !== null ? "y" : "",
+          ].join("");
+    const moved = step?.literals ?? [];
+    // The axes' drivers, skipping a locked axis (and any index that is
+    // not a driver, so a bad result can't break rendering).
+    const driven = [
+        ...new Set(
+            info.axis.filter(
+                (i): i is number => typeof i === "number" && i in info.drivers,
+            ),
+        ),
+    ];
+    const lines: string[] = moved.length
+        ? moved
+              .filter(([i]) => i in info.drivers)
+              .map(([i, text]) => `${info.drivers[i].literal} → ${text}`)
+        : driven.map(
+              (i) => `${info.drivers[i].literal} in ${info.drivers[i].owner}`,
+          );
+    const active = driven[0];
+    const driver = active !== undefined ? info.drivers[active] : undefined;
+    const detail = [
+        active !== undefined
+            ? `driver ${active + 1}/${info.drivers.length}`
+            : "",
+        driver ? (driver.linear ? "linear" : "solved") : "",
+        step
+            ? step.limited
+                ? "at limit"
+                : step.exact
+                  ? "exact hit"
+                  : "nearest"
+            : "",
+    ]
+        .filter(Boolean)
+        .join(" · ");
+    const locked = [0, 1]
+        .filter((a) => info.axis[a] === null)
+        .map(
+            (a) =>
+                `⌀ ${a === 0 ? "x" : "y"} locked ← ${lockText(info, a as 0 | 1)}`,
+        );
+    const rows = [...lines, detail, ...locked, "Tab next driver · Esc cancel"];
+    const width = 250 * k;
+    const lh = 15 * k;
+    const bx = x + 18 * k;
+    const by = y - 18 * k - (rows.length + 1) * lh - 8 * k;
+    return (
+        <g className={styles.dragTip}>
+            {info.trackPoints.length > 1 && (
+                <path
+                    d={info.trackPoints
+                        .map(([px, py], i) => `${i ? "L" : "M"}${px} ${Y(py)}`)
+                        .join(" ")}
+                    className={styles.track}
+                />
+            )}
+            <rect
+                x={bx}
+                y={by}
+                width={width}
+                height={(rows.length + 1) * lh + 8 * k}
+                className={styles.tipBox}
+            />
+            <rect
+                x={bx}
+                y={by}
+                width={width}
+                height={lh + 4 * k}
+                className={styles.tipHead}
+            />
+            <text
+                x={bx + 8 * k}
+                y={by + lh - 1 * k}
+                fontSize={10.5 * k}
+                className={styles.tipTitle}
+            >
+                {`INVERSE DRAG · ${info.target}.${axes}`}
+            </text>
+            {rows.map((row, i) => (
+                <text
+                    // biome-ignore lint/suspicious/noArrayIndexKey: rows are positional
+                    key={i}
+                    x={bx + 8 * k}
+                    y={by + (i + 2) * lh}
+                    fontSize={(i < lines.length ? 12 : 10) * k}
+                    className={styles.tipText}
+                >
+                    {row}
+                </text>
+            ))}
+        </g>
+    );
 }
 
 /** A measurement: a dimension along `a`–`b`, offset to one side. */

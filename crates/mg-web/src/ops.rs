@@ -95,6 +95,52 @@ pub enum Op {
         target: String,
         offset: Pt,
     },
+    /// A relationship tool (plan 5, §1.4): rewrite the local point `let`
+    /// at `span` as `relation`.
+    #[serde(rename_all = "camelCase")]
+    Relate { span: [usize; 2], relation: Relation },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum Relation {
+    /// `b`
+    Coincident { b: String },
+    /// `meet(l1, l2)`
+    Meet { l1: LineRef, l2: LineRef },
+    /// `project((x, y), line)`, from the point's current position.
+    Project { at: Pt, line: LineRef },
+    /// `mediate(a, b, t)`.
+    Fraction { a: String, b: String, t: f64 },
+    /// `polar(q, len, θdeg)`.
+    Polar { q: String, len: f64, angle: f64 },
+    /// `mirror(q, axis)`.
+    Mirror { q: String, axis: LineRef },
+}
+
+/// A line: a named `let`, or `lineThrough(a, b)` of two named points (a
+/// straight segment's ends).
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum LineRef {
+    Named { name: String },
+    Through { through: [String; 2] },
+}
+
+impl LineRef {
+    fn text(&self) -> String {
+        match self {
+            LineRef::Named { name } => name.clone(),
+            LineRef::Through { through: [a, b] } => format!("lineThrough({a}, {b})"),
+        }
+    }
+
+    fn names(&self) -> Vec<&str> {
+        match self {
+            LineRef::Named { name } => vec![name],
+            LineRef::Through { through } => through.iter().map(String::as_str).collect(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -481,7 +527,102 @@ fn apply(
                 name: target.clone(),
             }))
         }
+        Op::Relate { span: at, relation } => {
+            relate(s, span(at), relation)?;
+            Ok(None)
+        }
     }
+}
+
+/// A relationship tool's rewrite of the point `let` at `range` (plan 5,
+/// §1.4). Refused for a top-level `let`, and when the new expression
+/// would make the point depend on itself.
+fn relate(
+    s: &mut Session,
+    range: std::ops::Range<usize>,
+    relation: &Relation,
+) -> OpResult<()> {
+    let (text, refs): (String, Vec<&str>) = match relation {
+        Relation::Coincident { b } => (b.clone(), vec![b]),
+        Relation::Meet { l1, l2 } => (
+            format!("meet({}, {})", l1.text(), l2.text()),
+            l1.names().into_iter().chain(l2.names()).collect(),
+        ),
+        Relation::Project { at, line } => (
+            format!("project({}, {})", point_text(*at), line.text()),
+            line.names(),
+        ),
+        Relation::Fraction { a, b, t } => (
+            format!("mediate({a}, {b}, {t:.3})"),
+            vec![a.as_str(), b.as_str()],
+        ),
+        Relation::Polar { q, len, angle } => (
+            format!("polar({q}, {}, {angle:.1}deg)", coord(*len)),
+            vec![q.as_str()],
+        ),
+        Relation::Mirror { q, axis } => (
+            format!("mirror({q}, {})", axis.text()),
+            std::iter::once(q.as_str()).chain(axis.names()).collect(),
+        ),
+    };
+    s.step(|_, root| {
+        let node = decl_at(root, range).ok_or("That point is no longer in the source.")?;
+        if node.kind() != SyntaxKind::LET_STMT {
+            return Err("Select a point `let`.".to_string());
+        }
+        let glyph = node
+            .ancestors()
+            .find_map(ast::Glyph::cast)
+            .ok_or("Top-level lets are never rewritten by a tool.")?;
+        let target = name_of(&node).ok_or("This `let` has no name.")?;
+        if let Some(name) = refs.iter().find(|r| depends_on(&glyph, r, &target)) {
+            return Err(format!("`{name}` depends on `{target}`: that would be a cycle."));
+        }
+        let value = ast::LetStmt::cast(node)
+            .and_then(|l| l.value())
+            .ok_or("This `let` has no value.")?;
+        Ok(vec![edit::replace_expr(&value, &text)])
+    })
+}
+
+/// Whether local `name` in `glyph` is, or depends through the glyph's
+/// `let`s on, `target`.
+fn depends_on(glyph: &ast::Glyph, name: &str, target: &str) -> bool {
+    let Some(body) = glyph.body() else {
+        return name == target;
+    };
+    let lets: std::collections::HashMap<String, Vec<String>> = body
+        .items()
+        .filter_map(ast::LetStmt::cast)
+        .filter_map(|l| {
+            let name = l.name_token()?.text().to_string();
+            let deps = l
+                .value()
+                .map(|v| {
+                    v.syntax()
+                        .descendants()
+                        .filter_map(ast::IdentExpr::cast)
+                        .filter_map(|i| i.token().map(|t| t.text().to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some((name, deps))
+        })
+        .collect();
+    let mut stack = vec![name.to_string()];
+    let mut seen = HashSet::new();
+    while let Some(n) = stack.pop() {
+        if n == target {
+            return true;
+        }
+        if !seen.insert(n.clone()) {
+            continue;
+        }
+        if let Some(deps) = lets.get(&n) {
+            stack.extend(deps.iter().cloned());
+        }
+    }
+    false
 }
 
 /// Fails the op if the text no longer parses (a typed value that isn't
@@ -1203,6 +1344,68 @@ mod tests {
         };
         let (unfilled, _) = run_on(&filled, &unfill);
         assert!(unfilled.contains("(stroke: 50, caps: \"round\") {\n        start (at: stem0)\n        line  (to: stem1)\n        close\n    }"));
+    }
+
+    #[test]
+    fn relationship_tools_rewrite_one_let() {
+        let stem1 = span_of("let stem1 = (1, 1);");
+        let cases: Vec<(Relation, &str)> = vec![
+            (Relation::Coincident { b: "stem0".into() }, "let stem1 = stem0;"),
+            (
+                Relation::Fraction {
+                    a: "stem0".into(),
+                    b: "stem0".into(),
+                    t: 0.56249,
+                },
+                "let stem1 = mediate(stem0, stem0, 0.562);",
+            ),
+            (
+                Relation::Polar {
+                    q: "stem0".into(),
+                    len: 266.5,
+                    angle: 143.04,
+                },
+                "let stem1 = polar(stem0, 267, 143.0deg);",
+            ),
+            (
+                Relation::Project {
+                    at: [1.0, 1.0],
+                    line: LineRef::Through {
+                        through: ["stem0".into(), "stem0".into()],
+                    },
+                },
+                "let stem1 = project((1, 1), lineThrough(stem0, stem0));",
+            ),
+        ];
+        for (relation, expected) in cases {
+            let op = Op::Relate {
+                span: stem1,
+                relation,
+            };
+            let (text, _) = run_on(SRC, &op);
+            assert!(text.contains(expected), "{expected}\n{text}");
+        }
+    }
+
+    #[test]
+    fn relationship_tools_refuse_cycles_and_top_level() {
+        // stem0 would become `stem1`, and stem1 is then made `stem0`.
+        let src = SRC.replace("let stem0 = (0, 0);", "let stem0 = stem1;");
+        let op = Op::Relate {
+            span: span_in(&src, "let stem1 = (1, 1);"),
+            relation: Relation::Coincident { b: "stem0".into() },
+        };
+        assert_eq!(
+            run(&src, 1, &op),
+            EditResult::Invalid {
+                message: "`stem0` depends on `stem1`: that would be a cycle.".into()
+            }
+        );
+        let top = Op::Relate {
+            span: span_of("let h = 1000;"),
+            relation: Relation::Coincident { b: "x".into() },
+        };
+        assert!(matches!(run(SRC, 1, &top), EditResult::Invalid { .. }));
     }
 
     #[test]

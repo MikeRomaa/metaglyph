@@ -1,6 +1,8 @@
 import { useEffect } from "react";
 import { redoEdit, undoEdit } from "../source/editor.ts";
 import { deleteSelection, endPath } from "./actions.ts";
+import { cycleDrag, cyclePreferred, dragging, endDrag } from "./drag.ts";
+import { cancelRelate } from "./relate.ts";
 import { useStore } from "./store.ts";
 
 /** Whether a key event belongs to something the user is typing in. */
@@ -9,15 +11,40 @@ export function isTyping(e: KeyboardEvent) {
     return !!target?.closest("input, textarea, select, .cm-editor");
 }
 
+/** The axis Tab cycles: x, or y when x has no driver; Shift: y. */
+function tabAxis(
+    e: KeyboardEvent,
+    axis: [number | null, number | null],
+): 0 | 1 {
+    if (e.shiftKey) return 1;
+    return axis[0] === null ? 1 : 0;
+}
+
 /** Edit shortcuts outside the source pane (it has its own): undo and redo
- * act on the one text history; Delete removes the selection. */
+ * act on the one text history; Delete removes the selection; Tab cycles a
+ * point's driver (plan 5, §1.5); Escape cancels what is in progress. */
 export function useEditShortcuts() {
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             if (isTyping(e)) return;
+            const s = useStore.getState();
             const mod = e.ctrlKey || e.metaKey;
             const key = e.key.toLowerCase();
-            if (mod && key === "z") {
+
+            if (e.key === "Tab" && !mod) {
+                const info = s.drag?.info ?? s.drivers;
+                const point =
+                    s.selection?.kind === "point" ? s.selection.name : null;
+                if (!info || (!dragging() && !point)) return;
+                e.preventDefault();
+                const axis = tabAxis(e, info.axis);
+                if (dragging()) void cycleDrag(axis);
+                else if (point) {
+                    void cyclePreferred(point, axis).then((next) => {
+                        if (next) useStore.getState().setDrivers(next);
+                    });
+                }
+            } else if (mod && key === "z") {
                 e.preventDefault();
                 if (e.shiftKey) redoEdit();
                 else undoEdit();
@@ -25,14 +52,17 @@ export function useEditShortcuts() {
                 e.preventDefault();
                 redoEdit();
             } else if (!mod && (e.key === "Delete" || e.key === "Backspace")) {
-                if (!useStore.getState().selection) return;
+                if (!s.selection || dragging()) return;
                 e.preventDefault();
                 deleteSelection();
-            } else if (e.key === "Escape" || e.key === "Enter") {
-                // Ends a path in progress first; then clears the selection.
-                const s = useStore.getState();
-                if (s.draft) endPath();
-                else if (e.key === "Escape") s.select(null);
+            } else if (e.key === "Escape") {
+                // The innermost thing in progress first.
+                if (dragging()) void endDrag(true);
+                else if (s.relate) cancelRelate();
+                else if (s.draft) endPath();
+                else s.select(null);
+            } else if (e.key === "Enter" && s.draft) {
+                endPath();
             }
         };
         window.addEventListener("keydown", onKey);

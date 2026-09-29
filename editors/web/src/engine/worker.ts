@@ -2,6 +2,8 @@ import * as Comlink from "comlink";
 import init, { Engine } from "../wasm/mg_web.js";
 import type {
     DocState,
+    DragInfo,
+    DragStep,
     EditResult,
     EngineResult,
     FontData,
@@ -55,6 +57,44 @@ const api = {
     /** Runs an edit op against document `version`. */
     async edit(op: Op, version: number): Promise<EditResult> {
         return (await ready).edit(op, version) as EditResult;
+    },
+
+    /** What dragging `target` would change; null if it can't be dragged. */
+    async drivers(
+        instance: string,
+        glyph: string,
+        target: string,
+    ): Promise<DragInfo | null> {
+        return ((await ready).drivers(instance, glyph, target) ??
+            null) as DragInfo | null;
+    },
+
+    /** Starts a point drag on document `version`. */
+    async dragBegin(
+        instance: string,
+        glyph: string,
+        target: string,
+        version: number,
+    ): Promise<DragInfo | null> {
+        return ((await ready).dragBegin(instance, glyph, target, version) ??
+            null) as DragInfo | null;
+    },
+
+    async dragTo(x: number, y: number): Promise<DragStep | null> {
+        return ((await ready).dragTo(x, y) ?? null) as DragStep | null;
+    },
+
+    async dragSet(driver: number, value: number): Promise<DragStep | null> {
+        return ((await ready).dragSet(driver, value) ??
+            null) as DragStep | null;
+    },
+
+    async dragCycle(axis: number): Promise<DragInfo | null> {
+        return ((await ready).dragCycle(axis) ?? null) as DragInfo | null;
+    },
+
+    async dragEnd(glyph: string): Promise<void> {
+        (await ready).dragEnd(glyph);
     },
 
     /** Renders the view for `instance` / `glyph` from the last good text. */

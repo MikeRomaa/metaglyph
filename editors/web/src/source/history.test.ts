@@ -72,6 +72,30 @@ describe("Gesture", () => {
         expect(doc.get().doc.toString()).toBe("let a = (0.561 * w, h);");
     });
 
+    it("retargets from the start text, then commits one step", () => {
+        const doc = start("let a = (0.500 * w, h);");
+        const gesture = new Gesture(doc.get(), "drag");
+        // Each step is the whole change from the start, as a drag solves.
+        for (const value of ["0.51", "0.5234", "0.561"]) {
+            doc.apply(gesture.retarget({ from: 9, to: 14, insert: value }));
+            expect(doc.get().doc.toString()).toBe(`let a = (${value} * w, h);`);
+        }
+        for (const spec of gesture.finish()) doc.apply(spec);
+        expect(undoDepth(doc.get())).toBe(1);
+        doc.run(undo);
+        expect(doc.get().doc.toString()).toBe("let a = (0.500 * w, h);");
+    });
+
+    it("cancels back to the start with no history", () => {
+        const doc = start("let a = 1;");
+        const gesture = new Gesture(doc.get(), "drag");
+        doc.apply(gesture.retarget({ from: 8, to: 9, insert: "7" }));
+        doc.apply(gesture.cancel());
+        expect(doc.get().doc.toString()).toBe("let a = 1;");
+        expect(gesture.finish()).toEqual([]);
+        expect(undoDepth(doc.get())).toBe(0);
+    });
+
     it("leaves no history for a gesture that changed nothing", () => {
         const doc = start("let a = 1;");
         const gesture = new Gesture(doc.get(), "drag");

@@ -19,7 +19,7 @@ import { useStore } from "./store.ts";
 
 /** Resolves once the views reflect the current text, so spans read from
  * them match what the engine will edit. */
-function settled(): Promise<void> {
+export function settled(): Promise<void> {
     const ready = () => {
         const s = useStore.getState();
         return s.doc?.version === s.version;

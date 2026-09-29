@@ -220,7 +220,8 @@ export type Op =
     | { op: "removeField"; span: Span; name: string }
     | { op: "setFill"; span: Span; on: boolean }
     | { op: "duplicateFollower"; span: Span }
-    | { op: "addComponent"; glyph: string; target: string; offset: Pt };
+    | { op: "addComponent"; glyph: string; target: string; offset: Pt }
+    | { op: "relate"; span: Span; relation: Relation };
 
 export type LineSpec =
     | { kind: "through"; a: string; b: string }
@@ -258,6 +259,69 @@ export type EditResult =
     | { status: "stale" }
     | { status: "readOnly" }
     | { status: "invalid"; message: string };
+
+/** One literal a point drag can rewrite (crates/mg-web/src/drag.rs). */
+export interface DriverInfo {
+    literal: string;
+    /** The `let` whose expression holds it. */
+    owner: string;
+    value: number;
+    /** How far the point moves per unit of the literal, per axis. */
+    sens: Pt;
+    linear: boolean;
+}
+
+export interface DragInfo {
+    target: string;
+    at: Pt;
+    drivers: DriverInfo[];
+    /** The driver for x and for y; null: that axis is locked. */
+    axis: [number | null, number | null];
+    /** One driver moves both axes: the point follows its track. */
+    track: boolean;
+    trackPoints: Pt[];
+    /** For a locked axis: the top-level names it depends on. */
+    lockedBy: [string[], string[]];
+    /** Other points the target is placed from: a drag never moves them
+     * (they are dragged directly), so they lock what they set. */
+    anchors: string[];
+}
+
+/** What locks an axis, for messages: `stem1, stem2 (points) · h
+ * (top-level)`. */
+export function lockText(info: DragInfo, axis: 0 | 1): string {
+    const parts = [
+        info.anchors.length ? `${info.anchors.join(", ")} (points)` : "",
+        info.lockedBy[axis].length
+            ? `${info.lockedBy[axis].join(", ")} (top-level)`
+            : "",
+    ].filter(Boolean);
+    return parts.join(" · ") || "no local literal";
+}
+
+export interface DragStep {
+    /** Changes to the drag-start text. */
+    changes: Change[];
+    at: Pt;
+    /** Each moved driver's new literal text. */
+    literals: [number, string][];
+    exact: boolean;
+    /** A driver stopped at its extreme: further would make the source
+     * invalid. */
+    limited: boolean;
+}
+
+/** A relationship tool's rewrite (plan 5, §1.4). */
+export type Relation =
+    | { kind: "coincident"; b: string }
+    | { kind: "meet"; l1: LineRef; l2: LineRef }
+    | { kind: "project"; at: Pt; line: LineRef }
+    | { kind: "fraction"; a: string; b: string; t: number }
+    | { kind: "polar"; q: string; len: number; angle: number }
+    | { kind: "mirror"; q: string; axis: LineRef };
+
+/** A named line, or `lineThrough` two named points. */
+export type LineRef = { name: string } | { through: [string, string] };
 
 export interface EngineResult {
     doc?: DocState;

@@ -1,6 +1,6 @@
 import * as Comlink from "comlink";
 import { useStore } from "../state/store.ts";
-import type { EditResult, EngineResult, Op } from "./types.ts";
+import type { DragStep, EditResult, EngineResult, Op, Pt } from "./types.ts";
 import type { EngineApi } from "./worker.ts";
 
 function start() {
@@ -28,11 +28,20 @@ function restart() {
 let running = false;
 let pendingText: { source: string; version: number } | null = null;
 let pendingView = false;
-const pendingEdits: {
-    op: Op;
-    version: number;
-    resolve: (result: EditResult) => void;
+type Remote = Comlink.Remote<EngineApi>;
+
+/** Engine calls after the pending check, in order. */
+const pendingCalls: {
+    run: (engine: Remote) => Promise<unknown>;
+    resolve: (result: unknown) => void;
+    fallback: unknown;
 }[] = [];
+/** The newest drag move; a newer one replaces it (resolving it with
+ * null), so a slow solve never builds a backlog. */
+let pendingDrag: {
+    at: Pt;
+    resolve: (step: DragStep | null) => void;
+} | null = null;
 let listener: ((result: EngineResult) => void) | null = null;
 
 /** Receives every result, in order. A result's `doc` may be for a version
@@ -55,19 +64,71 @@ export function requestView() {
     if (!running) void drain();
 }
 
-/** Runs an edit op against document `version`. Queued behind any pending
- * check, so the engine has seen that version's text first. */
-export function runEdit(op: Op, version: number): Promise<EditResult> {
+/** Queues an engine call behind any pending check, so the engine has seen
+ * the current text first. `fallback` is the result if the call fails. */
+function call<T>(run: (engine: Remote) => Promise<T>, fallback: T): Promise<T> {
     return new Promise((resolve) => {
-        pendingEdits.push({ op, version, resolve });
+        pendingCalls.push({
+            run,
+            resolve: resolve as (result: unknown) => void,
+            fallback,
+        });
         if (!running) void drain();
     });
+}
+
+/** Runs an edit op against document `version`. */
+export function runEdit(op: Op, version: number): Promise<EditResult> {
+    return call((e) => e.edit(op, version), {
+        status: "invalid",
+        message: "The edit failed.",
+    } as EditResult);
+}
+
+export function drivers(instance: string, glyph: string, target: string) {
+    return call((e) => e.drivers(instance, glyph, target), null);
+}
+
+export function dragBegin(
+    instance: string,
+    glyph: string,
+    target: string,
+    version: number,
+) {
+    return call((e) => e.dragBegin(instance, glyph, target, version), null);
+}
+
+/** The drag step for the pointer at `at`; null if a newer move replaced
+ * this one before it ran. */
+export function dragTo(at: Pt): Promise<DragStep | null> {
+    return new Promise((resolve) => {
+        pendingDrag?.resolve(null);
+        pendingDrag = { at, resolve };
+        if (!running) void drain();
+    });
+}
+
+export function dragSet(driver: number, value: number) {
+    return call((e) => e.dragSet(driver, value), null);
+}
+
+export function dragCycle(axis: number) {
+    return call((e) => e.dragCycle(axis), null);
+}
+
+export function dragEnd(glyph: string) {
+    return call((e) => e.dragEnd(glyph), undefined);
 }
 
 async function drain() {
     running = true;
     let failures = 0;
-    while (pendingText || pendingView || pendingEdits.length > 0) {
+    while (
+        pendingText ||
+        pendingView ||
+        pendingDrag ||
+        pendingCalls.length > 0
+    ) {
         if (pendingText || pendingView) {
             const text = pendingText;
             pendingText = null;
@@ -93,13 +154,27 @@ async function drain() {
             }
             continue;
         }
-        const job = pendingEdits.shift();
-        if (!job) continue;
+        // Calls in order; a drag move goes after any calls queued before
+        // it (its drag's begin, say).
+        const job = pendingCalls.shift();
+        if (job) {
+            try {
+                job.resolve(await job.run(current.engine));
+            } catch (error) {
+                console.error("mg engine call failed", error);
+                job.resolve(job.fallback);
+                restart();
+            }
+            continue;
+        }
+        const move = pendingDrag;
+        pendingDrag = null;
+        if (!move) continue;
         try {
-            job.resolve(await current.engine.edit(job.op, job.version));
+            move.resolve(await current.engine.dragTo(move.at[0], move.at[1]));
         } catch (error) {
-            console.error("mg edit failed", error);
-            job.resolve({ status: "invalid", message: "The edit failed." });
+            console.error("mg drag failed", error);
+            move.resolve(null);
             restart();
         }
     }

@@ -1,9 +1,12 @@
 import { create } from "zustand";
 import type {
     DocState,
+    DragInfo,
+    DragStep,
     EngineResult,
     FontData,
     GlyphScene,
+    LineRef,
     Pt,
     Span,
 } from "../engine/types.ts";
@@ -37,6 +40,14 @@ export const LAYERS: { key: Layer; label: string }[] = [
 ];
 
 export type Tool = "V" | "P" | "." | "L" | "G" | "M" | "C";
+
+/** The relationship tools (plan 5, §1.4), as the design abbreviates them. */
+export type RelateKind = "CO" | "IX" | "PJ" | "FR" | "PL" | "MR";
+
+/** A relationship tool's pick: a named point, or a line. */
+export type RelatePick =
+    | { type: "point"; name: string }
+    | { type: "line"; line: LineRef };
 
 export type SelectionKind =
     | "point"
@@ -110,6 +121,13 @@ interface Store {
     lastPath: string | null;
     /** The glyph the component tool places. */
     componentTarget: string | null;
+    /** A point drag in progress (plan 5, §1.5): what it drives, and its
+     * latest step. */
+    drag: { target: string; info: DragInfo; step: DragStep | null } | null;
+    /** A relationship tool waiting for its picks (plan 5, §1.4). */
+    relate: { kind: RelateKind; target: string; picks: RelatePick[] } | null;
+    /** The selected point's drivers, for the DRIVERS panel. */
+    drivers: DragInfo | null;
     // Glyphs sheet.
     charset: number;
     picked: number[];
@@ -139,6 +157,9 @@ interface Store {
     setDraft(draft: Store["draft"]): void;
     setLastPath(path: string | null): void;
     setComponentTarget(glyph: string | null): void;
+    setDrag(drag: Store["drag"]): void;
+    setRelate(relate: Store["relate"]): void;
+    setDrivers(drivers: DragInfo | null): void;
     setCharset(charset: number): void;
     setPicked(picked: number[]): void;
     setSpacingText(text: string): void;
@@ -184,6 +205,9 @@ export const useStore = create<Store>()((set) => ({
     draft: null,
     lastPath: null,
     componentTarget: null,
+    drag: null,
+    relate: null,
+    drivers: null,
     layers: {
         metrics: true,
         guides: true,
@@ -301,6 +325,9 @@ export const useStore = create<Store>()((set) => ({
     setDraft: (draft) => set({ draft }),
     setLastPath: (lastPath) => set({ lastPath }),
     setComponentTarget: (componentTarget) => set({ componentTarget }),
+    setDrag: (drag) => set({ drag }),
+    setRelate: (relate) => set({ relate }),
+    setDrivers: (drivers) => set({ drivers }),
     setCharset: (charset) => set({ charset, picked: [] }),
     setPicked: (picked) => set({ picked }),
     setSpacingText: (spacingText) => set({ spacingText }),
