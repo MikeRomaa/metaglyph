@@ -264,6 +264,24 @@ fn value_num(ctx: &mut EvalCtx, expr: &ast::Expr) -> Result<f64, ()> {
         .expect("mg-hir already type-checked this as `num`"))
 }
 
+/// Evaluates `expr` against an evaluation's `values`, as if it appeared in
+/// `glyph`'s body (`None`: top level). For reading a subexpression of a
+/// binding that evaluated successfully, such as the origin argument of a
+/// `polar` call, so an editor can draw it; every node `expr` references
+/// must be in `values`, which holds for any subexpression of a binding
+/// that has a value. Diagnostics are discarded.
+pub fn eval_subexpr(
+    hir: &Hir,
+    instance: &InstanceDecl,
+    glyph: Option<&str>,
+    values: &IndexMap<NodeId, Value>,
+    expr: &ast::Expr,
+) -> Option<Value> {
+    let mut diagnostics = Vec::new();
+    let mut ctx = EvalCtx::new(hir, instance, glyph, values, &mut diagnostics);
+    eval_expr(&mut ctx, expr).ok()
+}
+
 fn eval_expr(ctx: &mut EvalCtx, expr: &ast::Expr) -> Result<Value, ()> {
     use ast::Expr;
     match expr {

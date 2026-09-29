@@ -1,5 +1,7 @@
 use indexmap::IndexMap;
-use mg_diag::Severity;
+use mg_diag::{Diagnostic, Severity};
+use mg_eval::EvalOutcome;
+use mg_hir::Hir;
 use mg_syntax::ast::AstNode;
 use serde::Serialize;
 
@@ -41,9 +43,25 @@ pub struct FontInfo {
     pub em: Option<i64>,
 }
 
+/// A document that parsed: its HIR and every instance's evaluation, kept
+/// so the views can be queried without re-evaluating (plan 6, W2).
+pub struct Model {
+    pub source: String,
+    pub hir: Hir,
+    /// Instance name → its evaluation.
+    pub outcomes: IndexMap<String, EvalOutcome>,
+    /// Every diagnostic, byte spans, sorted by start.
+    pub diagnostics: Vec<Diagnostic>,
+}
+
 /// Parses, lowers and evaluates `source` in every instance, the way
 /// `mg check` does plus evaluation (as the LSP does).
 pub fn check(source: &str, version: u32) -> DocState {
+    analyze(source, version).0
+}
+
+/// [`check`], plus the [`Model`] when the text parsed.
+pub fn analyze(source: &str, version: u32) -> (DocState, Option<Model>) {
     let parsed = mg_syntax::parse(source);
     let parse_ok = !parsed
         .diagnostics
@@ -60,6 +78,7 @@ pub fn check(source: &str, version: u32) -> DocState {
     };
 
     let mut diagnostics = parsed.diagnostics.clone();
+    let mut model = None;
     // Same reason as `mg check`: recovery from a syntax error can misplace
     // whole declarations, and the HIR errors that follow only restate it.
     if parse_ok {
@@ -68,7 +87,13 @@ pub fn check(source: &str, version: u32) -> DocState {
         let (hir, hir_diagnostics) = mg_hir::lower(&source_file);
         diagnostics.extend(hir_diagnostics);
         diagnostics.extend(mg_font::build::check_codepoints(&hir));
-        diagnostics.extend(evaluation_diagnostics(&hir));
+
+        let outcomes: IndexMap<String, EvalOutcome> = hir
+            .instances
+            .values()
+            .map(|instance| (instance.name.clone(), mg_eval::evaluate(&hir, instance).1))
+            .collect();
+        diagnostics.extend(evaluation_diagnostics(&outcomes));
 
         state.font = Some(FontInfo {
             name: hir.font.name.clone(),
@@ -79,6 +104,7 @@ pub fn check(source: &str, version: u32) -> DocState {
         });
         state.instances = hir.instances.keys().cloned().collect();
         state.glyph_count = hir.glyphs.len();
+        model = Some((hir, outcomes));
     }
 
     diagnostics.sort_by_key(|d| d.primary.span.start);
@@ -107,19 +133,25 @@ pub fn check(source: &str, version: u32) -> DocState {
             }
         })
         .collect();
-    state
+
+    let model = model.map(|(hir, outcomes)| Model {
+        source: source.to_string(),
+        hir,
+        outcomes,
+        diagnostics,
+    });
+    (state, model)
 }
 
 /// Every instance's evaluation diagnostics, each distinct one once, with the
 /// instances it fired in appended to its message. Mirrors
 /// `mg_lsp::evaluation::diagnostics`, which can't be used here because
 /// mg-lsp depends on `lsp-server`.
-fn evaluation_diagnostics(hir: &mg_hir::Hir) -> Vec<mg_diag::Diagnostic> {
+fn evaluation_diagnostics(outcomes: &IndexMap<String, EvalOutcome>) -> Vec<Diagnostic> {
     type Key = (&'static str, String, std::ops::Range<usize>);
-    let mut merged: IndexMap<Key, (mg_diag::Diagnostic, Vec<&str>)> = IndexMap::new();
-    for instance in hir.instances.values() {
-        let (_, outcome) = mg_eval::evaluate(hir, instance);
-        for diagnostic in outcome.diagnostics {
+    let mut merged: IndexMap<Key, (Diagnostic, Vec<&str>)> = IndexMap::new();
+    for (instance, outcome) in outcomes {
+        for diagnostic in &outcome.diagnostics {
             let key = (
                 diagnostic.code.as_str(),
                 diagnostic.message.clone(),
@@ -127,12 +159,12 @@ fn evaluation_diagnostics(hir: &mg_hir::Hir) -> Vec<mg_diag::Diagnostic> {
             );
             merged
                 .entry(key)
-                .or_insert_with(|| (diagnostic, Vec::new()))
+                .or_insert_with(|| (diagnostic.clone(), Vec::new()))
                 .1
-                .push(&instance.name);
+                .push(instance);
         }
     }
-    let many = hir.instances.len() > 1;
+    let many = outcomes.len() > 1;
     merged
         .into_values()
         .map(|(mut diagnostic, instances)| {

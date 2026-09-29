@@ -230,16 +230,7 @@ fn realize_arc(
     sweep: Sweep,
     arc_tolerance: f64,
 ) -> Result<usize, SkeletonError> {
-    let (center, rx, ry) = match geometry {
-        ArcGeometry::Center(center) => {
-            let (rx, ry) = fit_ellipse(p, to, center, arc_tolerance)?;
-            (center, rx, ry)
-        }
-        ArcGeometry::Radii { rx, ry, large } => {
-            let center = solve_center_from_radii(p, to, rx, ry, large, sweep, arc_tolerance)?;
-            (center, rx, ry)
-        }
-    };
+    let (center, rx, ry) = arc_ellipse(p, to, geometry, sweep, arc_tolerance)?;
 
     let pieces = arc_cubics(p, to, center, rx, ry, sweep);
     let piece_count = pieces.len();
@@ -248,6 +239,29 @@ fn realize_arc(
     }
 
     Ok(piece_count)
+}
+
+/// The ellipse an `arc` from `p` to `to` runs along (spec §6.3), as
+/// `(center, rx, ry)`: centre mode solves the radii, radii mode the
+/// centre. [`realize`] draws the arc on it; an editor uses it to annotate
+/// the arc's centre and radius.
+pub fn arc_ellipse(
+    p: Point,
+    to: Point,
+    geometry: ArcGeometry,
+    sweep: Sweep,
+    arc_tolerance: f64,
+) -> Result<(Point, f64, f64), SkeletonError> {
+    match geometry {
+        ArcGeometry::Center(center) => {
+            let (rx, ry) = fit_ellipse(p, to, center, arc_tolerance)?;
+            Ok((center, rx, ry))
+        }
+        ArcGeometry::Radii { rx, ry, large } => {
+            let center = solve_center_from_radii(p, to, rx, ry, large, sweep, arc_tolerance)?;
+            Ok((center, rx, ry))
+        }
+    }
 }
 
 /// The `⌈Δ/90°⌉` cubic pieces (spec §6.3) of the arc of the ellipse

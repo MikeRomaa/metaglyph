@@ -602,9 +602,11 @@ name = "mg-web"
 version = "0.1.0"
 dependencies = [
  "indexmap",
+ "kurbo",
  "mg-diag",
  "mg-eval",
  "mg-font",
+ "mg-geom",
  "mg-hir",
  "mg-syntax",
  "serde",

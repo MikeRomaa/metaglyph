@@ -1,6 +1,9 @@
 import { useEffect } from "react";
 import styles from "./App.module.css";
-import { SheetPlaceholder } from "./sheets/SheetPlaceholder.tsx";
+import { GlyphSheet } from "./sheets/glyph/GlyphSheet.tsx";
+import { GlyphsSheet } from "./sheets/glyphs/GlyphsSheet.tsx";
+import { KerningSheet } from "./sheets/kerning/KerningSheet.tsx";
+import { SpacingSheet } from "./sheets/spacing/SpacingSheet.tsx";
 import { Frame } from "./shell/Frame.tsx";
 import { Header } from "./shell/Header.tsx";
 import { StatusBar } from "./shell/StatusBar.tsx";
@@ -36,7 +39,10 @@ export default function App() {
         <Frame>
             <Header />
             <div className={styles.body}>
-                <SheetPlaceholder sheet={sheet} />
+                {sheet === 1 && <GlyphsSheet />}
+                {sheet === 2 && <GlyphSheet />}
+                {sheet === 3 && <SpacingSheet />}
+                {sheet === 4 && <KerningSheet />}
                 <SourcePane />
             </div>
             <StatusBar />

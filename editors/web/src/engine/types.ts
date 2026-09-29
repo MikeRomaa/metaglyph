@@ -1,4 +1,4 @@
-// Mirrors the serde types in crates/mg-web/src/doc.rs.
+// Mirrors the serde types in crates/mg-web/src/{doc,view}.rs.
 
 export type Severity = "error" | "warning";
 
@@ -27,4 +27,161 @@ export interface DocState {
     font?: FontInfo;
     instances: string[];
     glyphCount: number;
+}
+
+/** A UTF-16 `[from, to]` source range. */
+export type Span = [number, number];
+export type Pt = [number, number];
+
+export interface MetricInfo {
+    name: string;
+    y?: number;
+    overshoot?: number;
+    expr: string;
+    span: Span;
+}
+
+export interface LetInfo {
+    name: string;
+    expr: string;
+    value: string;
+    span: Span;
+}
+
+export interface GlyphInfo {
+    name: string;
+    codepoints: number[];
+    span: Span;
+    advance?: number;
+    /** Authored → placed x offset (spec §12.1). */
+    shift?: number;
+    /** Authored ink bounds `[x0, y0, x1, y1]`; absent with no ink. */
+    ink?: [number, number, number, number];
+    fields: { advance?: string; lsb?: string; rsb?: string };
+    /** Decomposed outline in placed coordinates, one SVG `d`. */
+    outline: string;
+    components: number;
+    errors: number;
+}
+
+export interface GroupInfo {
+    name: string;
+    glyphs: string[];
+    span: Span;
+}
+
+export interface KernInfo {
+    left?: string;
+    leftGroup: boolean;
+    right?: string;
+    rightGroup: boolean;
+    by?: number;
+    expr: string;
+    span: Span;
+}
+
+export interface FontData {
+    instance: string;
+    em: number;
+    metrics: MetricInfo[];
+    lets: LetInfo[];
+    glyphs: GlyphInfo[];
+    groups: GroupInfo[];
+    kerns: KernInfo[];
+}
+
+export interface ComponentInfo {
+    glyph: string;
+    outline: string;
+    span: Span;
+}
+
+export type SegmentKind = "start" | "line" | "quad" | "cube" | "arc";
+
+export interface SegmentInfo {
+    kind: SegmentKind;
+    name?: string;
+    span: Span;
+    to?: Pt;
+    toRef?: string;
+    controls: Pt[];
+    /** An `arc`'s ellipse; absent for other kinds or when it failed. */
+    arc?: ArcInfo;
+}
+
+export interface ArcInfo {
+    center: Pt;
+    rx: number;
+    ry: number;
+    /** Where the arc starts: the previous segment's end. */
+    from: Pt;
+    /** Radii mode's `rx`/`ry` source text; absent in centre mode. */
+    rxExpr?: string;
+    ryExpr?: string;
+}
+
+export interface PathInfo {
+    index: number;
+    name?: string;
+    span: Span;
+    stroke?: string;
+    caps?: [string, string];
+    joins: string;
+    fill: boolean;
+    enabled: boolean;
+    closed: boolean;
+    follows?: string;
+    skeleton?: string;
+    /** A point on the skeleton for the path's callout to touch: halfway
+     * along its first segment. */
+    anchor?: Pt;
+    segments: SegmentInfo[];
+}
+
+export interface PointInfo {
+    name: string;
+    at: Pt;
+    role: "skeleton" | "construction";
+    expr: string;
+    callee?: string;
+    span: Span;
+}
+
+export interface LineInfo {
+    name: string;
+    p0: Pt;
+    p1: Pt;
+    expr: string;
+    span: Span;
+    /** For the ray a `polar(q, len, θ)` point is placed along: that
+     * point's name. The line runs from `q` through the point. */
+    of?: string;
+    /** For a `polar` ray: the `len` argument's source text. */
+    radiusExpr?: string;
+}
+
+export interface GlyphScene {
+    name: string;
+    span: Span;
+    /** Own contours, authored coordinates. */
+    outline: string[];
+    components: ComponentInfo[];
+    paths: PathInfo[];
+    points: PointInfo[];
+    lines: LineInfo[];
+}
+
+/** What the views render: one instance's data and the active glyph. */
+export interface View {
+    instance: string | null;
+    font: FontData | null;
+    /** The active glyph, resolved: the requested one if it exists, else the
+     * first glyph. */
+    glyph: string | null;
+    scene: GlyphScene | null;
+}
+
+export interface EngineResult {
+    doc?: DocState;
+    view: View;
 }

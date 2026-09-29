@@ -14,10 +14,12 @@ crate-type = ["cdylib", "rlib"]
 mg-diag = { workspace = true }
 mg-eval = { workspace = true }
 mg-font = { workspace = true }
+mg-geom = { workspace = true }
 mg-hir = { workspace = true }
 mg-syntax = { workspace = true }
 
 indexmap = { workspace = true }
+kurbo = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde-wasm-bindgen = { workspace = true }
 wasm-bindgen = { workspace = true }

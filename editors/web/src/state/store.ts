@@ -1,5 +1,12 @@
 import { create } from "zustand";
-import type { DocState } from "../engine/types.ts";
+import type {
+    DocState,
+    EngineResult,
+    FontData,
+    GlyphScene,
+    Pt,
+    Span,
+} from "../engine/types.ts";
 
 export type Sheet = 1 | 2 | 3 | 4;
 export type Theme = "light" | "dark";
@@ -11,6 +18,48 @@ export const SHEETS: { n: Sheet; label: string }[] = [
     { n: 4, label: "Kerning" },
 ];
 
+export type Layer =
+    | "metrics"
+    | "guides"
+    | "construction"
+    | "dims"
+    | "skeleton"
+    | "outline";
+
+export const LAYERS: { key: Layer; label: string }[] = [
+    { key: "metrics", label: "Metrics" },
+    { key: "guides", label: "Guides" },
+    { key: "construction", label: "Constr" },
+    { key: "dims", label: "Dims" },
+    { key: "skeleton", label: "Skel" },
+    { key: "outline", label: "Outline" },
+];
+
+export type Tool = "V" | "P" | "." | "L" | "G" | "M" | "C";
+
+export type SelectionKind =
+    | "point"
+    | "line"
+    | "path"
+    | "segment"
+    | "component"
+    | "glyph"
+    | "kern"
+    | "metric"
+    | "let"
+    | "group";
+
+/** What is selected, identified by its declaration's source range. */
+export interface Selection {
+    kind: SelectionKind;
+    /** A name for display; unique only together with `kind`. */
+    name: string;
+    span: Span;
+    /** Where the selection came from: the canvas scrolls the source to it,
+     * the source doesn't. */
+    origin: "canvas" | "source";
+}
+
 interface Store {
     /** The file name shown in the header and used on export. */
     fileName: string;
@@ -21,25 +70,55 @@ interface Store {
     text: string;
     version: number;
     saved: boolean;
-    /** The newest check result whose version matches `version`, or the last
-     * one before it while a check is running. */
+    /** The newest check result; its spans match the text only when its
+     * version equals `version`. */
     doc: DocState | null;
     /** The last check result that parsed, kept while the text doesn't. */
     lastGood: DocState | null;
+    /** The active instance's data and glyph drawing, from the last good
+     * text. */
+    font: FontData | null;
+    scene: GlyphScene | null;
     sheet: Sheet;
     instance: string | null;
+    glyph: string | null;
+    selection: Selection | null;
     theme: Theme;
     cursorLine: number;
     undoDepth: number;
+    /** The pointer over a drawing, in font units. */
+    pointer: Pt | null;
+
+    // Glyph sheet (canvas settings are not in the source).
+    layers: Record<Layer, boolean>;
+    tool: Tool;
+    // Glyphs sheet.
+    charset: number;
+    picked: number[];
+    // Spacing sheet.
+    spacingText: string;
+    // Kerning sheet.
+    kernContext: string;
+    kern: number | null;
 
     openDoc(fileName: string, text: string): void;
     setText(text: string, version: number): void;
-    setDoc(doc: DocState): void;
+    applyResult(result: EngineResult): void;
     setSaved(saved: boolean): void;
     setSheet(sheet: Sheet): void;
     setInstance(instance: string): void;
+    setGlyph(glyph: string, sheet?: Sheet): void;
+    select(selection: Selection | null): void;
     setTheme(theme: Theme): void;
     setCursor(line: number, undoDepth: number): void;
+    setPointer(pointer: Pt | null): void;
+    toggleLayer(layer: Layer): void;
+    setTool(tool: Tool): void;
+    setCharset(charset: number): void;
+    setPicked(picked: number[]): void;
+    setSpacingText(text: string): void;
+    setKernContext(text: string): void;
+    setKern(kern: number | null): void;
 }
 
 export const useStore = create<Store>()((set) => ({
@@ -51,11 +130,30 @@ export const useStore = create<Store>()((set) => ({
     saved: true,
     doc: null,
     lastGood: null,
+    font: null,
+    scene: null,
     sheet: 2,
     instance: null,
+    glyph: null,
+    selection: null,
     theme: "light",
     cursorLine: 1,
     undoDepth: 0,
+    pointer: null,
+    layers: {
+        metrics: true,
+        guides: true,
+        construction: true,
+        dims: true,
+        skeleton: true,
+        outline: true,
+    },
+    tool: "V",
+    charset: 0,
+    picked: [],
+    spacingText: "",
+    kernContext: "nn<pair>nn · HH<pair>HH",
+    kern: null,
 
     openDoc: (fileName, text) =>
         set((s) => ({
@@ -67,21 +165,57 @@ export const useStore = create<Store>()((set) => ({
             saved: false,
             doc: null,
             lastGood: null,
+            font: null,
+            scene: null,
+            glyph: null,
+            selection: null,
+            spacingText: "",
+            kern: null,
+            picked: [],
         })),
     setText: (text, version) => set({ text, version, saved: false }),
-    setDoc: (doc) =>
+    applyResult: ({ doc, view }) =>
         set((s) => {
-            const lastGood = doc.parseOk ? doc : s.lastGood;
-            const instances = lastGood?.instances ?? [];
-            const instance =
-                s.instance && instances.includes(s.instance)
-                    ? s.instance
-                    : (instances[0] ?? null);
-            return { doc, lastGood, instance };
+            const lastGood = doc?.parseOk ? doc : s.lastGood;
+            return {
+                doc: doc ?? s.doc,
+                lastGood,
+                instance: view.instance,
+                font: view.font,
+                glyph: view.glyph,
+                scene: view.scene,
+                // A selection in another glyph no longer applies.
+                selection:
+                    view.glyph === s.glyph || s.selection?.kind === "glyph"
+                        ? s.selection
+                        : null,
+                kern:
+                    s.kern !== null &&
+                    view.font &&
+                    s.kern < view.font.kerns.length
+                        ? s.kern
+                        : null,
+            };
         }),
     setSaved: (saved) => set({ saved }),
     setSheet: (sheet) => set({ sheet }),
     setInstance: (instance) => set({ instance }),
+    setGlyph: (glyph, sheet) =>
+        set((s) => ({
+            glyph,
+            sheet: sheet ?? s.sheet,
+            selection: s.glyph === glyph ? s.selection : null,
+        })),
+    select: (selection) => set({ selection }),
     setTheme: (theme) => set({ theme }),
     setCursor: (cursorLine, undoDepth) => set({ cursorLine, undoDepth }),
+    setPointer: (pointer) => set({ pointer }),
+    toggleLayer: (layer) =>
+        set((s) => ({ layers: { ...s.layers, [layer]: !s.layers[layer] } })),
+    setTool: (tool) => set({ tool }),
+    setCharset: (charset) => set({ charset, picked: [] }),
+    setPicked: (picked) => set({ picked }),
+    setSpacingText: (spacingText) => set({ spacingText }),
+    setKernContext: (kernContext) => set({ kernContext }),
+    setKern: (kern) => set({ kern }),
 }));

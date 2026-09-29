@@ -19,10 +19,12 @@ import {
     lineNumbers,
 } from "@codemirror/view";
 import { useEffect, useRef } from "react";
-import { check, onDocState } from "../engine/client.ts";
+import { check, onResult } from "../engine/client.ts";
+import type { Sheet } from "../state/store.ts";
 import { useStore } from "../state/store.ts";
 import { mgHighlight, mgLanguage } from "./mgLanguage.ts";
 import styles from "./SourcePane.module.css";
+import { highlightExtension, selectionAt, setHighlight } from "./sync.ts";
 import { mgTheme } from "./theme.ts";
 
 function extensions(): Extension[] {
@@ -39,6 +41,7 @@ function extensions(): Extension[] {
         mgHighlight,
         mgTheme,
         lintGutter(),
+        highlightExtension(),
         keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
         EditorView.updateListener.of((update) => {
             const store = useStore.getState();
@@ -54,8 +57,29 @@ function extensions(): Extension[] {
                 ).number;
                 store.setCursor(line, undoDepth(update.state));
             }
+            // Moving the cursor into a declaration selects it (plan 5, §2.2).
+            if (update.transactions.some((tr) => tr.isUserEvent("select"))) {
+                const hit = selectionAt(update.state.selection.main.head);
+                if (!hit) return;
+                if (hit.glyph && hit.glyph !== store.glyph) {
+                    store.setGlyph(hit.glyph);
+                    return;
+                }
+                if (hit.kern !== undefined) store.setKern(hit.kern);
+                store.select(hit.selection);
+            }
         }),
     ];
+}
+
+/** The declaration a sheet is about: the active glyph on the glyph and
+ * spacing sheets. */
+function contextSpan(
+    sheet: Sheet,
+    s: ReturnType<typeof useStore.getState>,
+): [number, number] | null {
+    if (sheet !== 2 && sheet !== 3) return null;
+    return s.font?.glyphs.find((g) => g.name === s.glyph)?.span ?? null;
 }
 
 export function SourcePane() {
@@ -72,9 +96,10 @@ export function SourcePane() {
         if (!host.current) return;
         const v = new EditorView({ parent: host.current });
         view.current = v;
-        onDocState((state) => {
-            useStore.getState().setDoc(state);
-            if (state.version !== useStore.getState().version) return;
+        onResult((result) => {
+            useStore.getState().applyResult(result);
+            const state = result.doc;
+            if (!state || state.version !== useStore.getState().version) return;
             const length = v.state.doc.length;
             const diagnostics: Diagnostic[] = state.diagnostics.map((d) => ({
                 from: Math.min(d.from, length),
@@ -85,7 +110,49 @@ export function SourcePane() {
             }));
             v.dispatch(setDiagnostics(v.state, diagnostics));
         });
-        return () => v.destroy();
+
+        // Highlight the selection and the sheet's glyph; scroll to a
+        // selection made on the canvas. Deferred: the store can change from
+        // inside an editor update, where dispatching is not allowed.
+        const unsubscribe = useStore.subscribe((s, prev) => {
+            if (
+                s.selection === prev.selection &&
+                s.glyph === prev.glyph &&
+                s.font === prev.font &&
+                s.sheet === prev.sheet
+            ) {
+                return;
+            }
+            const scroll =
+                s.selection &&
+                s.selection !== prev.selection &&
+                s.selection.origin === "canvas";
+            queueMicrotask(() => {
+                const length = v.state.doc.length;
+                v.dispatch({
+                    effects: [
+                        setHighlight.of({
+                            selected: s.selection?.span ?? null,
+                            context: contextSpan(s.sheet, s),
+                        }),
+                        ...(scroll && s.selection
+                            ? [
+                                  EditorView.scrollIntoView(
+                                      Math.min(s.selection.span[0], length),
+                                      {
+                                          y: "center",
+                                      },
+                                  ),
+                              ]
+                            : []),
+                    ],
+                });
+            });
+        });
+        return () => {
+            unsubscribe();
+            v.destroy();
+        };
     }, []);
 
     useEffect(() => {

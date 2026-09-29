@@ -1,0 +1,118 @@
+.row {
+    flex: none;
+    height: 18.75rem;
+    display: flex;
+    border-bottom: 2px solid var(--ink);
+}
+
+.svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+.svg line,
+.svg path,
+.svg rect {
+    vector-effect: non-scaling-stroke;
+}
+
+.metric {
+    stroke: var(--rule);
+    stroke-width: 1;
+    stroke-dasharray: 4 8;
+}
+
+.baseline {
+    stroke: var(--ink);
+    stroke-width: 1;
+}
+
+.metricLabel {
+    font-family: var(--font-cond);
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    fill: var(--mid);
+}
+
+.col {
+    cursor: pointer;
+}
+
+.colBg {
+    fill: transparent;
+}
+
+.col[data-on] .colBg {
+    fill: var(--hi);
+}
+
+.guide {
+    stroke: var(--faint);
+    stroke-width: 1;
+}
+
+.col[data-on] .guide {
+    stroke: var(--acc);
+    stroke-width: 2;
+}
+
+.ink {
+    fill: var(--ink);
+}
+
+.bearing {
+    font-family: var(--font-mono);
+    fill: var(--mid);
+}
+
+.col[data-on] .bearing {
+    fill: var(--acc);
+}
+
+.dim {
+    stroke: var(--ink);
+    stroke-width: 1.5;
+}
+
+.arrow {
+    fill: var(--ink);
+}
+
+.dimBox {
+    fill: var(--bg);
+}
+
+.name {
+    font-family: var(--font-mono);
+    fill: var(--ink);
+}
+
+.bomWrap {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 0.625rem 0.75rem;
+}
+
+.cols {
+    grid-template-columns: 2.75rem 1fr 1.3fr 4rem 4rem 1.2fr;
+}
+
+.fieldRow {
+    grid-template-columns: 3.875rem 1fr 3.5rem;
+}
+
+.metricRow {
+    width: 100%;
+    text-align: left;
+    grid-template-columns: 5rem 1fr 3.5rem;
+}
+
+.metricRow:hover {
+    background: var(--hi);
+}
+
+.infoRow {
+    grid-template-columns: 4.875rem minmax(0, 1fr);
+}
