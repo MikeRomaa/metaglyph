@@ -1,0 +1,49 @@
+name: Web
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "editors/web/**"
+      - "crates/**"
+      - "samples/**"
+      - "Cargo.*"
+      - ".github/workflows/web.yml"
+  pull_request:
+    paths:
+      - "editors/web/**"
+      - "crates/**"
+      - "samples/**"
+      - "Cargo.*"
+      - ".github/workflows/web.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: editors/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: editors/web/package-lock.json
+      - run: npm ci
+      # src/wasm is gitignored, so it must be generated before typecheck/tests.
+      - run: npm run wasm
+      - run: npm run lint
+      - run: npx tsc -b
+      - run: npm test
+      - run: npx vite build
