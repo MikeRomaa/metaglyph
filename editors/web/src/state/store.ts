@@ -131,6 +131,8 @@ interface Store {
     // Glyphs sheet.
     charset: number;
     picked: number[];
+    /** Glyphs added from the 01 sheet this session, tagged NEW. */
+    added: string[];
     // Spacing sheet.
     spacingText: string;
     // Kerning sheet.
@@ -162,6 +164,7 @@ interface Store {
     setDrivers(drivers: DragInfo | null): void;
     setCharset(charset: number): void;
     setPicked(picked: number[]): void;
+    markAdded(names: string[]): void;
     setSpacingText(text: string): void;
     setKernContext(text: string): void;
     setKern(kern: number | null): void;
@@ -219,6 +222,7 @@ export const useStore = create<Store>()((set) => ({
     tool: "V",
     charset: 0,
     picked: [],
+    added: [],
     spacingText: "",
     kernContext: "nn<pair>nn · HH<pair>HH",
     kern: null,
@@ -240,6 +244,7 @@ export const useStore = create<Store>()((set) => ({
             spacingText: "",
             kern: null,
             picked: [],
+            added: [],
             lastOp: null,
             pending: null,
             renaming: null,
@@ -333,6 +338,7 @@ export const useStore = create<Store>()((set) => ({
     setDrivers: (drivers) => set({ drivers }),
     setCharset: (charset) => set({ charset, picked: [] }),
     setPicked: (picked) => set({ picked }),
+    markAdded: (names) => set((s) => ({ added: [...s.added, ...names] })),
     setSpacingText: (spacingText) => set({ spacingText }),
     setKernContext: (kernContext) => set({ kernContext }),
     setKern: (kern) => set({ kern }),

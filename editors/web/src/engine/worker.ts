@@ -1,6 +1,7 @@
 import * as Comlink from "comlink";
 import init, { Engine } from "../wasm/mg_web.js";
 import type {
+    BuildResult,
     DocState,
     DragInfo,
     DragStep,
@@ -105,6 +106,18 @@ const api = {
 
     async dragEnd(glyph: string): Promise<void> {
         (await ready).dragEnd(glyph);
+    },
+
+    /** Builds every instance as TTF; null if the text has errors. The
+     * font data is transferred, not copied. */
+    async buildTtf(timestamp: number): Promise<BuildResult | null> {
+        const result = ((await ready).buildTtf(timestamp) ??
+            null) as BuildResult | null;
+        if (!result) return null;
+        return Comlink.transfer(
+            result,
+            result.fonts.map((f) => f.data.buffer as ArrayBuffer),
+        );
     },
 
     /** Renders the view for `instance` / `glyph` from the last good text. */

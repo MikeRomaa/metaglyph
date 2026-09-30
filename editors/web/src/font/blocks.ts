@@ -1,3 +1,5 @@
+import { AGLFN } from "../data/aglfn.ts";
+
 /** Unicode blocks offered as character sets (a subset of Blocks.txt). */
 export interface Block {
     name: string;
@@ -22,3 +24,17 @@ export function codepoints(block: Block): number[] {
     for (let cp = block.first; cp <= block.last; cp++) out.push(cp);
     return out;
 }
+
+/** A character set the 01 sheet offers, after "All glyphs". */
+export interface CharacterSet {
+    name: string;
+    /** Ascending. */
+    codepoints: number[];
+}
+
+/** The AGLFN's characters (every one with an Adobe name), then the
+ * Unicode blocks. */
+export const CHARSETS: CharacterSet[] = [
+    { name: "AGLFN", codepoints: [...AGLFN.keys()].sort((a, b) => a - b) },
+    ...BLOCKS.map((b) => ({ name: b.name, codepoints: codepoints(b) })),
+];

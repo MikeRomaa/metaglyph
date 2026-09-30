@@ -145,6 +145,12 @@ pub enum Op {
     /// `group <name> (glyphs: [ <glyphs> ])`.
     #[serde(rename_all = "camelCase")]
     NewGroup { name: String, glyphs: Vec<String> },
+    /// New empty glyphs, `glyph <name> (codepoint: '<c>', advance: <a>)
+    /// {}`, after the last glyph, in one step (plan 5, §1.6 "New glyph";
+    /// see [`default_advance`]). Refused as a whole when any name or
+    /// codepoint can't be used.
+    #[serde(rename_all = "camelCase")]
+    AddGlyphs { glyphs: Vec<NewGlyph> },
     /// Delete group `name` and every kern naming it, so no reference
     /// dangles.
     #[serde(rename_all = "camelCase")]
@@ -157,6 +163,14 @@ pub enum Op {
         glyphs: Vec<String>,
         add: bool,
     },
+}
+
+/// A glyph for [`Op::AddGlyphs`].
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewGlyph {
+    pub name: String,
+    pub codepoint: u32,
 }
 
 /// One side of an [`Op::NewKern`]: an existing glyph or group by name, or
@@ -687,6 +701,60 @@ fn apply(
                 name: name.clone(),
             }))
         }
+        Op::AddGlyphs { glyphs } => {
+            if glyphs.is_empty() {
+                return Err("Pick a codepoint to add.".to_string());
+            }
+            s.step(|src, root| {
+                let hir = lower(root);
+                let mut names: HashSet<String> = hir
+                    .glyphs
+                    .keys()
+                    .map(|(name, _)| name.clone())
+                    .chain(hir.groups.keys().cloned())
+                    .chain(hir.lets.keys().cloned())
+                    .chain(hir.params.keys().cloned())
+                    .chain(hir.metrics.keys().cloned())
+                    .chain(hir.instances.keys().cloned())
+                    .collect();
+                let mut used: std::collections::HashMap<u32, String> = hir
+                    .glyphs
+                    .values()
+                    .flat_map(|g| g.codepoints.iter().map(|cp| (*cp, g.name.clone())))
+                    .collect();
+                let advance = default_advance(src, &hir);
+                let mut decls = Vec::new();
+                for NewGlyph { name, codepoint } in glyphs {
+                    if let Some(why) = edit::invalid_name(name) {
+                        return Err(format!("`{name}` is {why}."));
+                    }
+                    if !names.insert(name.clone()) {
+                        return Err(format!("`{name}` is already declared."));
+                    }
+                    let cp = codepoint_text(*codepoint)
+                        .ok_or_else(|| format!("{codepoint:#X} is not a codepoint."))?;
+                    if let Some(other) = used.insert(*codepoint, name.clone()) {
+                        return Err(format!("U+{codepoint:04X} already belongs to `{other}`."));
+                    }
+                    decls.push(format!(
+                        "glyph {name} (codepoint: {cp}, advance: {advance}) {{\n}}"
+                    ));
+                }
+                let file = ast::SourceFile::cast(root.clone()).ok_or(GONE)?;
+                Ok(vec![edit::insert_top_level(
+                    src,
+                    &file,
+                    SyntaxKind::GLYPH,
+                    &decls.join("\n\n"),
+                )])
+            })?;
+            s.summary = Some(format!(
+                "{} glyph{}",
+                glyphs.len(),
+                if glyphs.len() == 1 { "" } else { "s" }
+            ));
+            Ok(None)
+        }
         Op::DeleteGroup { name } => {
             s.step(|src, root| {
                 let group = root
@@ -721,6 +789,57 @@ fn apply(
             Ok(None)
         }
     }
+}
+
+/// The `advance` a new, empty glyph declares: the font's most common
+/// `advance` declaration (the first on a tie), else half an em. Not
+/// `rsb`/`lsb`: those measure from the ink, which an empty glyph lacks
+/// (MG0608); nor an `advance` that reads `glyph.*`, for the same reason.
+fn default_advance(src: &str, hir: &mg_hir::Hir) -> String {
+    let mut counts: indexmap::IndexMap<String, usize> = indexmap::IndexMap::new();
+    for glyph in hir.glyphs.values() {
+        if let Some(advance) = &glyph.advance {
+            let text = src[edit::node_range(advance.syntax())].to_string();
+            if !text.contains("glyph.") {
+                *counts.entry(text).or_default() += 1;
+            }
+        }
+    }
+    let mut best: Option<(&String, usize)> = None;
+    for (text, &n) in &counts {
+        if best.is_none_or(|(_, most)| n > most) {
+            best = Some((text, n));
+        }
+    }
+    match best {
+        Some((text, _)) => text.clone(),
+        None => coord(hir.font.em.unwrap_or(1000) as f64 / 2.0),
+    }
+}
+
+/// A codepoint as a new glyph writes it (plan 5, §1.6): a char literal
+/// for a character that reads as itself, like `samples/a22x-mono.mg`;
+/// `U+XXXX` for anything invisible, combining, or needing an escape.
+/// `None` for a surrogate or a value past `U+10FFFF`.
+fn codepoint_text(cp: u32) -> Option<String> {
+    let c = char::from_u32(cp)?;
+    let hidden = c.is_whitespace()
+        || c.is_control()
+        || matches!(c, '\'' | '\\')
+        || matches!(cp,
+            // Combining marks.
+            0x0300..=0x036F | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF | 0x20D0..=0x20FF | 0xFE20..=0xFE2F
+            // Format and invisible characters.
+            | 0x00AD | 0x061C | 0x115F | 0x1160 | 0x180E | 0x200B..=0x200F
+            | 0x202A..=0x202E | 0x2060..=0x206F | 0x3164 | 0xFE00..=0xFE0F | 0xFEFF
+            | 0xFFF0..=0xFFFF | 0xE0000..=0xE0FFF
+            // Private use.
+            | 0xE000..=0xF8FF | 0xF0000..=0x10FFFF);
+    Some(if hidden {
+        format!("U+{cp:04X}")
+    } else {
+        format!("'{c}'")
+    })
 }
 
 /// `group <name> (glyphs: [ <glyphs> ])`, after checking the name and the
@@ -2157,6 +2276,89 @@ mod tests {
             by: 0.0,
         };
         assert!(refused(KERNED, &clash).starts_with("`o` is already in round"));
+    }
+
+    fn new_glyphs(glyphs: &[(&str, u32)]) -> Op {
+        Op::AddGlyphs {
+            glyphs: glyphs
+                .iter()
+                .map(|(name, codepoint)| NewGlyph {
+                    name: name.to_string(),
+                    codepoint: *codepoint,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn added_glyphs_go_after_the_last_glyph_in_one_step() {
+        let op = new_glyphs(&[("B", 0x42), ("quotesingle", 0x27), ("space", 0x20)]);
+        let src = SRC.replace("\nglyph B (advance: h) {\n}\n", "");
+        let EditResult::Ok { steps, .. } = run(&src, 1, &op) else {
+            panic!()
+        };
+        assert_eq!(steps.len(), 1);
+        let (text, _) = run_on(&src, &op);
+        assert!(
+            text.ends_with(
+                "}\n\nglyph B (codepoint: 'B', advance: h) {\n}\n\n\
+                 glyph quotesingle (codepoint: U+0027, advance: h) {\n}\n\n\
+                 glyph space (codepoint: U+0020, advance: h) {\n}\n"
+            ),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn added_glyphs_take_the_common_advance() {
+        // `rsb` and `glyph.*` advances need ink; the rest are counted.
+        let src = "font (name: \"T\", em: 1200)
+glyph a (advance: 600) {
+}
+glyph b (advance: w) {
+}
+glyph c (advance: w) {
+}
+glyph d (rsb: 0) {
+}
+glyph e (advance: glyph.bbox.width) {
+}
+glyph f (advance: glyph.bbox.width) {
+}
+glyph g (advance: glyph.bbox.width) {
+}
+";
+        let (text, _) = run_on(src, &new_glyphs(&[("x", 0x78)]));
+        assert!(text.ends_with("glyph x (codepoint: 'x', advance: w) {
+}
+"), "{text}");
+        // None at all: half an em.
+        let bare = "font (name: \"T\", em: 1200)
+glyph d (rsb: 0) {
+}
+";
+        let (text, _) = run_on(bare, &new_glyphs(&[("x", 0x78)]));
+        assert!(text.ends_with("glyph x (codepoint: 'x', advance: 600) {
+}
+"), "{text}");
+    }
+
+    #[test]
+    fn added_glyphs_are_checked_as_a_whole() {
+        let src = "glyph A (codepoint: 'A', rsb: 0) {\n}\n";
+        let cases = [
+            (new_glyphs(&[("A", 0x41)]), "`A` is already declared."),
+            (new_glyphs(&[("Alpha", 0x41)]), "U+0041 already belongs to `A`."),
+            (
+                new_glyphs(&[("b", 0x62), ("b", 0x63)]),
+                "`b` is already declared.",
+            ),
+            (new_glyphs(&[("line", 0x6C)]), "`line` is a reserved word."),
+            (new_glyphs(&[("x", 0xD800)]), "0xD800 is not a codepoint."),
+        ];
+        for (op, message) in cases {
+            assert_eq!(refused(src, &op), message);
+        }
     }
 
     #[test]

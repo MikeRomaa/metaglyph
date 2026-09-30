@@ -4,7 +4,7 @@ import { useStore } from "../state/store.ts";
 import styles from "./StatusBar.module.css";
 
 const HINTS: Record<Sheet, string> = {
-    1: "click to pick · ⇧ range",
+    1: "click or drag to pick · ⇧ range",
     2: "Tab next driver · Esc cancel",
     3: "⌘Z undo",
     4: "⌘Z undo",

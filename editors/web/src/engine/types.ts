@@ -239,6 +239,7 @@ export type Op =
     | { op: "kernUnit"; span: Span; em: boolean; fontEm: number }
     | { op: "newGroup"; name: string; glyphs: string[] }
     | { op: "deleteGroup"; name: string }
+    | { op: "addGlyphs"; glyphs: { name: string; codepoint: number }[] }
     | { op: "groupMember"; group: string; glyphs: string[]; add: boolean };
 
 /** A new kern's side: a glyph or group by name, or a group to declare
@@ -274,6 +275,18 @@ export interface Created {
     /** A `kern` is named by its index among the kerns. */
     kind: "point" | "line" | "path" | "let" | "component" | "group" | "kern";
     name: string;
+}
+
+/** One instance's font, built (crates/mg-web/src/build.rs). */
+export interface BuiltFont {
+    instance: string;
+    fileName: string;
+    data: Uint8Array<ArrayBuffer>;
+}
+
+export interface BuildResult {
+    fonts: BuiltFont[];
+    diagnostics: DiagnosticInfo[];
 }
 
 export type EditResult =

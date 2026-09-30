@@ -7,12 +7,14 @@
 //! Offsets crossing this boundary are UTF-16 code units, the unit
 //! CodeMirror (and every JS string) counts in; the crates count bytes.
 
+mod build;
 mod doc;
 mod drag;
 mod offsets;
 mod ops;
 mod view;
 
+pub use build::build;
 pub use doc::{DiagnosticInfo, DocState, FontInfo, Model, analyze, check};
 pub use ops::{Change, EditResult, Op};
 pub use view::{FontData, GlyphScene, font_data, format_num, glyph_scene};
@@ -161,6 +163,48 @@ impl Engine {
 
     pub fn unpin(&mut self) {
         self.anchor = None;
+    }
+
+    /// Builds every instance as TTF (plan 6, W8) with `head` timestamps of
+    /// `timestamp` (seconds since the Unix epoch): `{ fonts: [{ instance,
+    /// fileName, data: Uint8Array }], diagnostics }`. `null` when the
+    /// current text isn't the one that last evaluated (it has errors).
+    #[wasm_bindgen(js_name = buildTtf)]
+    pub fn build_ttf(&self, timestamp: f64) -> Result<JsValue, JsError> {
+        let model = match (&self.model, &self.current) {
+            (Some(model), Some((text, _))) if *text == model.source => model,
+            _ => return Ok(JsValue::NULL),
+        };
+        let start = now();
+        let (fonts, diagnostics) = build::build(model, timestamp as i64);
+        log::debug!(
+            "build: {} font(s), {} diagnostic(s), {:.1} ms",
+            fonts.len(),
+            diagnostics.len(),
+            now() - start,
+        );
+        let list = js_sys::Array::new();
+        for font in &fonts {
+            let entry = js_sys::Object::new();
+            js_sys::Reflect::set(&entry, &"instance".into(), &font.instance.as_str().into())
+                .map_err(|_| JsError::new("could not build the result"))?;
+            js_sys::Reflect::set(&entry, &"fileName".into(), &font.file_name.as_str().into())
+                .map_err(|_| JsError::new("could not build the result"))?;
+            let data = js_sys::Uint8Array::from(font.data.as_slice());
+            js_sys::Reflect::set(&entry, &"data".into(), &data)
+                .map_err(|_| JsError::new("could not build the result"))?;
+            list.push(&entry);
+        }
+        let result = js_sys::Object::new();
+        js_sys::Reflect::set(&result, &"fonts".into(), &list)
+            .map_err(|_| JsError::new("could not build the result"))?;
+        js_sys::Reflect::set(
+            &result,
+            &"diagnostics".into(),
+            &serde_wasm_bindgen::to_value(&diagnostics)?,
+        )
+        .map_err(|_| JsError::new("could not build the result"))?;
+        Ok(result.into())
     }
 
     /// [`GlyphScene`] for `glyph` in `instance`, from the last good text.

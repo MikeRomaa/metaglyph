@@ -69,12 +69,14 @@
     flex-direction: column;
 }
 
+/* Labels may shrink; nothing spills under the neighbouring panes. */
 .toolbar {
     height: 1.75rem;
     flex: none;
     display: flex;
     align-items: stretch;
     border-bottom: 1px solid var(--ink);
+    overflow: hidden;
 }
 
 .toolbar > * {

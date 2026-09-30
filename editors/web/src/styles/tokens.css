@@ -31,6 +31,10 @@
     --font-cond:
         "IBM Plex Sans Condensed", "IBM Plex Sans", system-ui, sans-serif;
     --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+    /* A character the font lacks, shown as a placeholder. */
+    --font-sample:
+        "Noto Sans", "Noto Sans Symbols 2", "Noto Sans Symbols",
+        "Noto Sans Math", sans-serif;
 
     color-scheme: light;
 }

@@ -151,6 +151,11 @@
     text-transform: uppercase;
 }
 
+.export:not(:disabled):hover {
+    background: var(--acc);
+    color: var(--onacc);
+}
+
 .export:disabled {
     background: var(--hatch-bg);
     color: var(--faint);

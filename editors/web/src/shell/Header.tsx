@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { exportDoc, newDoc, pickFile, SAMPLES } from "../state/files.ts";
+import {
+    exportBlocked,
+    exportDoc,
+    exportTtf,
+    newDoc,
+    pickFile,
+    SAMPLES,
+} from "../state/files.ts";
 import { rememberTheme } from "../state/persist.ts";
 import type { Theme } from "../state/store.ts";
 import { SHEETS, useStore } from "../state/store.ts";
@@ -21,6 +28,9 @@ export function Header() {
     const instance = useStore((s) => s.instance);
     const setInstance = useStore((s) => s.setInstance);
     const instances = useStore((s) => s.lastGood?.instances ?? NO_INSTANCES);
+    const doc = useStore((s) => s.doc);
+    const blocked = exportBlocked(doc);
+    const [exporting, setExporting] = useState(false);
 
     return (
         <header className={styles.bar}>
@@ -74,10 +84,19 @@ export function Header() {
             <button
                 type="button"
                 className={styles.export}
-                disabled
-                title="TTF export arrives in W8"
+                disabled={blocked !== null || exporting}
+                title={
+                    blocked ??
+                    (instances.length > 1
+                        ? `Build ${instances.length} instances as a .zip of TTFs`
+                        : "Build the font as TTF")
+                }
+                onClick={() => {
+                    setExporting(true);
+                    void exportTtf().finally(() => setExporting(false));
+                }}
             >
-                Export TTF
+                {exporting ? "Building…" : "Export TTF"}
             </button>
         </header>
     );

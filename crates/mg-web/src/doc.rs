@@ -128,8 +128,23 @@ pub fn analyze(source: &str, version: u32) -> (DocState, Option<Model>) {
     }
 
     diagnostics.sort_by_key(|d| d.primary.span.start);
+    state.diagnostics = diagnostic_infos(source, &diagnostics);
+
+    let model = model.map(|(hir, outcomes)| Model {
+        source: source.to_string(),
+        hir,
+        outcomes,
+        diagnostics,
+    });
+    (state, model)
+}
+
+/// `diagnostics` (byte spans into `source`, sorted by start) as the editor
+/// takes them: UTF-16 offsets, with `help` and `note` lines in the message
+/// as the CLI prints them.
+pub fn diagnostic_infos(source: &str, diagnostics: &[Diagnostic]) -> Vec<DiagnosticInfo> {
     let mut map = Utf16Map::new(source);
-    state.diagnostics = diagnostics
+    diagnostics
         .iter()
         .map(|d| {
             let mut message = d.message.clone();
@@ -152,15 +167,7 @@ pub fn analyze(source: &str, version: u32) -> (DocState, Option<Model>) {
                 message,
             }
         })
-        .collect();
-
-    let model = model.map(|(hir, outcomes)| Model {
-        source: source.to_string(),
-        hir,
-        outcomes,
-        diagnostics,
-    });
-    (state, model)
+        .collect()
 }
 
 /// Every instance's evaluation diagnostics, each distinct one once, with the

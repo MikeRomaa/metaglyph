@@ -129,6 +129,11 @@ export function dragEnd(glyph: string) {
     return call((e) => e.dragEnd(glyph), undefined);
 }
 
+/** Builds every instance as TTF, `timestamp` seconds since the epoch. */
+export function buildTtf(timestamp: number) {
+    return call((e) => e.buildTtf(timestamp), null);
+}
+
 async function drain() {
     running = true;
     let failures = 0;

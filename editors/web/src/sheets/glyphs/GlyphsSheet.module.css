@@ -1,3 +1,9 @@
+.setName,
+.counts {
+    min-width: 0;
+    overflow: hidden;
+}
+
 .setName {
     border-right: 1px solid var(--ink);
     font: 600 0.6875rem var(--font-mono);
@@ -8,13 +14,18 @@
     color: var(--mid);
 }
 
+/* The scrollbar's space is kept whether it shows or not, so the columns
+   never reflow when a set gets long enough to scroll. */
 .grid {
     flex: 1;
     min-height: 0;
     overflow: auto;
+    scrollbar-gutter: stable;
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(4.5rem, 1fr));
     align-content: start;
+    /* Dragging across cells picks them; it never selects text. */
+    user-select: none;
 }
 
 .cell {
@@ -56,7 +67,7 @@
 }
 
 .char {
-    font: 400 1.5rem var(--font-mono);
+    font: 400 1.5rem var(--font-sample);
     color: var(--faint);
 }
 
@@ -103,11 +114,32 @@
     height: 1.375rem;
     display: flex;
     gap: 1px;
+    overflow: hidden;
 }
 
 .bar {
     flex: 1;
-    min-width: 1px;
+    min-width: 3px;
+}
+
+/* Bars for cells the grid doesn't show. */
+.bar[data-off] {
+    opacity: 0.45;
+}
+
+/* A windowed strip's place in the whole set. */
+.track {
+    position: relative;
+    height: 0.3125rem;
+    background: var(--rule);
+    cursor: pointer;
+}
+
+.trackThumb {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: var(--ink);
 }
 
 .bar[data-state="in"] {

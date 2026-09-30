@@ -9,6 +9,12 @@ import "@fontsource/ibm-plex-sans-condensed/600.css";
 import "@fontsource/ibm-plex-sans-condensed/700.css";
 import "@fontsource/ibm-plex-sans/400.css";
 import "@fontsource/ibm-plex-sans/500.css";
+// Placeholders for characters a font lacks (01 GLYPHS): Noto's script and
+// symbol families, each loaded per subset only when a sheet shows it.
+import "@fontsource/noto-sans/400.css";
+import "@fontsource/noto-sans-math/400.css";
+import "@fontsource/noto-sans-symbols/400.css";
+import "@fontsource/noto-sans-symbols-2/400.css";
 import "./styles/tokens.css";
 import "./styles/base.css";
 import "./styles/type.css";

@@ -15,6 +15,13 @@ export function fmt(n: number | undefined): string {
     return s === "-0" ? "0" : s.replace("-", "−");
 }
 
+/** A character the font lacks, as its placeholder shows it: space as
+ * `␣`, and anything with an emoji form held to text presentation (VS15),
+ * so a fallback never turns it into a colour emoji. */
+export function sampleChar(cp: number): string {
+    return cp === 0x20 ? "␣" : `${String.fromCodePoint(cp)}︎`;
+}
+
 export function hex(cp: number): string {
     return cp.toString(16).toUpperCase().padStart(4, "0");
 }
