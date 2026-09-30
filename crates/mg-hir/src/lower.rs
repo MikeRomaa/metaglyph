@@ -13,7 +13,7 @@
 //! is irrelevant (spec §5.11 rule 7) and a `let` may reference one that is
 //! declared textually later, or a glyph body may reference
 //! `glyphs.<name>` for a glyph declared anywhere else in the file. It
-//! type-checks every field, resolves every `glyphref`/`groupref`/`pathref`,
+//! type-checks every field, resolves every `glyphref`/`groupref`,
 //! and runs the checks that need the whole font in view at once
 //! (duplicate/case-fold glyph names, kerning group overlap, required
 //! metrics, range membership).
@@ -45,7 +45,7 @@ pub(crate) fn lower(source_file: &ast::SourceFile) -> (Hir, Vec<Diagnostic>) {
 // Small shared helpers
 
 /// The plain identifier a field's value must be, for `identifier`,
-/// `glyphref`, `groupref`, and `pathref`-typed fields (spec §5.2: these
+/// `glyphref`, and `groupref`-typed fields (spec §5.2: these
 /// have "syntax given with the field," not the general expression grammar
 /// — but the parser cannot tell them apart from an ordinary bare-name
 /// expression at parse time, so this is where the distinction is made).
@@ -708,7 +708,7 @@ fn lower_glyph(
         .map(|(node, fields)| lower_path(node, fields, diagnostics))
         .collect();
     for path in &paths {
-        crate::path_check::check_path(&paths, path, diagnostics);
+        crate::path_check::check_path(path, diagnostics);
     }
 
     let key = (name.clone(), glyphset.clone());
@@ -818,18 +818,12 @@ fn lower_path(
 ) -> PathDecl {
     let name = path_node.name_token().map(|t| t.text().to_string());
 
-    let follows = expect_ident_field(&fields, "follows", diagnostics).map(|(n, _)| n);
     let stroke = fields.get("stroke").and_then(|f| f.value());
     let fill = fields
         .get("fill")
         .and_then(|f| f.value())
         .and_then(|e| const_eval::eval_const_bool(&e))
         .unwrap_or(false);
-    let enabled = fields
-        .get("enabled")
-        .and_then(|f| f.value())
-        .and_then(|e| const_eval::eval_const_bool(&e))
-        .unwrap_or(true);
     let joins = enum_field(&fields, schema::PATH_FIELDS, "joins", diagnostics);
 
     let caps = fields
@@ -851,13 +845,11 @@ fn lower_path(
     PathDecl {
         name,
         syntax: path_node.syntax().clone(),
-        follows,
         stroke,
         fill,
         caps,
         joins,
         join_at,
-        enabled,
         segments,
         closed,
     }

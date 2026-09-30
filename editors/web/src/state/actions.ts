@@ -296,17 +296,6 @@ export function setFill(path: PathInfo, on: boolean) {
     });
 }
 
-export function duplicateFollower(path: PathInfo) {
-    return performEdit(
-        "duplicate_follower",
-        () => {
-            const span = pathSpan(path);
-            return span ? { op: "duplicateFollower", span } : null;
-        },
-        { rename: false },
-    );
-}
-
 /** Sets a field of segment `index` of `path`. */
 export function setSegmentField(
     path: PathInfo,

@@ -91,7 +91,6 @@ glyph A (advance: 500) {
     line rise (to: (0, 700))
     line over (to: (500, 700))
   }
-  path ghost (follows: spine, stroke: 4)
 }
 glyph B (advance: 500) {}
 glyph B (glyphset: Alt, advance: 500) {}
@@ -110,7 +109,7 @@ fn a_config_offers_its_fields_with_types_and_docs() {
     assert_eq!(
         labels(&items),
         [
-            "follows", "stroke", "fill", "caps", "joins", "joinAt", "enabled"
+            "stroke", "fill", "caps", "joins", "joinAt"
         ]
     );
     let joins = items.iter().find(|i| i.label == "joins").unwrap();
@@ -210,22 +209,16 @@ fn reference_fields_offer_what_they_can_name() {
 }
 
 #[test]
-fn follows_offers_bodied_paths_and_join_at_offers_segments() {
+fn join_at_offers_segments() {
     let marked = with_glyphs("").replace(
-        "path ghost (follows: spine, stroke: 4)",
-        "path ghost (follows: |, stroke: 4)",
-    );
-    assert_eq!(labels(&complete(&marked)), ["spine"]);
-
-    let marked = with_glyphs("").replace(
-        "path ghost (follows: spine, stroke: 4)",
-        "path ghost (follows: spine, stroke: 4, joinAt: { |",
+        "path spine (stroke: stem)",
+        "path spine (stroke: stem, joinAt: { | })",
     );
     assert_eq!(labels(&complete(&marked)), ["rise", "over"]);
 
     let marked = with_glyphs("").replace(
-        "path ghost (follows: spine, stroke: 4)",
-        "path ghost (follows: spine, stroke: 4, joinAt: { over: |",
+        "path spine (stroke: stem)",
+        "path spine (stroke: stem, joinAt: { over: | })",
     );
     assert_eq!(
         labels(&complete(&marked)),
@@ -389,7 +382,7 @@ fn glyph_scope_names_say_which_glyph() {
     let text = hover_marked(&marked).unwrap();
     assert!(text.contains("let half: num (in glyph A)"), "{text}");
 
-    let marked = with_glyphs("").replace("follows: spine", "follows: sp|ine");
+    let marked = with_glyphs("").replace("path spine", "path sp|ine");
     let text = hover_marked(&marked).unwrap();
     assert!(text.contains("path spine: path (in glyph A)"), "{text}");
 

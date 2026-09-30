@@ -257,12 +257,6 @@ pub const KERN_FIELDS: &[FieldSchema] = &[
 
 pub const PATH_FIELDS: &[FieldSchema] = &[
     field(
-        "follows",
-        false,
-        "pathref",
-        "Takes another path's skeleton exactly; mutually exclusive with a body.",
-    ),
-    field(
         "stroke",
         false,
         "num",
@@ -318,15 +312,6 @@ pub const PATH_FIELDS: &[FieldSchema] = &[
             &["stroke"],
         ),
         JOIN_VALUES,
-    ),
-    with_default(
-        field(
-            "enabled",
-            false,
-            "bool",
-            "`false` keeps the path for construction without rendering it.",
-        ),
-        "true",
     ),
 ];
 

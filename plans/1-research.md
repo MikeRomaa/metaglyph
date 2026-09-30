@@ -456,16 +456,12 @@ There is no separate stroke block and no `draw:` list. A single `path` block car
 
 ```
 path <name> (
-  follows:  <path>,                   // reuse another path's skeleton
-                                      //   instead of declaring segments
-
   // rendering — omit both and the path never renders:
   stroke:   <num>,                    // constant along the whole path
   fill:     <bool>,                   // requires `close`; combines with stroke
   caps:     <string> | (<string>, <string>),   // both ends, or (start, end)
   joins:    <string>,
   joinAt:   { segmentName: <string>, … },
-  enabled:  <bool>,                   // conditional rendering
 ) {
   start <name>? ( at: <point> )                                // exactly one, first
   line  <name>? ( to: <point> )                                // §7.2.1
@@ -485,12 +481,10 @@ A separate stroke construct would buy two things — a skeleton that doesn't ren
 | Need | Mechanism |
 |---|---|
 | Skeleton that doesn't render | omit both `stroke` and `fill` |
-| Same skeleton at two stroke widths | two paths, one with `follows:` |
 | Filled interior | `fill: true`, with `close` |
 | Filled shape with a stroked border | both on one path |
 | Flat-cut terminal | the final segment's last control point, or an overlapping path (§1.1) |
 | Render order | declaration order |
-| Conditional rendering | `enabled:` |
 
 **On render order:** it does not affect appearance, because overlaps are kept and nonzero winding is order-independent (§9.1). It fixes only contour order in the output, and declaration order is deterministic — so an explicit render list would buy nothing.
 

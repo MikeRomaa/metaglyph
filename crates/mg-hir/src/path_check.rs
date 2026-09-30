@@ -1,55 +1,24 @@
 //! Path structural checks (spec §5.7, §6.3): every rule that depends on a
 //! segment's position among its siblings, which is exactly what
 //! `crate::schema`'s per-field table cannot see. Run once per path, after
-//! the whole glyph (and so every `follows` target) is lowered.
+//! the path is lowered.
 
 use mg_diag::{Diagnostic, Label};
 
 use crate::model::{PathDecl, SegmentKind};
 use mg_diag::codes;
 
-pub fn check_path(all_paths: &[PathDecl], path: &PathDecl, diagnostics: &mut Vec<Diagnostic>) {
+pub fn check_path(path: &PathDecl, diagnostics: &mut Vec<Diagnostic>) {
     let has_body = !path.segments.is_empty() || path_has_close_only(path);
-
-    match (&path.follows, has_body) {
-        (Some(_), true) => diagnostics.push(Diagnostic::error(
-            codes::MUTUALLY_EXCLUSIVE_FIELDS,
-            "`follows` is mutually exclusive with a body",
-            Label::new(
-                crate::schema::trimmed_span(&path.syntax),
-                "has both `follows` and a body",
-            ),
-        )),
-        (None, false) => diagnostics.push(Diagnostic::error(
-            codes::PATH_NEEDS_BODY_OR_FOLLOWS,
-            "a path must have either a body or `follows`",
-            Label::new(crate::schema::trimmed_span(&path.syntax), "has neither"),
-        )),
-        _ => {}
-    }
-
-    if let Some(target_name) = &path.follows {
-        match all_paths
-            .iter()
-            .find(|p| p.name.as_deref() == Some(target_name.as_str()))
-        {
-            Some(target) if target.follows.is_none() && !target.segments.is_empty() => {}
-            Some(_) => diagnostics.push(Diagnostic::error(
-                codes::FOLLOWS_TARGET_HAS_NO_BODY,
-                format!("`{target_name}` has no body of its own to follow"),
-                Label::new(
-                    crate::schema::trimmed_span(&path.syntax),
-                    "follows a bodyless path",
-                ),
-            )),
-            // An unresolved `follows` target is reported at the field
-            // itself, by `crate::lower`; nothing more to add here.
-            None => {}
-        }
-    }
 
     if has_body {
         check_body_shape(path, diagnostics);
+    } else {
+        diagnostics.push(Diagnostic::error(
+            codes::PATH_NEEDS_BODY,
+            "a path must have a body",
+            Label::new(crate::schema::trimmed_span(&path.syntax), "no body"),
+        ));
     }
 
     if path.fill && !path.closed {
@@ -73,7 +42,7 @@ pub fn check_path(all_paths: &[PathDecl], path: &PathDecl, diagnostics: &mut Vec
 }
 
 /// A path whose body is only `close` (no `start`) still "has a body" for
-/// the purposes of the body-vs-`follows` check; `check_body_shape` then
+/// the purposes of the body check; `check_body_shape` then
 /// reports the missing `start` itself.
 fn path_has_close_only(path: &PathDecl) -> bool {
     path.segments.is_empty() && path.closed

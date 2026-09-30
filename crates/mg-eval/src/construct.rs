@@ -318,7 +318,7 @@ fn point_at_length(skeleton: &mg_geom::skeleton::Skeleton, s: f64) -> Point {
 }
 
 /// `subpath`'s result is a construction value with no `arc`s of its own
-/// to track (spec §5.9: "it can never render or be named by `follows`"),
+/// to track (spec §5.9: "it can never render"),
 /// so it comes back as one piece per authored segment.
 fn subpath(
     skeleton: &mg_geom::skeleton::Skeleton,

@@ -123,18 +123,3 @@ path p (stroke: stem, fill: true) {
       (declaration config: (config (field name: (identifier) value: (identifier))))
       (declaration config: (config (field name: (identifier) value: (identifier))))
       (declaration))))
-
-================================================================================
-a path with `follows` instead of a body
-================================================================================
-
-path p (follows: base, stroke: hair)
-
---------------------------------------------------------------------------------
-
-(source_file
-  (declaration
-    name: (identifier)
-    config: (config
-      (field name: (identifier) value: (identifier))
-      (field name: (identifier) value: (identifier)))))

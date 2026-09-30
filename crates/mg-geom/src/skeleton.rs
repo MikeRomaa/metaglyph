@@ -121,8 +121,7 @@ impl Skeleton {
     /// Wraps an already-built `BezPath` with one authored segment per
     /// underlying piece — the right shape for a value with no original
     /// `arc`s to preserve piece counts for, such as `subpath`/`reverse`'s
-    /// result (spec §5.9: a construction value, never `follows`-able, so
-    /// nothing needs its domain to match some other skeleton's).
+    /// result (spec §5.9: a construction value that never renders).
     pub fn from_path(path: BezPath) -> Self {
         let piece_counts = vec![1; path.segments().count()];
         Self { path, piece_counts }

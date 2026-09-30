@@ -389,7 +389,7 @@ fn duplicate_kern_pair_is_an_error() {
 // Path structure (MG05xx)
 
 #[test]
-fn path_without_body_or_follows_is_an_error() {
+fn path_without_body_is_an_error() {
     let src = r#"
         font (name: "T", em: 1000)
         metric baseline (y: 0, align: "bottom")
@@ -419,7 +419,7 @@ fn fill_requires_a_closed_path() {
         }
     "#;
     let (_, diagnostics) = lower(src);
-    assert!(codes(&diagnostics).contains(&"MG0508"), "{diagnostics:#?}");
+    assert!(codes(&diagnostics).contains(&"MG0507"), "{diagnostics:#?}");
 }
 
 #[test]
@@ -440,7 +440,7 @@ fn quad_reflection_after_a_different_kind_is_illegal() {
         }
     "#;
     let (_, diagnostics) = lower(src);
-    assert!(codes(&diagnostics).contains(&"MG0509"), "{diagnostics:#?}");
+    assert!(codes(&diagnostics).contains(&"MG0508"), "{diagnostics:#?}");
 }
 
 #[test]

@@ -130,11 +130,11 @@ Every error in spec §13's "field validation", "name resolution", "type", and "p
   - member access typed from its receiver, so `.bbox` works on a path, `glyph`, or `glyphs.<name>`
   - `int` fields checked for integrality once values are constant, and otherwise at evaluation
 - Reserved-word, duplicate, and shadowing checks per spec §5.4 and §5.11. Params named after instance fields are rejected.
-- **Path structural checks** (spec §6.3), plus `follows` resolution: the target is in the same glyph, has a body, and passes on its closure and segment names.
+- **Path structural checks** (spec §6.3).
 - **`codepoint`** (spec §5.6) is an `int` or `int*` field: constant expression, each value in `0`–`0x10FFFF`. It is an ordinary schema entry, not a special literal type.
 - **Glyph sets** (spec §5.6): every alternate has a default glyph and no `codepoint`; every instance `glyphset:` names an existing set.
 - **Kerning** (spec §12.2): `left`/`right` resolve in the glyph namespace; group-overlap and duplicate-pair checks.
-- **The render predicate** is `enabled && (stroke.is_some() || fill)`. It lives as one method on the HIR path type.
+- **The render predicate** is `stroke.is_some() || fill`. It lives as one method on the HIR path type.
 - Required metrics are present. Glyph names are at most 63 bytes.
 - When the source declares no instance, lowering inserts `instance Regular ()`.
 

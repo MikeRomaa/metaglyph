@@ -85,9 +85,6 @@ pub enum Op {
     /// remove `fill` (the `close` stays).
     #[serde(rename_all = "camelCase")]
     SetFill { span: [usize; 2], on: bool },
-    /// `path <name>_f (follows: <name>, stroke: …)` after the path.
-    #[serde(rename_all = "camelCase")]
-    DuplicateFollower { span: [usize; 2] },
     /// `component (glyph: target, offset: (dx, dy))`.
     #[serde(rename_all = "camelCase")]
     AddComponent {
@@ -470,36 +467,6 @@ fn apply(
             }
             Ok(None)
         }
-        Op::DuplicateFollower { span: at } => {
-            let range = span(at);
-            let mut created = String::new();
-            s.step(|src, root| {
-                let node = decl_at(root, range).ok_or(GONE)?;
-                ast::Path::cast(node.clone()).ok_or("Select a path.")?;
-                let name = name_of(&node).ok_or("Name the path first: `follows:` needs a name.")?;
-                let glyph = root
-                    .descendants()
-                    .filter_map(ast::Glyph::cast)
-                    .find(|g| g.syntax().text_range().contains_range(node.text_range()))
-                    .ok_or(GONE)?;
-                created = fresh_named(root, &glyph, &format!("{name}_f"));
-                let stroke = edit::find_field(&node, "stroke")
-                    .and_then(|f| f.value())
-                    .map(|v| format!(", stroke: {}", text_of(src, v.syntax())))
-                    .unwrap_or_default();
-                let body = glyph.body().ok_or(GONE)?;
-                Ok(vec![edit::insert_decl(
-                    src,
-                    &body,
-                    Some(&node),
-                    &format!("path {created} (follows: {name}{stroke})"),
-                )])
-            })?;
-            Ok(Some(Created {
-                kind: "path",
-                name: created,
-            }))
-        }
         Op::AddComponent {
             glyph,
             target,
@@ -856,7 +823,7 @@ fn insert_path(src: &str, body: &ast::Body, name: &str, config: &str, start: &st
 
 /// `segment` as a new line at the end of `path`, before its `close`.
 fn append_segment(src: &str, path: &ast::Path, segment: &str) -> OpResult<TextEdit> {
-    let body = path.body().ok_or("A `follows` path has no segments of its own.")?;
+    let body = path.body().ok_or("The path has no body.")?;
     let after = last_segment(path);
     Ok(edit::insert_decl(src, &body, after.as_ref(), segment))
 }
@@ -1409,14 +1376,7 @@ mod tests {
     }
 
     #[test]
-    fn followers_and_components() {
-        let (text, created) = run_on(SRC, &Op::DuplicateFollower { span: span_of(STEM) });
-        assert!(
-            text.contains("    }\n    path stem_f (follows: stem, stroke: 50)\n}"),
-            "{text}"
-        );
-        assert_eq!(created.unwrap().name, "stem_f");
-
+    fn components() {
         let op = Op::AddComponent {
             glyph: "B".into(),
             target: "A".into(),

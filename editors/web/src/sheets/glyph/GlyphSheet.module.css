@@ -298,19 +298,6 @@ button.name:hover {
     border-color: var(--acc);
 }
 
-.action {
-    align-self: flex-start;
-    padding: 0.25rem 0.5rem;
-    border: 1px solid var(--ink);
-    font: 600 0.5625rem var(--font-cond);
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-}
-
-.action:hover {
-    background: var(--hi);
-}
-
 .drivers {
     display: flex;
     flex-direction: column;

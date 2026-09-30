@@ -165,7 +165,6 @@ The other query files:
   - `glyphs.X` and `glyphref` / `groupref` fields → the glyph or group
   - `glyphs.X.anchorName` → the anchor
   - `glyphset:` values → the first glyph declaring that set
-  - `follows:` → the path
   - `joinAt` keys → the named segment
   - across files, when the `fonts` setting lists several
 - **`textDocument/references`:** the same resolution, inverted. The HIR already has every use site after resolution.
@@ -183,7 +182,6 @@ The M2 field-schema table is the single source for field names, types, defaults,
 | Value of a `glyphref` / `groupref` field | Glyph and group names (default set only, spec §5.7) |
 | `joinAt` key | The enclosing path's segment names |
 | `glyphset:` | Existing glyph-set names |
-| `follows:` | Paths with a body in the same glyph |
 | Expression position | Glyph-scope names, top-level names, built-in constants, `math`/`font`/`glyph`/`glyphs`/`instance`, and §5.9 functions as call snippets with parameter placeholders |
 | After `glyphs.` | Glyph names |
 | After `glyphs.X.` | `advance`, `bbox`, and X's anchors |

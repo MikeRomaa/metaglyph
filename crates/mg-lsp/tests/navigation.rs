@@ -322,12 +322,11 @@ fn every_reference_field_jumps_to_its_namespace() {
     let text = valid(
         r#"glyph A (advance: 10) {
   anchor top (at: (5, 700))
-  path spine (stroke: 10) {
+  path spine (stroke: 10, joinAt: { rise: "round" }) {
     start (at: (0, 0))
     line rise (to: (0, 700))
     line over (to: (10, 700))
   }
-  path shadow (follows: spine, stroke: 4, joinAt: { rise: "round" })
 }
 glyph A (glyphset: Alt, advance: 10) {}
 glyph B (advance: 10) {
@@ -344,10 +343,9 @@ instance Italic (glyphset: Alt)"#,
         &mut client,
         &file,
         &text,
-        ("follows: spine", 0, 9),
-        ("spine", 0, 0),
+        ("{ rise", 0, 2),
+        ("line rise", 0, 5),
     );
-    assert_jump(&mut client, &file, &text, ("{ rise", 0, 2), ("rise", 0, 0));
     assert_jump(
         &mut client,
         &file,

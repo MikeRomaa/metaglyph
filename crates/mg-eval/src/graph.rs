@@ -237,14 +237,6 @@ fn build_glyph(
         for seg in &path.segments {
             collect_segment_refs(seg, hir, instance, name, &mut deps);
         }
-        if let Some(target_name) = &path.follows
-            && let Some(target_index) = glyph
-                .paths
-                .iter()
-                .position(|p| p.name.as_deref() == Some(target_name.as_str()))
-        {
-            deps.push(NodeId::PathRealized(name.to_string(), target_index));
-        }
         graph.insert(
             NodeId::PathRealized(name.to_string(), i),
             span_start(&path.syntax),

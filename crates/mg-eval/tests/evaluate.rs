@@ -165,60 +165,6 @@ let w = glyphs.A.bbox.x1;
 }
 
 #[test]
-fn a_stroked_follower_uses_the_followed_paths_segments() {
-    // A `follows` path has no segments of its own (spec §5.7): stroking it
-    // used to index past its (empty) segment list.
-    let source = format!(
-        r#"{PREAMBLE}
-glyph A (advance: 10) {{
-  path p {{
-    start (at: (0, 0))
-    line (to: (10, 0))
-    line (to: (10, 10))
-  }}
-  path q (follows: p, stroke: 2)
-}}
-"#
-    );
-    let hir = lower(&source);
-    let instance = regular(&hir);
-    let (_, outcome) = mg_eval::evaluate(&hir, instance);
-    assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
-    let bbox = outcome.values[&NodeId::PathBbox("A".into(), 1)]
-        .as_rect()
-        .unwrap();
-    assert!(bbox.x1 > 10.0 && bbox.y1 > 10.0 - 1e-9, "{bbox:?}");
-}
-
-#[test]
-fn a_stroked_followers_curvature_error_names_the_followed_segment() {
-    // The follower's stroke is too wide for the followed arc: the error
-    // points at the followed path's segment rather than panicking.
-    let source = format!(
-        r#"{PREAMBLE}
-glyph A (advance: 10) {{
-  path p {{
-    start (at: (2, 0))
-    arc (to: (-2, 0), center: (0, 0), sweep: "ccw")
-    arc (to: (2, 0),  center: (0, 0), sweep: "ccw")
-  }}
-  path q (follows: p, stroke: 20)
-}}
-"#
-    );
-    let hir = lower(&source);
-    let instance = regular(&hir);
-    let (_, outcome) = mg_eval::evaluate(&hir, instance);
-    assert_eq!(outcome.diagnostics.len(), 1, "{:#?}", outcome.diagnostics);
-    assert_eq!(
-        outcome.diagnostics[0].code,
-        mg_diag::codes::CURVATURE_LIMIT_EXCEEDED
-    );
-    let span = outcome.diagnostics[0].primary.span.clone();
-    assert!(source[span].starts_with("arc"));
-}
-
-#[test]
 fn a_curvature_violation_is_reported_before_stroking() {
     let source = format!(
         r#"{PREAMBLE}

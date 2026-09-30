@@ -137,9 +137,7 @@ pub struct PathInfo {
     pub caps: Option<[String; 2]>,
     pub joins: String,
     pub fill: bool,
-    pub enabled: bool,
     pub closed: bool,
-    pub follows: Option<String>,
     /// The realized skeleton; `None` when it failed to evaluate.
     pub skeleton: Option<String>,
     /// A point on the skeleton for the path's callout to touch: halfway
@@ -529,9 +527,7 @@ pub fn glyph_scene(model: &Model, instance: &str, name: &str) -> Option<GlyphSce
                 caps: path.caps.as_ref().map(|c| [c.start.clone(), c.end.clone()]),
                 joins: path.joins.clone(),
                 fill: path.fill,
-                enabled: path.enabled,
                 closed: path.closed,
-                follows: path.follows.clone(),
                 skeleton: skeleton.map(|s| s.path.to_svg()),
                 anchor: skeleton.and_then(|s| {
                     use kurbo::ParamCurve;

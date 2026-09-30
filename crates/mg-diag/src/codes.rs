@@ -92,17 +92,16 @@ pub const MALFORMED_VERSION: Code = Code::new("MG0422");
 
 // -- MG05xx: path structure (mg-hir) --------------------------------------
 
-pub const PATH_NEEDS_BODY_OR_FOLLOWS: Code = Code::new("MG0501");
-pub const FOLLOWS_TARGET_HAS_NO_BODY: Code = Code::new("MG0502");
-pub const PATH_MISSING_START: Code = Code::new("MG0503");
-pub const CLOSE_NOT_LAST: Code = Code::new("MG0504");
-pub const MULTIPLE_CLOSE: Code = Code::new("MG0505");
-pub const MULTIPLE_START: Code = Code::new("MG0506");
-pub const START_NOT_FIRST: Code = Code::new("MG0507");
-pub const FILL_REQUIRES_CLOSED_PATH: Code = Code::new("MG0508");
+pub const PATH_NEEDS_BODY: Code = Code::new("MG0501");
+pub const PATH_MISSING_START: Code = Code::new("MG0502");
+pub const CLOSE_NOT_LAST: Code = Code::new("MG0503");
+pub const MULTIPLE_CLOSE: Code = Code::new("MG0504");
+pub const MULTIPLE_START: Code = Code::new("MG0505");
+pub const START_NOT_FIRST: Code = Code::new("MG0506");
+pub const FILL_REQUIRES_CLOSED_PATH: Code = Code::new("MG0507");
 /// A `cube` without `c1`, or a `quad` without `c`, whose previous
 /// declaration is not a segment of the same kind (spec §6.3 reflection).
-pub const INVALID_REFLECTION: Code = Code::new("MG0509");
+pub const INVALID_REFLECTION: Code = Code::new("MG0508");
 
 // -- MG06xx: evaluation and domain errors (mg-eval) -----------------------
 //

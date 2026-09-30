@@ -121,25 +121,21 @@ pub struct CapsSpec {
 pub struct PathDecl {
     pub name: Option<String>,
     pub syntax: SyntaxNode,
-    pub follows: Option<String>,
     pub stroke: Option<ast::Expr>,
     pub fill: bool,
     pub caps: Option<CapsSpec>,
     /// Defaults to `"miter"` (spec §5.7).
     pub joins: String,
     pub join_at: IndexMap<String, String>,
-    /// Defaults to `true` (spec §5.7).
-    pub enabled: bool,
-    /// Own segments in source order; empty when the path uses `follows`
-    /// instead of a body.
+    /// Segments in source order.
     pub segments: Vec<SegmentDecl>,
     pub closed: bool,
 }
 
 impl PathDecl {
-    /// `enabled && (stroke.is_some() || fill)` (spec plan M2).
+    /// `stroke.is_some() || fill` (spec plan M2).
     pub fn renders(&self) -> bool {
-        self.enabled && (self.stroke.is_some() || self.fill)
+        self.stroke.is_some() || self.fill
     }
 
     pub fn segment_named(&self, name: &str) -> Option<&SegmentDecl> {

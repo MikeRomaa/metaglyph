@@ -10,7 +10,6 @@ import type {
 import { lockText } from "../../engine/types.ts";
 import { fmt, hex, pathKey } from "../../font/lookup.ts";
 import {
-    duplicateFollower,
     removePathField,
     renameSelection,
     setFill,
@@ -792,35 +791,7 @@ function PathProps({ path }: { path: PathInfo }) {
                     value={path.fill ? "on" : "off"}
                     onPick={(fill) => void setFill(path, fill === "on")}
                 />
-                <span className={sheet.key}>Enabled</span>
-                <Segmented
-                    options={["false", "true"]}
-                    value={String(path.enabled)}
-                    onPick={(on) =>
-                        void (on === "true"
-                            ? removePathField(path, "enabled")
-                            : setPathField(path, "enabled", {
-                                  type: "bool",
-                                  value: false,
-                              }))
-                    }
-                />
-                {path.follows && (
-                    <>
-                        <span className={sheet.key}>Follows</span>
-                        <span>{path.follows}</span>
-                    </>
-                )}
             </div>
-            {path.name && !path.follows && (
-                <button
-                    type="button"
-                    className={styles.action}
-                    onClick={() => void duplicateFollower(path)}
-                >
-                    Duplicate as follower
-                </button>
-            )}
         </Section>
     );
 }

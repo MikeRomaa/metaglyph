@@ -134,9 +134,7 @@ export interface PathInfo {
     caps?: [string, string];
     joins: string;
     fill: boolean;
-    enabled: boolean;
     closed: boolean;
-    follows?: string;
     skeleton?: string;
     /** A point on the skeleton for the path's callout to touch: halfway
      * along its first segment. */
@@ -219,7 +217,6 @@ export type Op =
     | { op: "setField"; span: Span; name: string; value: FieldValue }
     | { op: "removeField"; span: Span; name: string }
     | { op: "setFill"; span: Span; on: boolean }
-    | { op: "duplicateFollower"; span: Span }
     | { op: "addComponent"; glyph: string; target: string; offset: Pt }
     | { op: "relate"; span: Span; relation: Relation };
 

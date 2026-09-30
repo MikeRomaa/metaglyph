@@ -169,7 +169,7 @@ Parens hold configuration; braces hold declarations. Both parts are optional.
 | Declarations in a body | no separator |
 | Body ordering | significant only for path segments |
 
-A config field's value is an expression, except for fields typed `identifier`, `range`, `glyphref`, `groupref`, `pathref`, or `map`, whose syntax is given with the field.
+A config field's value is an expression, except for fields typed `identifier`, `range`, `glyphref`, `groupref`, or `map`, whose syntax is given with the field.
 
 A **constant expression** contains only literals, suffixed literals, arithmetic operators, and `math.*`. It references no declaration.
 
@@ -307,17 +307,13 @@ When the source declares no instance, the build uses one implicit instance, `ins
 
 | Field | Type | |
 |---|---|---|
-| `follows` | `pathref` | optional; mutually exclusive with a body |
 | `stroke` | `num` | optional. Constant along the path; must be > 0 |
 | `fill` | `bool` | optional, default `false`. Requires the path to be closed. Combines freely with `stroke` |
 | `caps` | `string` or `(string, string)` | optional, default `"butt"`. A string sets both ends; a 2-tuple sets `(start, end)`. Requires `stroke` and an open path |
 | `joins` | `string` | optional, default `"miter"`. Requires `stroke` |
 | `joinAt` | `map<segmentName, string>` | optional. Requires `stroke` |
-| `enabled` | `bool` | optional, default `true` |
 
-Body contains `start`, `line`, `quad`, `cube`, `arc`, `close`. Order is significant. A path must have either a body or `follows`.
-
-`follows: p` names another path in the same glyph that has a body. The following path takes that path's skeleton exactly — its segments, its closure, and its segment names (so `joinAt` keys refer to them) — and declares its own rendering fields.
+Body contains `start`, `line`, `quad`, `cube`, `arc`, `close`. Order is significant. A path must have a body.
 
 The segment declarations follow SVG path data: `start` is moveto, `line` lineto, `quad` and `cube` the quadratic and cubic curveto, `arc` an elliptical arc, and `close` closepath. Each segment runs from the **current point** — the previous declaration's endpoint — to its own `to`. Its geometry is fixed by its own fields and the current point, plus, for an omitted control point, the previous segment (§6.3).
 
@@ -417,7 +413,7 @@ Complete. Nothing outside this list is callable. Angle arguments and results are
 
 `pointAt(path, t)→point` · `directionAt(path, t)→pair` (unit tangent) · `curvatureAt(path, t)→num` (signed, positive when turning counter-clockwise) · `arcLength(path)→num` · `pointAtLength(path, s)→point` (`s ∈ [0, arcLength]`) · `intersect(a, b)→num*` (parameters on `a` where `a` crosses `b`, ascending; empty when none) · `subpath(path, t0, t1)→path` · `reverse(path)→path` · `extrema(path)→num*` (parameters where `x′ = 0` or `y′ = 0`, ascending)
 
-A path returned by `subpath` or `reverse` is a construction value: it can be passed to path queries and read with `.bbox`, and it can never render or be named by `follows`.
+A path returned by `subpath` or `reverse` is a construction value: it can be passed to path queries and read with `.bbox`, and it can never render.
 
 **Reductions:** `sum(num*)→num` · `minOf(num*)→num` · `maxOf(num*)→num`. `minOf` and `maxOf` of an empty list are domain errors; `sum` of an empty list is `0`.
 
@@ -484,12 +480,12 @@ Construction geometry never renders.
 1. **Points** — literal, or derived via the §5.9 constructors.
 2. **Lines** — `lineThrough`, `lineAt`, `hline`, `vline`. Infinite.
 3. **Metric guides** — `metric` declarations (§5.6), exposing `.y`, `.ink`, `.overshoot`.
-4. **Construction paths** — a `path` with neither `stroke` nor `fill`, or with `enabled: false`.
+4. **Construction paths** — a `path` with neither `stroke` nor `fill`.
 5. **Measurements** — any `let`; the editor displays named scalars and pairs as dimensions.
 
 ### 6.2 `path` is the only shape construct
 
-A path renders if and only if `enabled` is `true` and it declares `stroke`, `fill`, or both.
+A path renders if and only if it declares `stroke`, `fill`, or both.
 
 | Need | Mechanism |
 |---|---|
@@ -497,9 +493,7 @@ A path renders if and only if `enabled` is `true` and it declares `stroke`, `fil
 | Stroked outline of a skeleton | `stroke: <num>` |
 | Filled interior | `fill: true`, with `close` |
 | Filled shape with a stroked border | both, on one path |
-| Same skeleton at two stroke widths | two paths, one with `follows:` |
 | Render order | declaration order |
-| Conditional rendering | `enabled:` |
 
 Render order does not affect appearance: overlaps are kept and nonzero winding is order-independent. It fixes contour order in the output only.
 
@@ -576,8 +570,6 @@ The arc is realized as `m = ⌈Δ / 90°⌉` cubic pieces of equal eccentric-ang
 - a `cube` without `c1`, or a `quad` without `c`, whose previous declaration is not a segment of the same kind
 - a `joinAt` key naming no segment
 - more than one `close`, or any declaration after `close`
-- a path with both a body and `follows`, or with neither
-- `follows` naming a path without a body, or a path in another glyph
 
 ### 6.4 Stroke width, caps, joins
 

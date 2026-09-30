@@ -125,8 +125,6 @@ Coordinates are raw units unless stated. `pN` means a new named `let`.
 | Path-wide join | `joins: "bevel"` | — |
 | Per-segment join | `joinAt: { segName: "round" }`. An unnamed segment is named first (inline prompt). | — |
 | End direction | the adjacent control's `let` becomes `polar(endpoint, len, θdeg)` | the control's previous expression |
-| Enable / disable | `enabled: false` / `remove_field enabled` | — |
-| Duplicate as follower | `path <name>_f (follows: <name>, <stroke copied>)` | — |
 | Delete segment | `remove_decl` of the segment; its `to`/control lets are removed if nothing else references them | — |
 | Delete let / path | `remove_decl`; dangling references become errors, as intended | — |
 
@@ -226,7 +224,7 @@ All views share one worker-evaluated state for the **active instance**.
 ### 2.4 Glyph editor
 - **Canvas layers** (each can be toggled): metric lines; origin and advance guides; construction points, lines and measurements; skeletons with segment endpoints and control handles; the stroked/filled outline; components (dimmed, clickable to open); diagnostics anchored at their geometry (e.g. a curvature-limit interval).
 - **Tools:** select/drag, path tool, construction point/line/guide/measurement, component place, plus the relationship tools on the current selection.
-- **Inspector:** the selected declaration's fields, as editable expressions (typed text is spliced as-is) and quick controls (stroke, caps, joins, fill, enabled, sweep/large, segment kind).
+- **Inspector:** the selected declaration's fields, as editable expressions (typed text is spliced as-is) and quick controls (stroke, caps, joins, fill, sweep/large, segment kind).
 - **Drag feedback:** the active driver literal (and its value) is shown near the cursor, locked axes are indicated, a single-driver track is drawn, and the key hint for cycling drivers is shown.
 - **Canvas settings (not in source):** grid and grid snap, snap to points/lines/metrics, zoom and pan.
 - **Navigation:** previous/next glyph, and jump to a glyph by name.

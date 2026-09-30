@@ -114,7 +114,7 @@ pub fn literal_num_value(token: &SyntaxToken, font_em: Option<f64>) -> Option<f6
     }
 }
 
-/// The boolean analogue of [`eval_const`], for `fill`/`enabled`/`caps`
+/// The boolean analogue of [`eval_const`], for `fill`/`caps`
 /// fields whose position-dependent structural checks (`fill` requiring a
 /// closed path, foremost) need a concrete value before M3 exists to
 /// evaluate one for real. Same narrowness: `None` for anything but a

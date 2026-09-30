@@ -18,9 +18,7 @@
 //!   where a glyph name means its default-set declaration
 //! - `glyphs.X.a`: glyph `X`'s anchor `a`
 //! - `glyphset:`: the first glyph declaring that set
-//! - `follows:`: a path in the same glyph
-//! - `joinAt` keys: a segment of the enclosing path, or of the path it
-//!   follows
+//! - `joinAt` keys: a segment of the enclosing path
 //! - an `instance` override key: the param it overrides
 
 use std::ops::Range;
@@ -67,9 +65,6 @@ pub struct PathEntry {
     /// The whole path, for an anonymous one.
     pub range: Range<usize>,
     pub segments: Vec<Decl>,
-    pub follows: Option<String>,
-    /// Whether it declares its own segments, so `follows:` may name it.
-    pub has_body: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -336,8 +331,7 @@ impl Index {
             .then(|| Def::TopLevel(name.to_string()))
     }
 
-    /// A `joinAt: { key: "…" }` key names a segment of its path, or of the
-    /// path that one `follows`.
+    /// A `joinAt: { key: "…" }` key names a segment of its path.
     fn resolve_join_at_key(
         &self,
         entry: &SyntaxNode,
@@ -351,20 +345,15 @@ impl Index {
         }
         let path = self.path_at(glyph, offset)?;
         let entry = &self.glyphs[glyph].paths[path];
-        let owner = if entry.segments.iter().any(|s| s.name == name) {
-            path
-        } else {
-            let target = entry.follows.as_deref()?;
-            self.glyphs[glyph]
-                .paths
-                .iter()
-                .position(|p| p.decl.as_ref().is_some_and(|d| d.name == target))?
-        };
-        Some(Def::Segment {
-            glyph,
-            path: owner,
-            name: name.to_string(),
-        })
+        entry
+            .segments
+            .iter()
+            .any(|s| s.name == name)
+            .then(|| Def::Segment {
+                glyph,
+                path,
+                name: name.to_string(),
+            })
     }
 
     /// `glyphs.X` names glyph `X`; `glyphs.X.a` names its anchor `a`.
@@ -426,13 +415,6 @@ impl Index {
                     return Some(Def::GlyphSet(name.to_string()))
                         .filter(|d| self.definition(d).is_some());
                 }
-                (SyntaxKind::PATH, "follows") => {
-                    let local = Def::GlyphLocal {
-                        glyph: glyph?,
-                        name: name.to_string(),
-                    };
-                    return self.definition(&local).is_some().then_some(local);
-                }
                 _ => {}
             }
         }
@@ -493,8 +475,6 @@ fn glyph_entry(glyph: &ast::Glyph) -> Option<GlyphEntry> {
                     decl: decl(&item, path.name_token()),
                     range: crate::trimmed_range(&item),
                     segments,
-                    follows: ident_field(path.config(), "follows"),
-                    has_body: path.body().is_some(),
                 });
             }
             _ => {}

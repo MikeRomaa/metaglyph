@@ -696,18 +696,6 @@ fn eval_path_realized(
     let glyph = effective_glyph(hir, instance, glyph_name);
     let path = &glyph.paths[path_index];
 
-    if let Some(target_name) = &path.follows {
-        // `follows` takes the target's skeleton exactly (spec §5.7); the
-        // target is itself a dependency (see `crate::graph`), so its
-        // value is already in the cache.
-        let target_index = glyph
-            .paths
-            .iter()
-            .position(|p| p.name.as_deref() == Some(target_name.as_str()))
-            .expect("mg-hir already resolved `follows`");
-        return Ok(values[&NodeId::PathRealized(glyph_name.to_string(), target_index)].clone());
-    }
-
     let mut ctx = EvalCtx::new(hir, instance, Some(glyph_name), values, diagnostics);
     let start_seg = &path.segments[0];
     debug_assert_eq!(start_seg.kind, SegmentKind::Start);
@@ -889,7 +877,7 @@ pub fn render_path(
     if let Some(stroke_expr) = &path.stroke {
         let mut ctx = EvalCtx::new(hir, instance, Some(glyph_name), values, diagnostics);
         let width = value_num(&mut ctx, stroke_expr)?;
-        let drawn = drawn_segments(glyph, path);
+        let drawn = drawn_segments(path);
         let spec = build_stroke_spec(path, drawn, width);
         let offset_tolerance = tolerances(hir).offset;
         match mg_geom::stroke::stroke_path(skeleton, path.closed, &spec, offset_tolerance) {
@@ -905,23 +893,10 @@ pub fn render_path(
     Ok(contours)
 }
 
-/// The segments a path draws, `start` excluded: its own, or — for a
-/// `follows` path, which has none (spec §5.7) — those of the path it
-/// follows, whose skeleton it shares. `joinAt` keys and stroke errors
-/// index into these.
-fn drawn_segments<'a>(
-    glyph: &'a GlyphDecl,
-    path: &'a mg_hir::model::PathDecl,
-) -> &'a [SegmentDecl] {
-    let own = if path.segments.is_empty() {
-        path.follows
-            .as_deref()
-            .and_then(|name| glyph.path_named(name))
-            .map_or(&[][..], |followed| &followed.segments[..])
-    } else {
-        &path.segments[..]
-    };
-    own.get(1..).unwrap_or(&[])
+/// The segments a path draws, `start` excluded. `joinAt` keys and stroke
+/// errors index into these.
+fn drawn_segments(path: &mg_hir::model::PathDecl) -> &[SegmentDecl] {
+    path.segments.get(1..).unwrap_or(&[])
 }
 
 /// Builds `mg-geom`'s stroke configuration from a `PathDecl`'s already

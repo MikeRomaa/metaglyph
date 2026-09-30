@@ -379,26 +379,6 @@ fn field_values(ctx: &Ctx, field: &SyntaxNode) -> Vec<CompletionItem> {
                 .map(|s| item(s, CompletionItemKind::ENUM, Some("glyph set".to_string())))
                 .collect()
         }
-        (SyntaxKind::PATH, "follows") => {
-            let Some(glyph) = ctx.index.glyph_at(ctx.offset) else {
-                return Vec::new();
-            };
-            let this = ctx.index.path_at(glyph, ctx.offset);
-            ctx.index.glyphs[glyph]
-                .paths
-                .iter()
-                .enumerate()
-                .filter(|&(i, p)| p.has_body && Some(i) != this)
-                .filter_map(|(_, p)| p.decl.as_ref())
-                .map(|d| {
-                    item(
-                        &d.name,
-                        CompletionItemKind::FUNCTION,
-                        Some("path".to_string()),
-                    )
-                })
-                .collect()
-        }
         (SyntaxKind::PATH, "joinAt") => Vec::new(),
         _ => {
             let values = schema::fields_for(block)
@@ -439,8 +419,7 @@ fn glyph_names(ctx: &Ctx, groups: bool) -> Vec<CompletionItem> {
     items
 }
 
-/// A `joinAt` map's keys: the enclosing path's segment names, or those of
-/// the path it follows.
+/// A `joinAt` map's keys: the enclosing path's segment names.
 fn join_at_keys(ctx: &Ctx, map: &SyntaxNode) -> Vec<CompletionItem> {
     if field_of(map).is_none_or(|(_, name)| name != "joinAt") {
         return Vec::new();
@@ -451,15 +430,7 @@ fn join_at_keys(ctx: &Ctx, map: &SyntaxNode) -> Vec<CompletionItem> {
     let Some(path) = ctx.index.path_at(glyph, ctx.offset) else {
         return Vec::new();
     };
-    let paths = &ctx.index.glyphs[glyph].paths;
-    let owner = match &paths[path].follows {
-        Some(target) => paths
-            .iter()
-            .find(|p| p.decl.as_ref().is_some_and(|d| d.name == *target))
-            .unwrap_or(&paths[path]),
-        None => &paths[path],
-    };
-    owner
+    ctx.index.glyphs[glyph].paths[path]
         .segments
         .iter()
         .map(|s| {
