@@ -282,12 +282,15 @@ export const useStore = create<Store>()((set) => ({
                     (view.glyph === s.glyph || !IN_GLYPH.has(s.selection.kind))
                         ? locate(s.selection, view.font, view.scene)
                         : null),
+                // A just-created kern becomes the active pair.
                 kern:
-                    s.kern !== null &&
-                    view.font &&
-                    s.kern < view.font.kerns.length
-                        ? s.kern
-                        : null,
+                    created?.kind === "kern"
+                        ? Number(created.name)
+                        : s.kern !== null &&
+                            view.font &&
+                            s.kern < view.font.kerns.length
+                          ? s.kern
+                          : null,
             };
         }),
     setSaved: (saved) => set({ saved }),

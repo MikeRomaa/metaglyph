@@ -2,13 +2,17 @@ import { useEffect } from "react";
 import { redoEdit, undoEdit } from "../source/editor.ts";
 import { deleteSelection, endPath } from "./actions.ts";
 import { cycleDrag, cyclePreferred, dragging, endDrag } from "./drag.ts";
+import { endNudges } from "./kerning.ts";
 import { cancelRelate } from "./relate.ts";
 import { useStore } from "./store.ts";
 
-/** Whether a key event belongs to something the user is typing in. */
+/** Whether a key event belongs to something the user is typing in, or
+ * to an open modal: sheet shortcuts wait until it closes. */
 export function isTyping(e: KeyboardEvent) {
     const target = e.target as HTMLElement | null;
-    return !!target?.closest("input, textarea, select, .cm-editor");
+    return !!target?.closest(
+        'input, textarea, select, .cm-editor, [aria-modal="true"]',
+    );
 }
 
 /** The axis Tab cycles: x, or y when x has no driver; Shift: y. */
@@ -46,11 +50,11 @@ export function useEditShortcuts() {
                 }
             } else if (mod && key === "z") {
                 e.preventDefault();
-                if (e.shiftKey) redoEdit();
-                else undoEdit();
+                // A nudge run commits first, so undo takes it back whole.
+                void endNudges().then(e.shiftKey ? redoEdit : undoEdit);
             } else if (mod && key === "y") {
                 e.preventDefault();
-                redoEdit();
+                void endNudges().then(redoEdit);
             } else if (!mod && (e.key === "Delete" || e.key === "Backspace")) {
                 if (!s.selection || dragging()) return;
                 e.preventDefault();

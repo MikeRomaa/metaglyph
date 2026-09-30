@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { FontData, GlyphInfo, KernInfo } from "../engine/types.ts";
-import { effectiveKern, fmt, glyphsForText, spacing } from "./lookup.ts";
+import {
+    effectiveKern,
+    fmt,
+    glyphsForText,
+    kernPairs,
+    kernSample,
+    spacing,
+} from "./lookup.ts";
 
 function glyph(
     name: string,
@@ -61,6 +68,35 @@ describe("effectiveKern", () => {
         });
         expect(effectiveKern(font, "A", "a")?.value).toBe(-20);
         expect(effectiveKern(font, "a", "A")).toBeNull();
+    });
+});
+
+describe("kernPairs", () => {
+    it("lists every covered pair with the kern it gets", () => {
+        const pairs = kernPairs(font, 0).map((p) => [
+            p.left,
+            p.right,
+            p.effective?.index,
+        ]);
+        // A → c is the glyph pair's (index 1), not the group pair's.
+        expect(pairs).toEqual([
+            ["A", "a", 0],
+            ["A", "c", 1],
+        ]);
+        expect(kernPairs(font, 2)).toEqual([]);
+    });
+});
+
+describe("kernSample", () => {
+    it("skips members a glyph pair overrides", () => {
+        const reordered: FontData = {
+            ...font,
+            groups: [{ name: "bowls", glyphs: ["c", "a"], span: [0, 0] }],
+        };
+        // A → c belongs to the glyph pair; the group pair shows as A → a.
+        expect(kernSample(reordered, 0)).toEqual(["A", "a"]);
+        expect(kernSample(reordered, 1)).toEqual(["A", "c"]);
+        expect(kernSample(reordered, 2)).toBeUndefined();
     });
 });
 

@@ -121,15 +121,50 @@ export function effectiveKern(
     return best;
 }
 
-/** A glyph name for one side of a kern: the glyph itself, or a group's
- * first member. */
-export function sideGlyph(
+/** The glyphs one side of a kern covers: the glyph itself, or a group's
+ * members. */
+function sideGlyphs(
     font: FontData,
     name: string | undefined,
     group: boolean,
-): string | undefined {
-    if (!group) return name;
-    return font.groups.find((g) => g.name === name)?.glyphs[0];
+): string[] {
+    if (!group) return name === undefined ? [] : [name];
+    return font.groups.find((g) => g.name === name)?.glyphs ?? [];
+}
+
+export interface CoveredPair {
+    left: string;
+    right: string;
+    /** What applies to the pair: this kern, or a more specific one. */
+    effective: EffectiveKern | null;
+}
+
+/** Every glyph pair kern `index` covers: its left side's glyphs × its
+ * right side's, with the kern each actually gets (spec §12.2). */
+export function kernPairs(font: FontData, index: number): CoveredPair[] {
+    const kern = font.kerns[index];
+    if (!kern) return [];
+    const lefts = sideGlyphs(font, kern.left, kern.leftGroup);
+    const rights = sideGlyphs(font, kern.right, kern.rightGroup);
+    return lefts.flatMap((left) =>
+        rights.map((right) => ({
+            left,
+            right,
+            effective: effectiveKern(font, left, right),
+        })),
+    );
+}
+
+/** A glyph pair to show kern `index` with: the first its value actually
+ * applies to (a glyph pair overrides a group one, spec §12.2), else the
+ * first it covers. */
+export function kernSample(
+    font: FontData,
+    index: number,
+): [string, string] | undefined {
+    const pairs = kernPairs(font, index);
+    const pair = pairs.find((p) => p.effective?.index === index) ?? pairs[0];
+    return pair && [pair.left, pair.right];
 }
 
 /** A path's name, or `#<index>` for an anonymous one. */

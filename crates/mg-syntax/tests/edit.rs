@@ -159,6 +159,85 @@ fn add_constant_of_nothing_is_no_edit() {
     assert!(edit::add_constant(&let_value(&root, "a"), 0.3, 1000.0).is_empty());
 }
 
+// ── convert_unit ───────────────────────────────────────────────────────
+
+fn kern_by(src: &str) -> ast::Expr {
+    let kern = root(src).descendants().find(|n| n.kind() == SyntaxKind::KERN).unwrap();
+    field_value(&kern, "by")
+}
+
+#[test]
+fn convert_unit_round_trips_a_bare_literal() {
+    let raw = "kern (left: A, right: V, by: -15)\n";
+    let em = "kern (left: A, right: V, by: -0.015em)\n";
+    assert_eq!(check(raw, &edit::convert_unit(&kern_by(raw), true, 1000.0).unwrap()), em);
+    assert_eq!(check(em, &edit::convert_unit(&kern_by(em), false, 1000.0).unwrap()), raw);
+    // Already in the unit.
+    assert!(edit::convert_unit(&kern_by(raw), false, 1000.0).is_none());
+}
+
+#[test]
+fn convert_unit_takes_the_trailing_constant_or_a_factor() {
+    let src = "kern (left: A, right: V, by: k - 20)\n";
+    assert_eq!(
+        check(src, &edit::convert_unit(&kern_by(src), true, 1000.0).unwrap()),
+        "kern (left: A, right: V, by: k - 0.020em)\n"
+    );
+    let src = "kern (left: A, right: V, by: -0.05em * kernStrength)\n";
+    assert_eq!(
+        check(src, &edit::convert_unit(&kern_by(src), false, 1000.0).unwrap()),
+        "kern (left: A, right: V, by: -50 * kernStrength)\n"
+    );
+    let src = "kern (left: A, right: V, by: k / 2)\n";
+    assert!(edit::convert_unit(&kern_by(src), true, 1000.0).is_none());
+}
+
+// ── list_insert / list_remove ──────────────────────────────────────────
+
+fn group_list(src: &str) -> ast::ListExpr {
+    let group = root(src).descendants().find(|n| n.kind() == SyntaxKind::GROUP).unwrap();
+    match field_value(&group, "glyphs") {
+        ast::Expr::List(list) => list,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn list_insert_is_comma_aware() {
+    let cases = [
+        ("group g (glyphs: [ o, c ])\n", "group g (glyphs: [ o, c, e ])\n"),
+        ("group g (glyphs: [o, c,])\n", "group g (glyphs: [o, c, e])\n"),
+        ("group g (glyphs: [ ])\n", "group g (glyphs: [ e ])\n"),
+        ("group g (glyphs: [])\n", "group g (glyphs: [e])\n"),
+        (
+            "group g (glyphs: [\n    o,\n    c,\n])\n",
+            "group g (glyphs: [\n    o,\n    c,\n    e,\n])\n",
+        ),
+    ];
+    for (src, want) in cases {
+        let list = group_list(src);
+        assert_eq!(check(src, &[edit::list_insert(src, &list, "e")]), want, "{src}");
+    }
+}
+
+#[test]
+fn list_remove_takes_one_comma() {
+    let src = "group g (glyphs: [ o, c, e ])\n";
+    let list = group_list(src);
+    let remove = |i| check(src, &edit::list_remove(src, &list, i).unwrap());
+    assert_eq!(remove(0), "group g (glyphs: [ c, e ])\n");
+    assert_eq!(remove(1), "group g (glyphs: [ o, e ])\n");
+    assert_eq!(remove(2), "group g (glyphs: [ o, c ])\n");
+    assert!(edit::list_remove(src, &list, 3).is_none());
+
+    let src = "group g (glyphs: [\n    o,\n    c,\n])\n";
+    let list = group_list(src);
+    assert_eq!(
+        check(src, &edit::list_remove(src, &list, 0).unwrap()),
+        "group g (glyphs: [\n    c,\n])\n"
+    );
+}
+
 // ── set_field / remove_field ───────────────────────────────────────────
 
 #[test]

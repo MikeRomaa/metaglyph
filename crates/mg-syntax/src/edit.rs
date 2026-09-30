@@ -288,6 +288,133 @@ pub fn add_constant(expr: &ast::Expr, delta: f64, em: f64) -> Vec<TextEdit> {
     }
 }
 
+/// The literal a unit toggle converts in `expr`: the expression itself
+/// when it is a (signed) literal, else a trailing `+ <lit>` / `- <lit>`,
+/// else a literal operand of a top-level `*` (under a leading `-`).
+fn unit_literal(expr: &ast::Expr) -> Option<SyntaxToken> {
+    if let Some((token, _)) = signed_literal(expr) {
+        return Some(token);
+    }
+    // `-0.05em * k` parses as `-(0.05em * k)`.
+    if let ast::Expr::Unary(unary) = expr
+        && unary.op_token()?.kind() == SyntaxKind::MINUS
+    {
+        return unit_literal(&unary.operand()?);
+    }
+    let ast::Expr::Bin(bin) = expr else {
+        return None;
+    };
+    let op = bin.op_token()?.kind();
+    let literal = |e: Option<ast::Expr>| e.as_ref().and_then(signed_literal).map(|(t, _)| t);
+    match op {
+        SyntaxKind::PLUS | SyntaxKind::MINUS => literal(bin.rhs()),
+        SyntaxKind::STAR => literal(bin.lhs()).or_else(|| literal(bin.rhs())),
+        _ => None,
+    }
+}
+
+/// Toggle the unit of `expr`'s literal (plan 5, §1.6 "Unit toggle"):
+/// `-15` ↔ `-0.015em` for a 1000-unit em. The literal keeps its
+/// precision: going to `em` adds the decimals `em` takes (3 for 1000),
+/// coming back removes them. `None` when `expr` has no literal to convert
+/// or it already has the unit.
+pub fn convert_unit(expr: &ast::Expr, to_em: bool, em: f64) -> Option<Vec<TextEdit>> {
+    let token = unit_literal(expr)?;
+    let (number, suffix) = split_literal(token.text());
+    let is_em = suffix == "em";
+    if is_em == to_em || !(suffix.is_empty() || is_em) {
+        return None;
+    }
+    let value: f64 = number.parse().ok()?;
+    let shift = em.log10().ceil().max(0.0) as usize;
+    let (value, places, suffix) = if to_em {
+        (value / em, decimals(number) + shift, "em")
+    } else {
+        (value * em, decimals(number).saturating_sub(shift), "")
+    };
+    let text = format_decimals(value, places);
+    Some(vec![TextEdit::replace(token_range(&token), format!("{text}{suffix}"))])
+}
+
+// ---------------------------------------------------------------------
+// Lists
+
+/// Append `text` to `list` (plan 5, §1.6 "Add group member"), comma-aware:
+/// `, text` after the last element (` text` after a trailing comma), a new
+/// aligned line on a multi-line list, `[text]` in an empty one (keeping
+/// `[ ]`'s inner spaces).
+pub fn list_insert(src: &str, list: &ast::ListExpr, text: &str) -> TextEdit {
+    let elements: Vec<ast::Expr> = list.elements().collect();
+    let tokens: Vec<SyntaxToken> = direct_tokens(list.syntax()).collect();
+    let open = tokens.iter().find(|t| t.kind() == SyntaxKind::L_BRACKET);
+    let close = tokens.iter().find(|t| t.kind() == SyntaxKind::R_BRACKET);
+    let Some(last) = elements.last() else {
+        let (Some(open), Some(close)) = (open, close) else {
+            return TextEdit::insert(node_range(list.syntax()).end, text);
+        };
+        let inner = token_range(open).end..token_range(close).start;
+        let padded = if src[inner.clone()].is_empty() {
+            text.to_string()
+        } else {
+            format!(" {text} ")
+        };
+        return TextEdit::replace(inner, padded);
+    };
+    let last_range = node_range(last.syntax());
+    let trailing_comma = tokens
+        .iter()
+        .find(|t| t.kind() == SyntaxKind::COMMA && token_range(t).start >= last_range.end);
+    let previous_end = match elements.len() {
+        1 => open.map_or(last_range.start, |t| token_range(t).end),
+        n => node_range(elements[n - 2].syntax()).end,
+    };
+    if src[previous_end..last_range.start].contains('\n') {
+        let pad = " ".repeat(last_range.start - line_start(src, last_range.start));
+        return match trailing_comma {
+            Some(comma) => TextEdit::insert(token_range(comma).end, format!("\n{pad}{text},")),
+            None => TextEdit::insert(last_range.end, format!(",\n{pad}{text}")),
+        };
+    }
+    match trailing_comma {
+        Some(comma) => TextEdit::insert(token_range(comma).end, format!(" {text}")),
+        None => TextEdit::insert(last_range.end, format!(", {text}")),
+    }
+}
+
+/// Remove element `index` of `list`, one adjacent comma and the spaces
+/// between them; an element alone on its line takes the line. `None`
+/// when there is no such element.
+pub fn list_remove(src: &str, list: &ast::ListExpr, index: usize) -> Option<Vec<TextEdit>> {
+    let element = list.elements().nth(index)?;
+    let range = node_range(element.syntax());
+    let commas: Vec<SyntaxToken> = direct_tokens(list.syntax())
+        .filter(|t| t.kind() == SyntaxKind::COMMA)
+        .collect();
+    let after = commas.iter().find(|c| token_range(c).start >= range.end);
+    let before = commas.iter().rev().find(|c| token_range(c).end <= range.start);
+    // Only a comma directly next to the element (nothing but trivia between).
+    let after = after.filter(|c| src[range.end..token_range(c).start].trim().is_empty());
+    let before = before.filter(|c| src[token_range(c).end..range.start].trim().is_empty());
+
+    let end_with_comma = after.map_or(range.end, |c| token_range(c).end);
+    let ls = line_start(src, range.start);
+    let le = line_end(src, end_with_comma);
+    if is_blank(&src[ls..range.start]) && is_blank(&src[end_with_comma..le]) {
+        return Some(vec![TextEdit::delete(ls..(le + 1).min(src.len()))]);
+    }
+    if let Some(comma) = after {
+        let mut end = token_range(comma).end;
+        while src[end..].starts_with(' ') {
+            end += 1;
+        }
+        return Some(vec![TextEdit::delete(range.start..end)]);
+    }
+    if let Some(comma) = before {
+        return Some(vec![TextEdit::delete(token_range(comma).start..range.end)]);
+    }
+    Some(vec![TextEdit::delete(range)])
+}
+
 // ---------------------------------------------------------------------
 // Config fields
 

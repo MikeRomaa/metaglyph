@@ -125,6 +125,56 @@ pub enum Op {
         name: String,
         value: Option<FieldValue>,
     },
+    /// `kern (left: <left>, right: <right>, by: <by>)`, each side a glyph,
+    /// a group, or a new group declared with it; refused when the pair
+    /// exists or breaks the §12.2 group rule.
+    #[serde(rename_all = "camelCase")]
+    NewKern {
+        left: KernSideSpec,
+        right: KernSideSpec,
+        by: f64,
+    },
+    /// Convert the unit of the kern at `span`'s `by` literal to `em` (or
+    /// back to raw units), for a font of `font_em` units.
+    #[serde(rename_all = "camelCase")]
+    KernUnit {
+        span: [usize; 2],
+        em: bool,
+        font_em: f64,
+    },
+    /// `group <name> (glyphs: [ <glyphs> ])`.
+    #[serde(rename_all = "camelCase")]
+    NewGroup { name: String, glyphs: Vec<String> },
+    /// Delete group `name` and every kern naming it, so no reference
+    /// dangles.
+    #[serde(rename_all = "camelCase")]
+    DeleteGroup { name: String },
+    /// Add `glyphs` to `group`'s list, or remove them; refused when that
+    /// would break the §12.2 group rule or empty the group.
+    #[serde(rename_all = "camelCase")]
+    GroupMember {
+        group: String,
+        glyphs: Vec<String>,
+        add: bool,
+    },
+}
+
+/// One side of an [`Op::NewKern`]: an existing glyph or group by name, or
+/// a group to declare with the pair.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum KernSideSpec {
+    Name(String),
+    NewGroup { group: String, glyphs: Vec<String> },
+}
+
+impl KernSideSpec {
+    fn name(&self) -> &str {
+        match self {
+            KernSideSpec::Name(name) => name,
+            KernSideSpec::NewGroup { group, .. } => group,
+        }
+    }
 }
 
 /// What an [`Op::Spacing`] moves.
@@ -214,7 +264,8 @@ pub struct Change {
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Created {
-    /// `point`, `line`, `path`, `let` (a measurement) or `component`.
+    /// `point`, `line`, `path`, `let` (a measurement), `component`,
+    /// `group`, or `kern` (named by its index among the kerns).
     pub kind: &'static str,
     pub name: String,
 }
@@ -578,7 +629,242 @@ fn apply(
             check_parses(s, "That value doesn't parse.")?;
             Ok(None)
         }
+        Op::NewKern { left, right, by } => {
+            // New groups first, so the kern's checks see them. The same
+            // name on both sides fails as already declared.
+            for spec in [left, right] {
+                if let KernSideSpec::NewGroup { group, glyphs } = spec {
+                    declare_group(s, group, glyphs)?;
+                }
+            }
+            let (left, right) = (left.name(), right.name());
+            let mut index = 0;
+            s.step(|src, root| {
+                let hir = lower(root);
+                if hir.kerns.iter().any(|k| {
+                    k.left_name.as_deref() == Some(left) && k.right_name.as_deref() == Some(right)
+                }) {
+                    return Err(format!("There is already a kern for {left} → {right}."));
+                }
+                for (name, side) in [(left, Side::Left), (right, Side::Right)] {
+                    if hir.groups.contains_key(name) {
+                        let members = &hir.groups[name].glyphs;
+                        overlap(&hir, side, name, members)?;
+                    } else if !has_glyph(&hir, name) {
+                        return Err(format!("There is no glyph or group `{name}`."));
+                    }
+                }
+                index = hir.kerns.len();
+                let file = ast::SourceFile::cast(root.clone()).ok_or(GONE)?;
+                let text = format!("kern (left: {left}, right: {right}, by: {})", coord(*by));
+                Ok(vec![edit::insert_top_level(src, &file, SyntaxKind::KERN, &text)])
+            })?;
+            Ok(Some(Created {
+                kind: "kern",
+                name: index.to_string(),
+            }))
+        }
+        Op::KernUnit { span: at, em, font_em } => {
+            let range = span(at);
+            s.step(|_, root| {
+                let node = decl_at(root, range).ok_or(GONE)?;
+                let by = edit::find_field(&node, "by")
+                    .and_then(|f| f.value())
+                    .ok_or("This kern has no `by`.")?;
+                edit::convert_unit(&by, *em, *font_em).ok_or_else(|| {
+                    format!(
+                        "`by` has no {} literal to convert.",
+                        if *em { "raw" } else { "em" }
+                    )
+                })
+            })?;
+            Ok(None)
+        }
+        Op::NewGroup { name, glyphs } => {
+            declare_group(s, name, glyphs)?;
+            Ok(Some(Created {
+                kind: "group",
+                name: name.clone(),
+            }))
+        }
+        Op::DeleteGroup { name } => {
+            s.step(|src, root| {
+                let group = root
+                    .children()
+                    .filter_map(ast::Group::cast)
+                    .find(|g| g.name_token().is_some_and(|t| t.text() == name))
+                    .ok_or_else(|| format!("There is no group `{name}`."))?;
+                let mut edits = vec![edit::remove_decl(src, group.syntax())];
+                let names_it = |kern: &SyntaxNode, side: &str| {
+                    edit::find_field(kern, side)
+                        .and_then(|f| f.value())
+                        .is_some_and(|v| v.syntax().text().to_string().trim() == name)
+                };
+                for kern in root.children().filter(|n| n.kind() == SyntaxKind::KERN) {
+                    if names_it(&kern, "left") || names_it(&kern, "right") {
+                        edits.push(edit::remove_decl(src, &kern));
+                    }
+                }
+                Ok(edits)
+            })?;
+            Ok(None)
+        }
+        Op::GroupMember { group, glyphs, add } => {
+            if glyphs.is_empty() {
+                return Err("Pick a glyph.".to_string());
+            }
+            // One step per glyph: each insert or removal reads the list the
+            // one before left.
+            for glyph in glyphs {
+                s.step(|src, root| group_member(src, root, group, glyph, *add))?;
+            }
+            Ok(None)
+        }
     }
+}
+
+/// `group <name> (glyphs: [ <glyphs> ])`, after checking the name and the
+/// glyphs.
+fn declare_group(s: &mut Session, name: &str, glyphs: &[String]) -> OpResult<()> {
+    s.step(|src, root| {
+        let hir = lower(root);
+        if let Some(why) = edit::invalid_name(name) {
+            return Err(format!("`{name}` is {why}."));
+        }
+        let taken = hir.groups.contains_key(name)
+            || has_glyph(&hir, name)
+            || hir.lets.contains_key(name)
+            || hir.params.contains_key(name)
+            || hir.metrics.contains_key(name)
+            || hir.instances.contains_key(name);
+        if taken {
+            return Err(format!("`{name}` is already declared."));
+        }
+        if glyphs.is_empty() {
+            return Err("A group needs at least one glyph.".to_string());
+        }
+        let mut seen = HashSet::new();
+        for glyph in glyphs {
+            if !has_glyph(&hir, glyph) {
+                return Err(format!("There is no glyph `{glyph}`."));
+            }
+            if !seen.insert(glyph) {
+                return Err(format!("`{glyph}` is listed twice."));
+            }
+        }
+        let file = ast::SourceFile::cast(root.clone()).expect("the root is a SOURCE_FILE");
+        let text = format!("group {name} (glyphs: [ {} ])", glyphs.join(", "));
+        Ok(vec![edit::insert_top_level(src, &file, SyntaxKind::GROUP, &text)])
+    })
+}
+
+/// Adds `glyph` to `group`'s list, or removes it.
+fn group_member(
+    src: &str,
+    root: &SyntaxNode,
+    group: &str,
+    glyph: &str,
+    add: bool,
+) -> OpResult<Vec<TextEdit>> {
+    let hir = lower(root);
+    let decl = hir
+        .groups
+        .get(group)
+        .ok_or_else(|| format!("There is no group `{group}`."))?;
+    let list = root
+        .children()
+        .filter_map(ast::Group::cast)
+        .find(|g| g.name_token().is_some_and(|t| t.text() == group))
+        .and_then(|g| edit::find_field(g.syntax(), "glyphs"))
+        .and_then(|f| f.value())
+        .and_then(|v| match v {
+            ast::Expr::List(list) => Some(list),
+            _ => None,
+        })
+        .ok_or_else(|| format!("group {group} has no `glyphs: [ … ]` list."))?;
+    let position = list
+        .elements()
+        .position(|e| e.syntax().text().to_string().trim() == glyph);
+    if !add {
+        let index = position.ok_or_else(|| format!("`{glyph}` isn't in {group}."))?;
+        if decl.glyphs.len() <= 1 {
+            return Err(format!("group {group} needs at least one glyph."));
+        }
+        return Ok(edit::list_remove(src, &list, index).unwrap_or_default());
+    }
+    if position.is_some() {
+        return Err(format!("`{glyph}` is already in {group}."));
+    }
+    if !has_glyph(&hir, glyph) {
+        return Err(format!("There is no glyph `{glyph}`."));
+    }
+    let member = [glyph.to_string()];
+    for side in [Side::Left, Side::Right] {
+        if used_groups(&hir, side).contains(group) {
+            overlap(&hir, side, group, &member)?;
+        }
+    }
+    Ok(vec![edit::list_insert(src, &list, glyph)])
+}
+
+// ---------------------------------------------------------------------
+// Kerning rules (spec §12.2)
+
+#[derive(Clone, Copy)]
+enum Side {
+    Left,
+    Right,
+}
+
+impl Side {
+    fn word(self) -> &'static str {
+        match self {
+            Side::Left => "left",
+            Side::Right => "right",
+        }
+    }
+}
+
+/// The text's declarations, for the checks an op makes before editing.
+fn lower(root: &SyntaxNode) -> mg_hir::Hir {
+    let file = ast::SourceFile::cast(root.clone()).expect("the root is a SOURCE_FILE");
+    mg_hir::lower(&file).0
+}
+
+/// Whether `name` is a default-set glyph.
+fn has_glyph(hir: &mg_hir::Hir, name: &str) -> bool {
+    hir.glyphs.contains_key(&(name.to_string(), None))
+}
+
+/// The groups some kern names on `side`.
+fn used_groups(hir: &mg_hir::Hir, side: Side) -> HashSet<&str> {
+    hir.kerns
+        .iter()
+        .filter_map(|k| match side {
+            Side::Left => k.left_name.as_deref(),
+            Side::Right => k.right_name.as_deref(),
+        })
+        .filter(|name| hir.groups.contains_key(*name))
+        .collect()
+}
+
+/// Refuses `members` of `group` on `side` when one is already in another
+/// group used on that side: a glyph may be in at most one left-used and
+/// one right-used group.
+fn overlap(hir: &mg_hir::Hir, side: Side, group: &str, members: &[String]) -> OpResult<()> {
+    for other in used_groups(hir, side) {
+        if other == group {
+            continue;
+        }
+        let theirs = &hir.groups[other].glyphs;
+        if let Some(m) = members.iter().find(|m| theirs.contains(m)) {
+            return Err(format!(
+                "`{m}` is already in {other}, a {}-used group: a glyph may be in only one (spec §12.2).",
+                side.word()
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// A field value as source text.
@@ -1727,5 +2013,193 @@ mod tests {
         )
         .0;
         assert_eq!(removed, SPACED);
+    }
+
+    const KERNED: &str = "glyph o () {\n}\nglyph c () {\n}\nglyph e () {\n}\nglyph V () {\n}\n\ngroup round (glyphs: [ o, c ])\ngroup other (glyphs: [ e ])\n\nkern (left: round, right: V, by: -15)\n";
+
+    fn refused(src: &str, op: &Op) -> String {
+        match run(src, 1, op) {
+            EditResult::Invalid { message } => message,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn new_kerns_go_after_the_last_kern() {
+        let op = Op::NewKern {
+            left: KernSideSpec::Name("V".into()),
+            right: KernSideSpec::Name("o".into()),
+            by: -20.4,
+        };
+        let (text, created) = run_on(KERNED, &op);
+        assert!(
+            text.ends_with("by: -15)\nkern (left: V, right: o, by: -20)\n"),
+            "{text}"
+        );
+        assert_eq!(
+            created,
+            Some(Created {
+                kind: "kern",
+                name: "1".into()
+            })
+        );
+    }
+
+    #[test]
+    fn new_kerns_refuse_duplicates_unknown_names_and_overlap() {
+        let kern = |left: &str, right: &str| Op::NewKern {
+            left: KernSideSpec::Name(left.into()),
+            right: KernSideSpec::Name(right.into()),
+            by: 0.0,
+        };
+        assert_eq!(
+            refused(KERNED, &kern("round", "V")),
+            "There is already a kern for round → V."
+        );
+        assert_eq!(
+            refused(KERNED, &kern("x", "V")),
+            "There is no glyph or group `x`."
+        );
+        // `other` as a left group is fine (no shared glyph); a group
+        // sharing `o` with the left-used `round` is not.
+        run_on(KERNED, &kern("other", "V"));
+        let (both, _) = run_on(
+            KERNED,
+            &Op::NewGroup {
+                name: "more".into(),
+                glyphs: vec!["o".into()],
+            },
+        );
+        assert_eq!(
+            refused(&both, &kern("more", "V")),
+            "`o` is already in round, a left-used group: a glyph may be in only one (spec §12.2)."
+        );
+        // On the right it's unrestricted.
+        run_on(&both, &kern("V", "more"));
+    }
+
+    #[test]
+    fn new_groups_check_their_name_and_glyphs() {
+        let group = |name: &str, glyphs: &[&str]| Op::NewGroup {
+            name: name.into(),
+            glyphs: glyphs.iter().map(|g| g.to_string()).collect(),
+        };
+        let (text, _) = run_on(KERNED, &group("tall", &["V", "e"]));
+        assert!(
+            text.contains("group other (glyphs: [ e ])\ngroup tall (glyphs: [ V, e ])\n"),
+            "{text}"
+        );
+        assert_eq!(refused(KERNED, &group("round", &["V"])), "`round` is already declared.");
+        assert_eq!(refused(KERNED, &group("kern", &["V"])), "`kern` is a reserved word.");
+        assert_eq!(refused(KERNED, &group("g", &[])), "A group needs at least one glyph.");
+        assert_eq!(refused(KERNED, &group("g", &["z"])), "There is no glyph `z`.");
+        assert_eq!(refused(KERNED, &group("g", &["V", "V"])), "`V` is listed twice.");
+    }
+
+    #[test]
+    fn group_members_keep_the_rule() {
+        let member = |group: &str, glyph: &str, add| Op::GroupMember {
+            group: group.into(),
+            glyphs: vec![glyph.into()],
+            add,
+        };
+        let (text, _) = run_on(KERNED, &member("round", "e", true));
+        assert!(text.contains("group round (glyphs: [ o, c, e ])"), "{text}");
+        let (text, _) = run_on(KERNED, &member("round", "o", false));
+        assert!(text.contains("group round (glyphs: [ c ])"), "{text}");
+        assert_eq!(refused(KERNED, &member("other", "e", false)), "group other needs at least one glyph.");
+        assert_eq!(refused(KERNED, &member("round", "o", true)), "`o` is already in round.");
+        // `other` becomes left-used; `e` then can't join `round` too.
+        let (used, _) = run_on(
+            KERNED,
+            &Op::NewKern {
+                left: KernSideSpec::Name("other".into()),
+                right: KernSideSpec::Name("V".into()),
+                by: 0.0,
+            },
+        );
+        assert_eq!(
+            refused(&used, &member("round", "e", true)),
+            "`e` is already in other, a left-used group: a glyph may be in only one (spec §12.2)."
+        );
+    }
+
+    #[test]
+    fn a_new_kern_can_declare_its_groups() {
+        let op = Op::NewKern {
+            left: KernSideSpec::NewGroup {
+                group: "tall".into(),
+                glyphs: vec!["V".into(), "e".into()],
+            },
+            right: KernSideSpec::Name("round".into()),
+            by: 5.0,
+        };
+        let (text, created) = run_on(KERNED, &op);
+        assert!(
+            text.contains("group other (glyphs: [ e ])\ngroup tall (glyphs: [ V, e ])\n"),
+            "{text}"
+        );
+        assert!(text.ends_with("kern (left: tall, right: round, by: 5)\n"), "{text}");
+        assert_eq!(created.map(|c| c.name), Some("1".into()));
+        // One op: its steps compose into one undo step.
+        let EditResult::Ok { steps, .. } = run(KERNED, 1, &op) else {
+            panic!()
+        };
+        assert_eq!(steps.len(), 2);
+        // A new left group sharing `o` with the left-used `round` fails
+        // before anything is written.
+        let clash = Op::NewKern {
+            left: KernSideSpec::NewGroup {
+                group: "more".into(),
+                glyphs: vec!["o".into()],
+            },
+            right: KernSideSpec::Name("V".into()),
+            by: 0.0,
+        };
+        assert!(refused(KERNED, &clash).starts_with("`o` is already in round"));
+    }
+
+    #[test]
+    fn deleting_a_group_takes_its_kerns() {
+        let op = Op::DeleteGroup {
+            name: "round".into(),
+        };
+        let (text, _) = run_on(KERNED, &op);
+        assert!(!text.contains("round"), "{text}");
+        assert!(text.contains("group other (glyphs: [ e ])"), "{text}");
+        assert!(!text.contains("kern ("), "{text}");
+        assert_eq!(
+            refused(KERNED, &Op::DeleteGroup { name: "x".into() }),
+            "There is no group `x`."
+        );
+    }
+
+    #[test]
+    fn several_members_at_once() {
+        let op = Op::GroupMember {
+            group: "other".into(),
+            glyphs: vec!["V".into(), "o".into()],
+            add: true,
+        };
+        let (text, _) = run_on(KERNED, &op);
+        assert!(text.contains("group other (glyphs: [ e, V, o ])"), "{text}");
+    }
+
+    #[test]
+    fn kern_unit_toggles() {
+        let span = span_in(KERNED, "kern (left: round, right: V, by: -15)");
+        let to_em = Op::KernUnit {
+            span,
+            em: true,
+            font_em: 1000.0,
+        };
+        let (text, _) = run_on(KERNED, &to_em);
+        assert!(text.ends_with("by: -0.015em)\n"), "{text}");
+        let again = Op::KernUnit {
+            span: span_in(&text, "kern (left: round, right: V, by: -0.015em)"),
+            em: true,
+            font_em: 1000.0,
+        };
+        assert_eq!(refused(&text, &again), "`by` has no raw literal to convert.");
     }
 }

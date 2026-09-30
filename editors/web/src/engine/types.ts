@@ -234,7 +234,16 @@ export type Op =
           rsb: number;
           em: number;
       }
-    | { op: "fontField"; name: string; value?: FieldValue };
+    | { op: "fontField"; name: string; value?: FieldValue }
+    | { op: "newKern"; left: KernSideSpec; right: KernSideSpec; by: number }
+    | { op: "kernUnit"; span: Span; em: boolean; fontEm: number }
+    | { op: "newGroup"; name: string; glyphs: string[] }
+    | { op: "deleteGroup"; name: string }
+    | { op: "groupMember"; group: string; glyphs: string[]; add: boolean };
+
+/** A new kern's side: a glyph or group by name, or a group to declare
+ * with the pair. */
+export type KernSideSpec = string | { group: string; glyphs: string[] };
 
 /** What a spacing op moves (plan 5, §1.6): `left` the origin guide
  * (`lsb`; `rsb` stays), `right` the advance guide (`rsb`; `lsb` stays),
@@ -262,7 +271,8 @@ export interface Change {
 
 /** A declaration an op created, to select and offer to rename. */
 export interface Created {
-    kind: "point" | "line" | "path" | "let" | "component";
+    /** A `kern` is named by its index among the kerns. */
+    kind: "point" | "line" | "path" | "let" | "component" | "group" | "kern";
     name: string;
 }
 

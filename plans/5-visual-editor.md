@@ -181,7 +181,7 @@ Numeric fields in the inspector take typed values: a bare literal is replaced, a
 |---|---|---|
 | New pair | `kern (left: A, right: V, by: -15)` via `insert_top_level` | — |
 | Nudge or drag a pair | add-constant on `by` | — |
-| Unit toggle | the bare literal or trailing added constant converts `-15` ↔ `-0.015em` (÷ `font.em`), keeping its decimal count | — |
+| Unit toggle | the bare literal, trailing added constant, or literal factor (`-0.05em * k`) converts `-15` ↔ `-0.015em` (÷ `font.em`), keeping its precision: going to `em` adds the decimals the em takes (3 for 1000), coming back removes them | — |
 | Kern at group level | `left:` / `right:` set to the group name | — |
 | New group | `group name (glyphs: [ a, b ])` | — |
 | Add / remove group member | list element insert / remove, comma-aware | — |
