@@ -25,6 +25,7 @@ import {
 } from "../../state/relate.ts";
 import type { Tool } from "../../state/store.ts";
 import { LAYERS, useStore } from "../../state/store.ts";
+import { ExprField } from "../../ui/ExprField.tsx";
 import { Centre, Empty, LeftColumn, Section, sheet } from "../../ui/Sheet.tsx";
 import { GlyphCanvas } from "./GlyphCanvas.tsx";
 import styles from "./GlyphSheet.module.css";
@@ -759,6 +760,7 @@ function PathProps({ path }: { path: PathInfo }) {
             <div className={styles.props}>
                 <span className={sheet.key}>Stroke</span>
                 <ExprField
+                    className={styles.exprField}
                     key={path.stroke ?? ""}
                     value={path.stroke ?? ""}
                     placeholder="none · construction"
@@ -825,40 +827,5 @@ function Segmented({
                 </button>
             )}
         </span>
-    );
-}
-
-/** An expression typed into the inspector, spliced as-is on Enter or
- * blur (plan 5, §2.4); Escape reverts. */
-function ExprField({
-    value,
-    placeholder,
-    onCommit,
-}: {
-    value: string;
-    placeholder?: string;
-    onCommit: (text: string) => Promise<unknown>;
-}) {
-    const [text, setText] = useState(value);
-    const commit = () => {
-        const next = text.trim();
-        if (next !== value) void onCommit(next);
-    };
-    return (
-        <input
-            className={styles.exprField}
-            value={text}
-            placeholder={placeholder}
-            spellCheck={false}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-                if (e.key === "Enter") e.currentTarget.blur();
-                if (e.key === "Escape") {
-                    setText(value);
-                    e.currentTarget.blur();
-                }
-            }}
-            onBlur={commit}
-        />
     );
 }

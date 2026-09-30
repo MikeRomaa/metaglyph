@@ -1,0 +1,18 @@
+.field {
+    min-width: 0;
+    padding: 0.25rem 0.375rem;
+    border: 1px solid var(--rule);
+    border-radius: 0;
+    background: var(--panel2);
+    color: var(--ink);
+    font: 400 0.6875rem var(--font-mono);
+    outline: none;
+}
+
+.field:focus {
+    border-color: var(--acc);
+}
+
+.field::placeholder {
+    color: var(--faint);
+}

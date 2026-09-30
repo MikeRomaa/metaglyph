@@ -39,6 +39,10 @@
     cursor: pointer;
 }
 
+.col[data-ink] {
+    cursor: grab;
+}
+
 .colBg {
     fill: transparent;
 }
@@ -100,19 +104,111 @@
 }
 
 .fieldRow {
-    grid-template-columns: 3.875rem 1fr 3.5rem;
+    grid-template-columns: 4.5rem minmax(0, 1fr) 3.5rem;
+}
+
+/* Tighter cells than the shared rows, so names and values fit beside
+   the fields. */
+.fieldRow > *,
+.metricRow > * {
+    padding-left: 0.375rem;
+    padding-right: 0.375rem;
+}
+
+.fieldRow > :first-child,
+.metricRow > :first-child {
+    padding-left: 0.75rem;
 }
 
 .metricRow {
-    width: 100%;
-    text-align: left;
-    grid-template-columns: 5rem 1fr 3.5rem;
-}
-
-.metricRow:hover {
-    background: var(--hi);
+    grid-template-columns: 5rem minmax(0, 1fr) 3.5rem 2rem;
 }
 
 .infoRow {
     grid-template-columns: 4.875rem minmax(0, 1fr);
+}
+
+.guide[data-drag] {
+    stroke: var(--acc);
+    stroke-width: 2;
+}
+
+.guideHit {
+    fill: transparent;
+    cursor: ew-resize;
+}
+
+.metricHit {
+    fill: transparent;
+    cursor: ns-resize;
+}
+
+g[data-on] > .metric {
+    stroke: var(--acc);
+    stroke-dasharray: none;
+}
+
+.calloutBox {
+    fill: var(--inv);
+}
+
+.calloutText {
+    font-family: var(--font-mono);
+    font-weight: 500;
+    fill: var(--oninv);
+}
+
+.cell {
+    display: flex;
+}
+
+.fieldRow > .cell,
+.metricRow > .cell,
+.infoRow > .cell {
+    padding: 0.125rem 0.25rem;
+}
+
+.input {
+    flex: 1;
+    width: 100%;
+    padding: 0.1875rem 0.3125rem;
+}
+
+.str {
+    color: var(--str);
+}
+
+.fieldRow[data-new] {
+    background: var(--hi);
+}
+
+.explain {
+    margin: 0;
+    padding: 0.5rem 0.75rem;
+    font: 400 0.625rem / 1.5 var(--font-sans);
+    color: var(--mid);
+    border-bottom: 1px solid var(--rule);
+}
+
+.metricName {
+    border: 0;
+    background: none;
+    color: var(--ink);
+    font: inherit;
+    font-weight: 500;
+    text-align: left;
+    cursor: pointer;
+}
+
+.metricName:hover {
+    color: var(--acc);
+}
+
+/* The carousel slides to a newly active glyph; never during a drag. */
+.slide {
+    transition: transform 220ms ease-out;
+}
+
+.slide[data-still] {
+    transition: none;
 }

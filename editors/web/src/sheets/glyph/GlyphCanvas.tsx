@@ -594,8 +594,7 @@ export function GlyphCanvas({
                             d={path.skeleton}
                             className={styles.skeleton}
                             data-construction={
-                                !(path.stroke || path.fill) ||
-                                undefined
+                                !(path.stroke || path.fill) || undefined
                             }
                             data-on={
                                 isSelected("path", pathKey(path)) || undefined

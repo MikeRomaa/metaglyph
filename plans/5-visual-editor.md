@@ -160,16 +160,16 @@ Applies to point lets, control points, arc centres, stroke edges, and component 
 
 ### 1.6 Other editors → syntax
 
-**Metrics editor: edge drags.** The editor draws the origin guide at `x = −shift` and the advance guide at `x = advance − shift` (spec §12.1). A drag moves a guide and add-constants the field shown below. When no declared field can take the change, it declares a new one set to a literal of its current value plus the delta.
+**Metrics editor: edge and ink drags.** The editor draws the origin guide at `x = −shift` and the advance guide at `x = advance − shift` (spec §12.1). Only the selected glyph's guides and ink drag; clicking another glyph selects it. Dragging the origin guide changes `lsb` and keeps `rsb` (the advance grows); dragging the advance guide changes `rsb` and keeps `lsb`; dragging the ink shifts it within the advance (`lsb` up, `rsb` down). Each declared field add-constants its own change. When the declared fields can't express the change, one more is declared at its new value: `advance` or `rsb` alone need `lsb` to move the ink, and `lsb` alone needs `rsb` to change the bearings apart.
 
-| Declared | Left (origin) guide drag | Right (advance) guide drag |
-|---|---|---|
-| `advance` | add `lsb: <current lsb + d>` | `advance` += d |
-| `rsb` | add `lsb: <current lsb + d>` | `rsb` += d |
-| `lsb` | `lsb` += d | add `rsb: <current rsb + d>` |
-| `lsb`, `rsb` | `lsb` += d | `rsb` += d |
-| `advance`, `lsb` | `lsb` += d | `advance` += d |
-| `advance`, `rsb` | `advance` += d (the ink stays on the right) | `advance` += d, `rsb` += d |
+| Declared | Origin guide drag | Advance guide drag | Ink drag |
+|---|---|---|---|
+| `advance` | `advance` += d, add `lsb` | `advance` += d | add `lsb` |
+| `rsb` | add `lsb` | `rsb` += d | `rsb` −= d, add `lsb` |
+| `lsb` | `lsb` += d, add `rsb` | add `rsb` | `lsb` += d, add `rsb` |
+| `lsb`, `rsb` | `lsb` += d | `rsb` += d | `lsb` += d, `rsb` −= d |
+| `advance`, `lsb` | `advance`, `lsb` += d | `advance` += d | `lsb` += d |
+| `advance`, `rsb` | `advance` += d | `advance`, `rsb` += d | `rsb` −= d |
 
 Numeric fields in the inspector take typed values: a bare literal is replaced, anything else is add-constanted.
 

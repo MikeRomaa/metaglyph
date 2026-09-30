@@ -85,6 +85,15 @@ export function runEdit(op: Op, version: number): Promise<EditResult> {
     } as EditResult);
 }
 
+/** Pins document `version` for an edit gesture (see `state/gesture.ts`). */
+export function pin(version: number) {
+    return call((e) => e.pin(version), false);
+}
+
+export function unpin() {
+    return call((e) => e.unpin(), undefined);
+}
+
 export function drivers(instance: string, glyph: string, target: string) {
     return call((e) => e.drivers(instance, glyph, target), null);
 }

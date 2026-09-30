@@ -54,6 +54,10 @@ pub struct Engine {
     /// The newest text, parsed or not, and its version: edit ops run
     /// against exactly this.
     current: Option<(String, u32)>,
+    /// A text pinned by [`Engine::pin`]: an edit gesture's start. Its
+    /// edits run against it while the gesture moves the text, so each is
+    /// the net change from the start.
+    anchor: Option<(String, u32)>,
     /// The drag in progress. It keeps the drag-start evaluation, so each
     /// step (which changes the text) solves against the same state.
     drag: Option<drag::Session>,
@@ -121,8 +125,10 @@ impl Engine {
     pub fn edit(&self, op: JsValue, version: u32) -> Result<JsValue, JsError> {
         let start = now();
         let op: Op = serde_wasm_bindgen::from_value(op)?;
-        let result = match &self.current {
-            Some((source, current)) if *current == version => ops::run(source, version, &op),
+        let result = match (&self.current, &self.anchor) {
+            (Some((source, v)), _) | (_, Some((source, v))) if *v == version => {
+                ops::run(source, version, &op)
+            }
             _ => EditResult::Stale,
         };
         let outcome = match &result {
@@ -143,6 +149,18 @@ impl Engine {
         };
         log::debug!("edit v{version} {op:?}: {outcome}, {:.1} ms", now() - start);
         Ok(serde_wasm_bindgen::to_value(&result)?)
+    }
+
+    /// Pins document `version` for an edit gesture (a guide or metric
+    /// drag): [`Engine::edit`] keeps accepting `version` until
+    /// [`Engine::unpin`]. False if `version` isn't the current text.
+    pub fn pin(&mut self, version: u32) -> bool {
+        self.anchor = self.current.clone().filter(|(_, v)| *v == version);
+        self.anchor.is_some()
+    }
+
+    pub fn unpin(&mut self) {
+        self.anchor = None;
     }
 
     /// [`GlyphScene`] for `glyph` in `instance`, from the last good text.

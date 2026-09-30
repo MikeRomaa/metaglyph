@@ -16,6 +16,7 @@ export interface FontInfo {
     version: string;
     designer?: string;
     foundry?: string;
+    license?: string;
     em?: number;
 }
 
@@ -40,7 +41,10 @@ export interface MetricInfo {
     name: string;
     y?: number;
     overshoot?: number;
+    /** `y`'s source text. */
     expr: string;
+    /** `overshoot`'s source text, if declared. */
+    overshootExpr?: string;
     span: Span;
 }
 
@@ -218,7 +222,24 @@ export type Op =
     | { op: "removeField"; span: Span; name: string }
     | { op: "setFill"; span: Span; on: boolean }
     | { op: "addComponent"; glyph: string; target: string; offset: Pt }
-    | { op: "relate"; span: Span; relation: Relation };
+    | { op: "relate"; span: Span; relation: Relation }
+    | { op: "addConstant"; span: Span; name: string; delta: number; em: number }
+    | {
+          op: "spacing";
+          glyph: string;
+          edge: Edge;
+          /** The change in the bearing on `edge`. */
+          delta: number;
+          lsb: number;
+          rsb: number;
+          em: number;
+      }
+    | { op: "fontField"; name: string; value?: FieldValue };
+
+/** What a spacing op moves (plan 5, §1.6): `left` the origin guide
+ * (`lsb`; `rsb` stays), `right` the advance guide (`rsb`; `lsb` stays),
+ * `ink` the letterform within its advance (`lsb` up, `rsb` down). */
+export type Edge = "left" | "right" | "ink";
 
 export type LineSpec =
     | { kind: "through"; a: string; b: string }
@@ -252,6 +273,8 @@ export type EditResult =
           /** `steps[i]` applies to the text after `steps[..i]`. */
           steps: Change[][];
           created?: Created;
+          /** What the op did, for a live callout. */
+          summary?: string;
       }
     | { status: "stale" }
     | { status: "readOnly" }

@@ -96,6 +96,47 @@ pub enum Op {
     /// at `span` as `relation`.
     #[serde(rename_all = "camelCase")]
     Relate { span: [usize; 2], relation: Relation },
+    /// Add `delta` (raw units) to field `name` of the declaration at
+    /// `span` (plan 5, §1.2 `add_constant`): a metric line drag, or a
+    /// typed number. `em` converts into `em`/`%` literals.
+    #[serde(rename_all = "camelCase")]
+    AddConstant {
+        span: [usize; 2],
+        name: String,
+        delta: f64,
+        em: f64,
+    },
+    /// A spacing drag or typed bearing (plan 5, §1.6), given the glyph's
+    /// current `lsb` and `rsb`: `edge` says what moves by `delta` (see
+    /// [`Edge`]).
+    #[serde(rename_all = "camelCase")]
+    Spacing {
+        glyph: String,
+        edge: Edge,
+        delta: f64,
+        lsb: f64,
+        rsb: f64,
+        em: f64,
+    },
+    /// Set field `name` of the `font (…)` directive, or remove it when
+    /// `value` is absent (plan 5, §1.6 "Font info form").
+    #[serde(rename_all = "camelCase")]
+    FontField {
+        name: String,
+        value: Option<FieldValue>,
+    },
+}
+
+/// What an [`Op::Spacing`] moves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Edge {
+    /// The origin guide: `lsb` += delta, `rsb` stays (the advance grows).
+    Left,
+    /// The advance guide: `rsb` += delta, `lsb` stays.
+    Right,
+    /// The ink, within the advance: `lsb` += delta, `rsb` -= delta.
+    Ink,
 }
 
 #[derive(Debug, Deserialize)]
@@ -186,6 +227,10 @@ pub enum EditResult {
         version: u32,
         steps: Vec<Vec<Change>>,
         created: Option<Created>,
+        /// What the op did, for a live callout (`ADD lsb: 15`,
+        /// `advance += 40`).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        summary: Option<String>,
     },
     /// The text changed since `version`; ask again.
     Stale,
@@ -202,6 +247,7 @@ type OpResult<T> = Result<T, String>;
 struct Session {
     src: String,
     steps: Vec<Vec<Change>>,
+    summary: Option<String>,
 }
 
 impl Session {
@@ -266,12 +312,14 @@ pub fn run(source: &str, version: u32, op: &Op) -> EditResult {
     let mut session = Session {
         src: source.to_string(),
         steps: Vec::new(),
+        summary: None,
     };
     match apply(&mut session, op, &span) {
         Ok(created) => EditResult::Ok {
             version,
             steps: session.steps,
             created,
+            summary: session.summary,
         },
         Err(message) => EditResult::Invalid { message },
     }
@@ -413,18 +461,7 @@ fn apply(
             value,
         } => {
             let range = span(at);
-            let text = match value {
-                FieldValue::Str(v) => format!("{v:?}"),
-                FieldValue::Num(v) => number(*v),
-                FieldValue::Bool(v) => v.to_string(),
-                FieldValue::Expr(v) => {
-                    let v = v.trim();
-                    if v.is_empty() {
-                        return Err("Type a value.".to_string());
-                    }
-                    v.to_string()
-                }
-            };
+            let text = field_text(value)?;
             s.step(|src, root| {
                 let node = decl_at(root, range).ok_or(GONE)?;
                 Ok(edit::set_field(src, &node, name, &text))
@@ -498,7 +535,164 @@ fn apply(
             relate(s, span(at), relation)?;
             Ok(None)
         }
+        Op::AddConstant {
+            span: at,
+            name,
+            delta,
+            em,
+        } => {
+            let range = span(at);
+            s.step(|_, root| {
+                let node = decl_at(root, range).ok_or(GONE)?;
+                let value = edit::find_field(&node, name)
+                    .and_then(|f| f.value())
+                    .ok_or_else(|| format!("There is no `{name}` field to change."))?;
+                Ok(edit::add_constant(&value, *delta, *em))
+            })?;
+            s.summary = Some(format!("{name} {}", signed(*delta, "+= ", "-= ")));
+            Ok(None)
+        }
+        Op::Spacing {
+            glyph,
+            edge,
+            delta,
+            lsb,
+            rsb,
+            em,
+        } => {
+            spacing(s, glyph, *edge, *delta, [*lsb, *rsb], *em)?;
+            Ok(None)
+        }
+        Op::FontField { name, value } => {
+            let text = value.as_ref().map(field_text).transpose()?;
+            s.step(|src, root| {
+                let font = root
+                    .children()
+                    .find(|n| n.kind() == SyntaxKind::FONT)
+                    .ok_or("The source has no `font (…)` directive.")?;
+                Ok(match &text {
+                    Some(text) => edit::set_field(src, &font, name, text),
+                    None => edit::remove_field(src, &font, name).unwrap_or_default(),
+                })
+            })?;
+            check_parses(s, "That value doesn't parse.")?;
+            Ok(None)
+        }
     }
+}
+
+/// A field value as source text.
+fn field_text(value: &FieldValue) -> OpResult<String> {
+    Ok(match value {
+        FieldValue::Str(v) => format!("{v:?}"),
+        FieldValue::Num(v) => number(*v),
+        FieldValue::Bool(v) => v.to_string(),
+        FieldValue::Expr(v) => {
+            let v = v.trim();
+            if v.is_empty() {
+                return Err("Type a value.".to_string());
+            }
+            v.to_string()
+        }
+    })
+}
+
+/// A spacing change (plan 5, §1.6): the bearings change by what `edge`
+/// says, and the advance by their sum. Each declared field add-constants
+/// its own change. When the declared fields can't express the change, one
+/// more is declared at its new value:
+///
+/// - `advance` or `rsb` alone fix the ink where it was authored, so
+///   moving it needs `lsb`;
+/// - `lsb` alone makes both bearings equal, so changing them apart needs
+///   `rsb`.
+///
+/// | Declared         | Left                   | Right                  | Ink                 |
+/// |------------------|------------------------|------------------------|---------------------|
+/// | `advance`        | `advance` += d, add `lsb` | `advance` += d      | add `lsb`           |
+/// | `rsb`            | add `lsb`              | `rsb` += d             | `rsb` -= d, add `lsb` |
+/// | `lsb`            | `lsb` += d, add `rsb`  | add `rsb`              | `lsb` += d, add `rsb` |
+/// | `lsb`, `rsb`     | `lsb` += d             | `rsb` += d             | `lsb` += d, `rsb` -= d |
+/// | `advance`, `lsb` | `advance`, `lsb` += d  | `advance` += d         | `lsb` += d          |
+/// | `advance`, `rsb` | `advance` += d         | `advance`, `rsb` += d  | `rsb` -= d          |
+fn spacing(
+    s: &mut Session,
+    glyph: &str,
+    edge: Edge,
+    delta: f64,
+    [lsb, rsb]: [f64; 2],
+    em: f64,
+) -> OpResult<()> {
+    let (d_lsb, d_rsb) = match edge {
+        Edge::Left => (delta, 0.0),
+        Edge::Right => (0.0, delta),
+        Edge::Ink => (delta, -delta),
+    };
+    let change = |name: &str| match name {
+        "lsb" => d_lsb,
+        "rsb" => d_rsb,
+        _ => d_lsb + d_rsb,
+    };
+    let mut what = Vec::new();
+    let mut declare = None;
+    s.step(|_, root| {
+        let g = glyph_named(root, glyph)?;
+        let has = |f| edit::find_field(g.syntax(), f).is_some();
+        let (advance, left, right) = (has("advance"), has("lsb"), has("rsb"));
+        declare = match (advance, left, right) {
+            (false, false, false) => {
+                return Err(format!("glyph {glyph} declares no spacing field."));
+            }
+            (_, false, _) if d_lsb.round() != 0.0 && !(advance && right) => {
+                Some(("lsb", lsb + d_lsb))
+            }
+            (false, true, false) if (d_rsb - d_lsb).round() != 0.0 => Some(("rsb", rsb + d_rsb)),
+            _ => None,
+        };
+        let mut edits = Vec::new();
+        for (name, declared) in [("advance", advance), ("lsb", left), ("rsb", right)] {
+            let d = change(name);
+            if !declared || d.round() == 0.0 {
+                continue;
+            }
+            let value = edit::find_field(g.syntax(), name)
+                .and_then(|f| f.value())
+                .ok_or_else(|| format!("glyph {glyph}'s `{name}` has no value."))?;
+            edits.extend(edit::add_constant(&value, d, em));
+            what.push(format!("{name} {}", signed(d, "+= ", "-= ")));
+        }
+        Ok(edits)
+    })?;
+    // A new field after the constants: appended where one may end.
+    if let Some((name, value)) = declare {
+        s.step(|src, root| {
+            let g = glyph_named(root, glyph)?;
+            Ok(edit::set_field(src, g.syntax(), name, &coord(value)))
+        })?;
+        what.push(format!("ADD {name}: {}", coord(value)));
+    }
+    // The origin guide moves against the bearing.
+    let (what_moved, moved) = match edge {
+        Edge::Left => ("origin guide", -delta),
+        Edge::Right => ("advance guide", delta),
+        Edge::Ink => ("ink", delta),
+    };
+    let what = if what.is_empty() {
+        "no change".to_string()
+    } else {
+        what.join(", ")
+    };
+    s.summary = Some(format!(
+        "{what} · {what_moved} Δ {}",
+        signed(moved, "+", "\u{2212}"),
+    ));
+    Ok(())
+}
+
+/// `delta` in whole units after `plus` or `minus`: `+= 15`, `−40`.
+fn signed(delta: f64, plus: &str, minus: &str) -> String {
+    let sign = if delta.round() < 0.0 { minus } else { plus };
+    format!("{sign}{}", coord(delta.abs()))
 }
 
 /// A relationship tool's rewrite of the point `let` at `range` (plan 5,
@@ -1393,5 +1587,145 @@ mod tests {
             offset: [0.0, 0.0],
         };
         assert!(matches!(run(SRC, 1, &own), EditResult::Invalid { .. }));
+    }
+
+    const SPACED: &str = "font (name: \"T\", em: 1000)\nmetric xHeight (y: 500, overshoot: 10)\nlet side = 40;\nglyph a (advance: 500) {\n}\nglyph b (rsb: side) {\n}\nglyph c (lsb: 30) {\n}\nglyph d (lsb: 30, rsb: 20) {\n}\nglyph e (advance: 500, lsb: side) {\n}\nglyph f (advance: 500, rsb: 20) {\n}\n";
+
+    /// The `glyph <name> (…)` header after a spacing op.
+    fn spaced(name: &str, edge: Edge, delta: f64) -> (String, Option<String>) {
+        let op = Op::Spacing {
+            glyph: name.into(),
+            edge,
+            delta,
+            lsb: 30.0,
+            rsb: 20.0,
+            em: 1000.0,
+        };
+        let EditResult::Ok { summary, .. } = run(SPACED, 1, &op) else {
+            panic!("{name}");
+        };
+        let (text, _) = run_on(SPACED, &op);
+        let header = text
+            .lines()
+            .find(|l| l.starts_with(&format!("glyph {name} ")))
+            .unwrap()
+            .to_string();
+        (header, summary)
+    }
+
+    #[test]
+    fn spacing_guide_drags_follow_the_table() {
+        use Edge::*;
+        let cases = [
+            ("a", Left, "glyph a (advance: 515, lsb: 45) {"),
+            ("a", Right, "glyph a (advance: 515) {"),
+            ("a", Ink, "glyph a (advance: 500, lsb: 45) {"),
+            ("b", Left, "glyph b (rsb: side, lsb: 45) {"),
+            ("b", Right, "glyph b (rsb: side + 15) {"),
+            ("b", Ink, "glyph b (rsb: side - 15, lsb: 45) {"),
+            ("c", Left, "glyph c (lsb: 45, rsb: 20) {"),
+            ("c", Right, "glyph c (lsb: 30, rsb: 35) {"),
+            ("c", Ink, "glyph c (lsb: 45, rsb: 5) {"),
+            ("d", Left, "glyph d (lsb: 45, rsb: 20) {"),
+            ("d", Right, "glyph d (lsb: 30, rsb: 35) {"),
+            ("d", Ink, "glyph d (lsb: 45, rsb: 5) {"),
+            ("e", Left, "glyph e (advance: 515, lsb: side + 15) {"),
+            ("e", Right, "glyph e (advance: 515, lsb: side) {"),
+            ("e", Ink, "glyph e (advance: 500, lsb: side + 15) {"),
+            ("f", Left, "glyph f (advance: 515, rsb: 20) {"),
+            ("f", Right, "glyph f (advance: 515, rsb: 35) {"),
+            ("f", Ink, "glyph f (advance: 500, rsb: 5) {"),
+        ];
+        for (name, edge, want) in cases {
+            assert_eq!(spaced(name, edge, 15.0).0, want, "{name} {edge:?}");
+        }
+    }
+
+    #[test]
+    fn spacing_summaries_name_the_change() {
+        assert_eq!(
+            spaced("a", Edge::Left, 15.0).1.as_deref(),
+            Some("advance += 15, ADD lsb: 45 · origin guide Δ \u{2212}15")
+        );
+        assert_eq!(
+            spaced("f", Edge::Right, -40.0).1.as_deref(),
+            Some("advance -= 40, rsb -= 40 · advance guide Δ \u{2212}40")
+        );
+        assert_eq!(
+            spaced("f", Edge::Ink, 10.0).1.as_deref(),
+            Some("rsb -= 10 · ink Δ +10")
+        );
+    }
+
+    #[test]
+    fn a_trailing_constant_returns_to_the_original() {
+        let op = |delta| Op::Spacing {
+            glyph: "b".into(),
+            edge: Edge::Right,
+            delta,
+            lsb: 0.0,
+            rsb: 40.0,
+            em: 1000.0,
+        };
+        let (once, _) = run_on(SPACED, &op(15.0));
+        let (back, _) = run_on(&once, &op(-15.0));
+        assert_eq!(back, SPACED);
+    }
+
+    #[test]
+    fn add_constant_to_a_metric() {
+        let op = Op::AddConstant {
+            span: span_in(SPACED, "metric xHeight (y: 500, overshoot: 10)"),
+            name: "y".into(),
+            delta: -12.0,
+            em: 1000.0,
+        };
+        let (text, _) = run_on(SPACED, &op);
+        assert!(
+            text.contains("metric xHeight (y: 488, overshoot: 10)"),
+            "{text}"
+        );
+        let missing = Op::AddConstant {
+            span: span_in(SPACED, "metric xHeight (y: 500, overshoot: 10)"),
+            name: "align".into(),
+            delta: 1.0,
+            em: 1000.0,
+        };
+        assert!(matches!(
+            run(SPACED, 1, &missing),
+            EditResult::Invalid { .. }
+        ));
+    }
+
+    #[test]
+    fn font_fields() {
+        let set = |name: &str, value: Option<FieldValue>| {
+            run_on(
+                SPACED,
+                &Op::FontField {
+                    name: name.into(),
+                    value,
+                },
+            )
+            .0
+        };
+        let designer = set("designer", Some(FieldValue::Str("Ann \"A\" B".into())));
+        assert!(
+            designer.starts_with("font (name: \"T\", em: 1000, designer: \"Ann \\\"A\\\" B\")\n"),
+            "{designer}"
+        );
+        let renamed = set("name", Some(FieldValue::Str("U".into())));
+        assert!(renamed.starts_with("font (name: \"U\", em: 1000)\n"));
+        let em = set("em", Some(FieldValue::Num(2048.0)));
+        assert!(em.starts_with("font (name: \"T\", em: 2048)\n"));
+        let removed = run_on(
+            &designer,
+            &Op::FontField {
+                name: "designer".into(),
+                value: None,
+            },
+        )
+        .0;
+        assert_eq!(removed, SPACED);
     }
 }

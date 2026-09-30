@@ -59,6 +59,16 @@ const api = {
         return (await ready).edit(op, version) as EditResult;
     },
 
+    /** Pins document `version` as an edit gesture's start: edits keep
+     * running against it until `unpin`. False if it isn't current. */
+    async pin(version: number): Promise<boolean> {
+        return (await ready).pin(version);
+    },
+
+    async unpin(): Promise<void> {
+        (await ready).unpin();
+    },
+
     /** What dragging `target` would change; null if it can't be dragged. */
     async drivers(
         instance: string,

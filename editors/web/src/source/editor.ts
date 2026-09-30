@@ -30,6 +30,9 @@ export function applyChanges(steps: Change[][], label: string) {
 export interface EditorGesture {
     /** Moves the text to the drag-start text plus `changes`. */
     retarget(changes: Change[]): void;
+    /** `retarget` with an op's sequential steps, each in the text after
+     * the steps before it. */
+    retargetSteps(steps: Change[][]): void;
     cancel(): void;
     finish(): void;
 }
@@ -38,8 +41,11 @@ export function beginGesture(label: string): EditorGesture | null {
     const view = current;
     if (!view) return null;
     const gesture = new Gesture(view.state, label);
+    const length = view.state.doc.length;
     return {
         retarget: (changes) => view.dispatch(gesture.retarget(changes)),
+        retargetSteps: (steps) =>
+            view.dispatch(gesture.retarget(composeSteps(length, steps))),
         cancel: () => view.dispatch(gesture.cancel()),
         finish: () => {
             const specs = gesture.finish();

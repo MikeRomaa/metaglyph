@@ -40,7 +40,10 @@ pub struct MetricInfo {
     pub name: String,
     pub y: Option<f64>,
     pub overshoot: Option<f64>,
+    /// `y`'s source text.
     pub expr: String,
+    /// `overshoot`'s source text, if declared.
+    pub overshoot_expr: Option<String>,
     pub span: Span,
 }
 
@@ -286,6 +289,7 @@ pub fn font_data(model: &Model, instance: &str) -> Option<FontData> {
                 y: zone.map(|z| z.y),
                 overshoot: zone.map(|z| z.overshoot),
                 expr: ctx.expr_text(m.y.as_ref()),
+                overshoot_expr: m.overshoot.as_ref().map(|e| ctx.text(e.syntax())),
                 span: ctx.span(&m.syntax),
             }
         })

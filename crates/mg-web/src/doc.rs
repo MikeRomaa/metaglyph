@@ -44,6 +44,7 @@ pub struct FontInfo {
     pub version: String,
     pub designer: Option<String>,
     pub foundry: Option<String>,
+    pub license: Option<String>,
     pub em: Option<i64>,
 }
 
@@ -98,6 +99,7 @@ pub fn analyze(source: &str, version: u32) -> (DocState, Option<Model>) {
             version: hir.font.version.clone(),
             designer: hir.font.designer.clone(),
             foundry: hir.font.foundry.clone(),
+            license: hir.font.license.clone(),
             em: hir.font.em,
         });
         state.instances = hir.instances.keys().cloned().collect();
