@@ -12,7 +12,8 @@ pub mod toposort;
 pub mod value;
 
 pub use eval::{
-    EvalOutcome, dirty_closure, eval_subexpr, eval_subexpr_with, evaluate, evaluate_cancellable, reevaluate,
+    EvalOutcome, dirty_closure, eval_subexpr, eval_subexpr_with, evaluate, evaluate_cancellable,
+    reevaluate,
 };
 pub use graph::{Graph, NodeId};
 pub use render::{GlyphOutline, OutlineContour, PlacedComponent, glyph_outline, render_glyph};

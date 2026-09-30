@@ -1,9 +1,11 @@
 use mg_web::{analyze, build};
 
 fn model(name: &str) -> mg_web::Model {
-    let source =
-        std::fs::read_to_string(format!("{}/../../samples/{name}", env!("CARGO_MANIFEST_DIR")))
-            .expect("sample exists");
+    let source = std::fs::read_to_string(format!(
+        "{}/../../samples/{name}",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("sample exists");
     analyze(&source, 0).1.expect("sample parses")
 }
 
@@ -19,21 +21,21 @@ fn head_created(data: &[u8]) -> i64 {
 }
 
 #[test]
-fn a22x_builds_one_font_per_instance() {
-    let model = model("a22x-mono.mg");
+fn sample_builds_one_font_per_instance() {
+    let model = model("metaglyph-sans.mg");
     let (fonts, diagnostics) = build(&model, 0);
     assert!(
         diagnostics.iter().all(|d| d.severity != "error"),
         "{diagnostics:?}"
     );
     assert_eq!(fonts.len(), model.hir.instances.len());
-    assert_eq!(fonts[0].file_name, "A220Mono-Regular.ttf");
+    assert_eq!(fonts[0].file_name, "MetaglyphSans-Light.ttf");
     assert_eq!(&fonts[0].data[..4], &[0, 1, 0, 0]);
 }
 
 #[test]
 fn builds_are_reproducible_and_stamped() {
-    let model = model("a22x-mono.mg");
+    let model = model("metaglyph-sans.mg");
     let (a, _) = build(&model, 1_700_000_000);
     let (b, _) = build(&model, 1_700_000_000);
     assert_eq!(a[0].data, b[0].data);

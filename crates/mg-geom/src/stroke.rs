@@ -1063,7 +1063,7 @@ mod tests {
 
     #[test]
     fn a_curved_inner_corner_keeps_the_stroke_one_closed_subpath() {
-        // The `a` stem from `samples/a22x-mono.mg`: an arc into a line.
+        // A lowercase `a`'s stem: an arc into a line.
         let w = 500.0;
         let h = 1000.0;
         let ctr = Point::new(0.494 * w, 0.400 * h);

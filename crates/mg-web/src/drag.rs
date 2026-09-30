@@ -207,7 +207,9 @@ impl Session {
 
         let mut drivers = Vec::new();
         for owner in &bfs {
-            let Some(expr) = &decl.lets[owner].value else { continue };
+            let Some(expr) = &decl.lets[owner].value else {
+                continue;
+            };
             // Right to left within an expression: in `base - delta`, the
             // trailing offset is the one to adjust (plan 5's own test:
             // `180deg - 37deg` drags `37deg`).
@@ -397,9 +399,23 @@ impl Session {
                     .descendants()
                     .find_map(ast::LetStmt::cast)
                     .and_then(|l| l.value())?;
-                mg_eval::eval_subexpr_with(hir, instance, Some(&self.glyph), values, &computed, &expr)?
+                mg_eval::eval_subexpr_with(
+                    hir,
+                    instance,
+                    Some(&self.glyph),
+                    values,
+                    &computed,
+                    &expr,
+                )?
             } else {
-                mg_eval::eval_subexpr_with(hir, instance, Some(&self.glyph), values, &computed, expr)?
+                mg_eval::eval_subexpr_with(
+                    hir,
+                    instance,
+                    Some(&self.glyph),
+                    values,
+                    &computed,
+                    expr,
+                )?
             };
             computed.insert(NodeId::GlyphLocal(self.glyph.clone(), name.clone()), value);
         }
@@ -436,7 +452,13 @@ impl Session {
 
     /// The driver value that puts axis `axis` of the point at `target`
     /// (`None` axis: the whole point at `pointer`, along the track).
-    fn solve(&self, driver: usize, axis: Option<usize>, pointer: Pt, fixed: &[(usize, f64)]) -> f64 {
+    fn solve(
+        &self,
+        driver: usize,
+        axis: Option<usize>,
+        pointer: Pt,
+        fixed: &[(usize, f64)],
+    ) -> f64 {
         let d = &self.drivers[driver];
         let with = |v: f64| {
             let mut o = fixed.to_vec();
@@ -494,7 +516,9 @@ impl Session {
             let err = |v: f64| with(v).map(|p| p[ax] - pointer[ax]);
             let (mut x0, mut x1) = (best, best + (reach * 1e-3).max(1e-6));
             for _ in 0..8 {
-                let (Some(e0), Some(e1)) = (err(x0), err(x1)) else { break };
+                let (Some(e0), Some(e1)) = (err(x0), err(x1)) else {
+                    break;
+                };
                 if (e1 - e0).abs() < 1e-12 {
                     break;
                 }
@@ -628,8 +652,10 @@ impl Session {
             match cached {
                 Some(b) => Some(b),
                 None => {
-                    let start: Vec<(usize, f64)> =
-                        drivers.iter().map(|&i| (i, self.drivers[i].value)).collect();
+                    let start: Vec<(usize, f64)> = drivers
+                        .iter()
+                        .map(|&i| (i, self.drivers[i].value))
+                        .collect();
                     let b = self.errors(&start);
                     if let Some(b) = b {
                         self.baselines.borrow_mut().insert(drivers.clone(), b);
@@ -698,7 +724,9 @@ impl Session {
         let mut literals = Vec::new();
         for &(i, v) in values {
             let d = &self.drivers[i];
-            let Some(token) = token_at(&self.root, &d.range) else { continue };
+            let Some(token) = token_at(&self.root, &d.range) else {
+                continue;
+            };
             let changes = edit::replace_literal(&token, v);
             // The value the rounded text actually means.
             let (number, _) = split_unit(&d.text);
@@ -771,13 +799,57 @@ pub type Preferences = HashMap<(String, String), [Option<usize>; 2]>;
 mod tests {
     use super::*;
 
+    /// A triangle `A` built from named points, and an `a` whose stem
+    /// starts at a polar point on a centre-mode arc.
+    const FIXTURE: &str = r#"font (name: "T", em: 1000)
+
+let h = 1000;
+let w = 500;
+
+metric baseline  (y: 0)
+metric xHeight   (y: 500)
+metric capHeight (y: h)
+metric ascender  (y: 1100)
+metric descender (y: -250)
+
+instance Regular ()
+
+glyph A (advance: w) {
+    let stem0 = (0, 0);
+    let stem1 = (0.500 * w, h);
+    let stem2 = (w, 0);
+
+    let bar_y = hline(0.333 * h);
+
+    let bar0 = meet(lineThrough(stem0, stem1), bar_y);
+    let bar1 = meet(lineThrough(stem2, stem1), bar_y);
+
+    path stem (stroke: 50, caps: "round", joins: "round") {
+        start (at: stem0)
+        line  (to: stem1)
+        line  (to: stem2)
+    }
+    path bar (stroke: 50, caps: "round", joins: "round") {
+        start (at: bar0)
+        line  (to: bar1)
+    }
+}
+
+glyph a (advance: w) {
+    let arc_ctr = (0.500 * w, 0.400 * h);
+    let arc_radius = 0.500 * w;
+    let arc0 = polar(arc_ctr, arc_radius, 180deg - 37deg);
+
+    path stem (stroke: 50, caps: "round", joins: "round") {
+        start (at: arc0)
+        arc   (center: arc_ctr, to: polar(arc_ctr, arc_radius, 25deg), sweep: "cw")
+        line  (to: (0.975 * w, 0.085 * h))
+    }
+}
+"#;
+
     fn session(glyph: &str, target: &str) -> Session {
-        let source = std::fs::read_to_string(format!(
-            "{}/../../samples/a22x-mono.mg",
-            env!("CARGO_MANIFEST_DIR")
-        ))
-        .unwrap();
-        let model = crate::doc::analyze(&source, 0).1.expect("evaluates");
+        let model = crate::doc::analyze(FIXTURE, 0).1.expect("evaluates");
         Session::begin(Rc::new(model), "Regular", glyph, target, [None, None]).expect("drag")
     }
 
@@ -834,12 +906,16 @@ mod tests {
 
         // Drag towards the angle 150° around the centre: only `37deg`
         // changes, to 30deg.
-        let ctr = [0.494 * 500.0, 0.4 * 1000.0];
-        let r = 0.533 * 500.0;
+        let ctr = [0.5 * 500.0, 0.4 * 1000.0];
+        let r = 0.5 * 500.0;
         let theta = 150f64.to_radians();
         let step = s.drag_to([ctr[0] + r * theta.cos(), ctr[1] + r * theta.sin()]);
         let text = after(&s, &step);
-        assert!(text.contains("polar(arc_ctr, arc_radius, 180deg - 30deg)"), "{:?}", step.literals);
+        assert!(
+            text.contains("polar(arc_ctr, arc_radius, 180deg - 30deg)"),
+            "{:?}",
+            step.literals
+        );
         assert_eq!(step.changes.len(), 1);
     }
 
@@ -866,7 +942,11 @@ mod tests {
         // stem2 (500, 0) to stem1 (250, 1000), reaching y = 400 at x = 400.
         let s = session("A", "bar1");
         let info = s.info();
-        assert!(info.drivers.iter().all(|d| d.owner == "bar_y"), "{:?}", info.drivers);
+        assert!(
+            info.drivers.iter().all(|d| d.owner == "bar_y"),
+            "{:?}",
+            info.drivers
+        );
         assert_eq!(info.anchors, ["stem2", "stem1"]);
         assert!(info.track);
         let step = s.drag_to([400.0, 400.0]);
@@ -890,7 +970,7 @@ mod tests {
     #[test]
     fn a_drag_bottoms_out_before_the_source_becomes_invalid() {
         // `a`'s stem arc has stroke 50 about `arc_ctr` with radius
-        // `arc_radius = 0.533 * w`: a radius below 25 (stroke / 2) is a
+        // `arc_radius = 0.500 * w`: a radius below 25 (stroke / 2) is a
         // curvature error, so shrinking it stops just above 25 / 500.
         let mut s = session("a", "arc0");
         while s.info().axis[0].map(|i| s.drivers[i].owner.as_str()) != Some("arc_radius") {

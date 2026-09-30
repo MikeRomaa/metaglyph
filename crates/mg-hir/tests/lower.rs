@@ -25,7 +25,7 @@ fn codes(diagnostics: &[mg_diag::Diagnostic]) -> Vec<&'static str> {
 
 #[test]
 fn conformance_sample_lowers_with_zero_diagnostics() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../samples/metaglyph-sans.mg");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/conformance.mg");
     let source =
         fs::read_to_string(&path).unwrap_or_else(|err| panic!("reading {}: {err}", path.display()));
     let (hir, diagnostics) = lower(&source);

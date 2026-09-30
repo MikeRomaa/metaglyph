@@ -71,7 +71,7 @@ fn on_curve_points(contour: &[OutlinePoint]) -> Vec<Point> {
 fn sample() -> Hir {
     let source = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../samples/metaglyph-sans.mg"
+        "/../../tests/conformance.mg"
     ))
     .unwrap();
     lower(&source)

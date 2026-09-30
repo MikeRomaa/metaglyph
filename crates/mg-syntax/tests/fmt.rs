@@ -16,7 +16,7 @@ fn idempotent_on_simple_declarations() {
 
 #[test]
 fn idempotent_on_conformance_sample() {
-    assert_idempotent(include_str!("../../../samples/metaglyph-sans.mg"));
+    assert_idempotent(include_str!("../../../tests/conformance.mg"));
 }
 
 #[test]
@@ -77,7 +77,7 @@ fn preserves_blank_line_after_leading_comment_on_first_item() {
 
 #[test]
 fn checked_formatting_matches_plain_formatting_when_nothing_is_lost() {
-    let sample = include_str!("../../../samples/metaglyph-sans.mg");
+    let sample = include_str!("../../../tests/conformance.mg");
     assert_eq!(format_checked(sample), Ok(format(sample)));
     let messy = "let x=1; // note\n\n\n// lead\nlet y = x*2;\n";
     assert_eq!(format_checked(messy), Ok(format(messy)));

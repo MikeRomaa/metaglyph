@@ -108,9 +108,7 @@ fn a_config_offers_its_fields_with_types_and_docs() {
     let items = complete(&with_glyphs("glyph C (advance: 1) {\n  path p (|\n}"));
     assert_eq!(
         labels(&items),
-        [
-            "stroke", "fill", "caps", "joins", "joinAt"
-        ]
+        ["stroke", "fill", "caps", "joins", "joinAt"]
     );
     let joins = items.iter().find(|i| i.label == "joins").unwrap();
     assert_eq!(joins.detail.as_deref(), Some("string"));

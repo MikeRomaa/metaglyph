@@ -1,4 +1,3 @@
-import a22xMono from "../../../../samples/a22x-mono.mg?raw";
 import metaglyphSans from "../../../../samples/metaglyph-sans.mg?raw";
 import { buildTtf } from "../engine/client.ts";
 import type { DocState } from "../engine/types.ts";
@@ -19,10 +18,7 @@ metric descender (y: -200)
 instance Regular ()
 `;
 
-export const SAMPLES = [
-    { fileName: "a22x-mono.mg", text: a22xMono },
-    { fileName: "metaglyph-sans.mg", text: metaglyphSans },
-];
+export const SAMPLES = [{ fileName: "metaglyph-sans.mg", text: metaglyphSans }];
 
 export function newDoc() {
     useStore.getState().openDoc("untitled.mg", SKELETON);

@@ -502,7 +502,9 @@ pub fn glyph_scene(model: &Model, instance: &str, name: &str) -> Option<GlyphSce
                     }
                     let (to, controls) = drawn.next().unwrap_or((None, Vec::new()));
                     let arc = match (seg.kind, prev, to) {
-                        (SegmentKind::Arc, Some(from), Some(to)) => arc_info(&ctx, name, seg, from, to),
+                        (SegmentKind::Arc, Some(from), Some(to)) => {
+                            arc_info(&ctx, name, seg, from, to)
+                        }
                         _ => None,
                     };
                     prev = to;
@@ -642,8 +644,7 @@ fn measured(ctx: &Ctx, glyph: &str, expr: Option<&ast::Expr>) -> Option<(Pt, Pt)
         return None;
     }
     let eval = |e: ast::Expr| {
-        mg_eval::eval_subexpr(&ctx.model.hir, ctx.instance, Some(glyph), ctx.values, &e)?
-            .as_pair()
+        mg_eval::eval_subexpr(&ctx.model.hir, ctx.instance, Some(glyph), ctx.values, &e)?.as_pair()
     };
     let b = eval(diff.lhs()?)?;
     let a = eval(diff.rhs()?)?;
@@ -757,5 +758,9 @@ pub fn format_value(value: &Value) -> String {
 pub fn format_num(n: f64) -> String {
     let s = format!("{n:.1}");
     let s = s.strip_suffix(".0").unwrap_or(&s);
-    if s == "-0" { "0".to_string() } else { s.to_string() }
+    if s == "-0" {
+        "0".to_string()
+    } else {
+        s.to_string()
+    }
 }

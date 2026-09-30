@@ -5,8 +5,11 @@
 use mg_web::{analyze, font_data, glyph_scene};
 
 fn sample(name: &str) -> String {
-    std::fs::read_to_string(format!("{}/../../samples/{name}", env!("CARGO_MANIFEST_DIR")))
-        .expect("sample exists")
+    std::fs::read_to_string(format!(
+        "{}/../../samples/{name}",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("sample exists")
 }
 
 fn survives(source: &str) {
@@ -25,7 +28,7 @@ fn survives(source: &str) {
 }
 
 fn every_deletion_of(inserted: &str, anchor: &str) {
-    let base = sample("a22x-mono.mg");
+    let base = sample("metaglyph-sans.mg");
     let at = base.find(anchor).expect("anchor") + anchor.len();
     let source = format!("{}{inserted}{}", &base[..at], &base[at..]);
     survives(&source);
@@ -42,13 +45,16 @@ fn every_deletion_of(inserted: &str, anchor: &str) {
 
 #[test]
 fn deleting_a_guide_by_hand_never_panics() {
-    every_deletion_of("\n    let l0 = hline(333);", "let stem2 = (w, 0);");
+    every_deletion_of(
+        "\n    let l0 = hline(333);",
+        "let footR = (x1 - dw / 2, 0);",
+    );
 }
 
 #[test]
 fn deleting_a_point_used_by_a_path_never_panics() {
-    every_deletion_of("\n    let p0 = (10, 20);", "let stem2 = (w, 0);");
+    every_deletion_of("\n    let p0 = (10, 20);", "let footR = (x1 - dw / 2, 0);");
     // A point a path uses, removed: the path's reference dangles.
-    let base = sample("a22x-mono.mg");
-    survives(&base.replacen("    let stem1 = (0.500 * w, h);\n", "", 1));
+    let base = sample("metaglyph-sans.mg");
+    survives(&base.replacen("    let footL = (x0 + dw / 2, 0);\n", "", 1));
 }

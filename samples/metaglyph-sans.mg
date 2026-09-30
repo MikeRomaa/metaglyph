@@ -1,361 +1,690 @@
 // ══ Metaglyph Sans ═══════════════════════════════════════════════════
-// Sample source: A–F, 0–9
+// Sample source: A–Z, 0–9. Monospaced: every glyph fills one `cell`.
+// Strokes meet at right angles; rounds are straight sides joined by
+// quarter-circle corners of radius `rad`. Diagonals are filled bands, so
+// they end flat on the baseline and cap height.
 
 font (name: "Metaglyph Sans", em: 1000)
 
 // ── design space ─────────────────────────────────────────────────────
-param stem     (default: 100, range: 20..260)
-param contrast (default: 0.86, range: 0.40..1.00)  // hair/stem ratio
-param sidebear (default: 44, range: 0..140)
-param capW     (default: 620, range: 380..900)  // nominal cap width
-param figW     (default: 560, range: 360..820)  // nominal figure width
-param barPos   (default: 0.46, range: 0.30..0.62)  // crossbar height ratio
+param stem   (default: 90, range: 40..160)
+param corner (default: 50, range: 10..100)  // corner radius past stem / 2
+param barPos (default: 0.48, range: 0.40..0.56)  // crossbar height ratio
 
-let hair = stem * contrast;
-let ox = sidebear + stem / 2;
+let cell = 600;  // every glyph's advance
+let side = 60;   // sidebearing to the widest ink
+let x0 = side;         // left ink edge
+let x1 = cell - side;  // right ink edge
+let xl = x0 + stem / 2;  // left stem centreline
+let xr = x1 - stem / 2;  // right stem centreline
+let xm = cell / 2;
+let yt = capHeight.y - stem / 2;  // top bar centreline
+let yb = stem / 2;                // bottom bar centreline
+let ym = capHeight.y * barPos;    // crossbar centreline
+let rad = stem / 2 + corner;      // corner radius on the centreline
 
 // ── vertical metrics ─────────────────────────────────────────────────
-metric baseline  (y: 0, overshoot: 10, align: "bottom")
-metric xHeight   (y: 520, overshoot: 10)
-metric capHeight (y: 700, overshoot: 12)
-metric figHeight (y: 700, overshoot: 12)
-metric ascender  (y: 740)
+metric baseline  (y: 0, align: "bottom")
+metric xHeight   (y: 520)
+metric capHeight (y: 700)
+metric ascender  (y: 760)
 metric descender (y: -220, align: "bottom")
 
 // ── instances ────────────────────────────────────────────────────────
-instance Regular   ()
-instance Bold      (stem: 160, contrast: 0.80, weightClass: 700)
-instance Condensed (capW: 520, figW: 470, widthClass: 3)
+instance Light   (stem: 50, weightClass: 300)
+instance Regular ()
+instance Bold    (stem: 140, weightClass: 700)
 
 // ══ Capitals ═════════════════════════════════════════════════════════
 
-glyph A (codepoint: U+0041, advance: glyph.bbox.x1 + sidebear) {
-    let w = capW;
-    let apexY = capHeight.y - stem / 2;
-    let al = (ox + w / 2 - stem / 2, apexY);
-    let ar = (ox + w / 2 + stem / 2, apexY);
-    let lf = (ox, 0);
-    let rf = (ox + w, 0);
-    let barY = capHeight.y * barPos * 0.80;
+glyph A (codepoint: 'A', advance: cell) {
+    let dw = stem * length((xm, capHeight.y) - (xl, 0)) / capHeight.y;  // a leg's width across
+    let half = (dw / 2, 0);
+    let footL = (x0 + dw / 2, 0);
+    let apexL = (xm - dw * 0.15, capHeight.y);
+    let footR = (x1 - dw / 2, 0);
+    let apexR = (xm + dw * 0.15, capHeight.y);
+    let bar_y = hline(ym * 0.62);
 
-    path legL (stroke: stem) {
-        start (at: al)
-        line  (to: lf)
+    path legL (fill: true) {
+        start (at: footL - half)
+        line  (to: footL + half)
+        line  (to: apexL + half)
+        line  (to: apexL - half)
+        close
     }
-    path legR (stroke: stem) {
-        start (at: ar)
-        line  (to: rf)
+    path legR (fill: true) {
+        start (at: footR - half)
+        line  (to: footR + half)
+        line  (to: apexR + half)
+        line  (to: apexR - half)
+        close
     }
-
-    path apexBar (stroke: stem) {
-        start (at: al)
-        line  (to: ar)
-    }
-    path bar (stroke: hair) {
-        start (at: meet(lineThrough(al, lf), hline(barY)))
-        line  (to: meet(lineThrough(ar, rf), hline(barY)))
+    path bar (stroke: stem) {
+        start (at: meet(lineThrough(footL, apexL), bar_y))
+        line  (to: meet(lineThrough(footR, apexR), bar_y))
     }
 }
 
-glyph B (codepoint: U+0042, advance: glyph.bbox.x1 + sidebear) {
-    let w = capW * 0.88;
-    let sx = ox;
-    let top = capHeight.y;
-    let mid = top * 0.53;
-    let yU = (top - stem / 2 + mid) / 2;  // centre heights of the two bowls
-    let yL = (mid + stem / 2) / 2;
+glyph B (codepoint: 'B', advance: cell) {
+    let ux = xr - 24;  // the upper bowl is a little narrower
 
     path upright (stroke: stem) {
-        start (at: (sx, top))
-        line  (to: (sx, 0))
+        start (at: (xl, 0))
+        line  (to: (xl, capHeight.y))
     }
     path bowlU (stroke: stem) {
-        start (at: (sx, top - stem / 2))
-        arc   (center: (sx, yU), to: (sx + w - stem, yU), sweep: "cw")
-        arc   (center: (sx, yU), to: (sx, mid), sweep: "cw")
+        start (at: (x0, yt))
+        line  (to: (ux - rad, yt))
+        arc   (center: (ux - rad, yt - rad), to: (ux, yt - rad), sweep: "cw")
+        line  (to: (ux, ym + rad))
+        arc   (center: (ux - rad, ym + rad), to: (ux - rad, ym), sweep: "cw")
+        line  (to: (x0, ym))
     }
     path bowlL (stroke: stem) {
-        start (at: (sx, mid))
-        arc   (center: (sx, yL), to: (sx + w - stem / 2, yL), sweep: "cw")
-        arc   (center: (sx, yL), to: (sx, stem / 2), sweep: "cw")
+        start (at: (x0, ym))
+        line  (to: (xr - rad, ym))
+        arc   (center: (xr - rad, ym - rad), to: (xr, ym - rad), sweep: "cw")
+        line  (to: (xr, yb + rad))
+        arc   (center: (xr - rad, yb + rad), to: (xr - rad, yb), sweep: "cw")
+        line  (to: (x0, yb))
     }
 }
 
-glyph C (codepoint: U+0043, advance: glyph.bbox.x1 + sidebear) {
-    let w = capW;
-    let cy = capHeight.y / 2;
-    let hk = w * 0.18;  // terminal handle length
-    let tU = (ox + w * 0.93, capHeight.y * 0.79);  // upper terminal
-    let tL = (ox + w * 0.93, capHeight.y * 0.21);  // lower terminal
-    let top = (ox + w / 2, capHeight.ink - stem / 2);
-    let bot = (ox + w / 2, baseline.ink + stem / 2);
-
-    path bowl (stroke: stem, caps: "butt") {
-        start (at: tU)
-        cube  (c1: polar(tU, hk, 152deg), c2: polar(top, hk, 0deg), to: top)
-        arc   (center: (ox + w / 2, cy), to: (ox, cy), sweep: "ccw")
-        arc   (center: (ox + w / 2, cy), to: bot, sweep: "ccw")
-        cube  (c1: polar(bot, hk, 0deg), c2: polar(tL, hk, 208deg), to: tL)  // arrives at 28°
+glyph C (codepoint: 'C', advance: cell) {
+    path bowl (stroke: stem) {
+        start (at: (x1, yt))
+        line  (to: (xl + rad, yt))
+        arc   (center: (xl + rad, yt - rad), to: (xl, yt - rad), sweep: "ccw")
+        line  (to: (xl, yb + rad))
+        arc   (center: (xl + rad, yb + rad), to: (xl + rad, yb), sweep: "ccw")
+        line  (to: (x1, yb))
     }
 }
 
-glyph D (codepoint: U+0044, advance: glyph.bbox.x1 + sidebear) {
-    let w = capW * 0.94;
-    let sx = ox;
-    let top = capHeight.y;
-
+glyph D (codepoint: 'D', advance: cell) {
     path upright (stroke: stem) {
-        start (at: (sx, top))
-        line  (to: (sx, 0))
+        start (at: (xl, 0))
+        line  (to: (xl, capHeight.y))
     }
     path bowl (stroke: stem) {
-        start (at: (sx, top - stem / 2))
-        arc   (center: (sx, top / 2),
-               to: (sx + w - stem / 2, top / 2),
-               sweep: "cw")
-        arc   (center: (sx, top / 2), to: (sx, stem / 2), sweep: "cw")
+        start (at: (x0, yt))
+        line  (to: (xr - rad, yt))
+        arc   (center: (xr - rad, yt - rad), to: (xr, yt - rad), sweep: "cw")
+        line  (to: (xr, yb + rad))
+        arc   (center: (xr - rad, yb + rad), to: (xr - rad, yb), sweep: "cw")
+        line  (to: (x0, yb))
     }
 }
 
-glyph E (codepoint: U+0045, advance: glyph.bbox.x1 + sidebear) {
-    let w = capW * 0.80;
-    let top = capHeight.y;
-
-    path upright (stroke: stem) {
-        start (at: (ox, top))
-        line  (to: (ox, 0))
+glyph E (codepoint: 'E', advance: cell) {
+    path frame (stroke: stem) {
+        start (at: (x1, yt))
+        line  (to: (xl, yt))
+        line  (to: (xl, yb))
+        line  (to: (x1, yb))
     }
-    path barT (stroke: hair) {
-        // top edge on capHeight
-        start (at: (sidebear, top - hair / 2))
-        line  (to: (sidebear + w, top - hair / 2))
-    }
-    path barM (stroke: hair) {
-        start (at: (sidebear, top * barPos))
-        line  (to: (sidebear + w * 0.86, top * barPos))
-    }
-    path barB (stroke: hair) {
-        // bottom edge on baseline
-        start (at: (sidebear, hair / 2))
-        line  (to: (sidebear + w, hair / 2))
+    path bar (stroke: stem) {
+        start (at: (xl, ym))
+        line  (to: (x1 - 50, ym))
     }
 }
 
-glyph F (codepoint: U+0046, advance: glyph.bbox.x1 + sidebear) {
-    let w = capW * 0.76;
-    let top = capHeight.y;
+glyph F (codepoint: 'F', advance: cell) {
+    path frame (stroke: stem) {
+        start (at: (x1, yt))
+        line  (to: (xl, yt))
+        line  (to: (xl, 0))
+    }
+    path bar (stroke: stem) {
+        start (at: (xl, ym))
+        line  (to: (x1 - 50, ym))
+    }
+}
+
+glyph G (codepoint: 'G', advance: cell) {
+    path bowl (stroke: stem) {
+        start (at: (x1, yt))
+        line  (to: (xl + rad, yt))
+        arc   (center: (xl + rad, yt - rad), to: (xl, yt - rad), sweep: "ccw")
+        line  (to: (xl, yb + rad))
+        arc   (center: (xl + rad, yb + rad), to: (xl + rad, yb), sweep: "ccw")
+        line  (to: (xr - rad, yb))
+        arc   (center: (xr - rad, yb + rad), to: (xr, yb + rad), sweep: "ccw")
+        line  (to: (xr, ym))
+        line  (to: (xm, ym))
+    }
+}
+
+glyph H (codepoint: 'H', advance: cell) {
+    path stemL (stroke: stem) {
+        start (at: (xl, 0))
+        line  (to: (xl, capHeight.y))
+    }
+    path stemR (stroke: stem) {
+        start (at: (xr, 0))
+        line  (to: (xr, capHeight.y))
+    }
+    path bar (stroke: stem) {
+        start (at: (xl, ym))
+        line  (to: (xr, ym))
+    }
+}
+
+glyph I (codepoint: 'I', advance: cell) {
+    let serif = 0.30 * cell;  // half the width of the top and bottom bars
 
     path upright (stroke: stem) {
-        start (at: (ox, top))
-        line  (to: (ox, 0))
+        start (at: (xm, 0))
+        line  (to: (xm, capHeight.y))
     }
-    path barT (stroke: hair) {
-        start (at: (sidebear, top - hair / 2))
-        line  (to: (sidebear + w, top - hair / 2))
+    path barT (stroke: stem) {
+        start (at: (xm - serif, yt))
+        line  (to: (xm + serif, yt))
     }
-    path barM (stroke: hair) {
-        start (at: (sidebear, top * barPos))
-        line  (to: (sidebear + w * 0.86, top * barPos))
+    path barB (stroke: stem) {
+        start (at: (xm - serif, yb))
+        line  (to: (xm + serif, yb))
+    }
+}
+
+glyph J (codepoint: 'J', advance: cell) {
+    path hook (stroke: stem) {
+        start (at: (xr, capHeight.y))
+        line  (to: (xr, yb + rad))
+        arc   (center: (xr - rad, yb + rad), to: (xr - rad, yb), sweep: "cw")
+        line  (to: (x0, yb))
+    }
+    path bar (stroke: stem) {
+        start (at: (xm - 60, yt))
+        line  (to: (x1, yt))
+    }
+}
+
+glyph K (codepoint: 'K', advance: cell) {
+    let dw = stem * length((xr, capHeight.y) - (xl, ym)) / (capHeight.y - ym);
+    let half = (dw / 2, 0);
+    let joint = (x0 + dw / 2, ym);
+    let armEnd = (x1 - dw / 2, capHeight.y);
+    let legEnd = (x1 - dw / 2, 0);
+
+    path upright (stroke: stem) {
+        start (at: (xl, 0))
+        line  (to: (xl, capHeight.y))
+    }
+    path arm (fill: true) {
+        start (at: joint - half)
+        line  (to: joint + half)
+        line  (to: armEnd + half)
+        line  (to: armEnd - half)
+        close
+    }
+    path leg (fill: true) {
+        start (at: legEnd - half)
+        line  (to: legEnd + half)
+        line  (to: joint + half)
+        line  (to: joint - half)
+        close
+    }
+}
+
+glyph L (codepoint: 'L', advance: cell) {
+    path frame (stroke: stem) {
+        start (at: (xl, capHeight.y))
+        line  (to: (xl, yb))
+        line  (to: (x1, yb))
+    }
+}
+
+glyph M (codepoint: 'M', advance: cell) {
+    let vy = capHeight.y * 0.30;  // the flat bottom of the middle V
+    let dw = stem * length((xl, capHeight.y) - (xm, vy)) / (capHeight.y - vy);
+    let half = (dw / 2, 0);
+    let topL = (x0 + dw / 2, capHeight.y);
+    let topR = (x1 - dw / 2, capHeight.y);
+    let vL = (xm - dw * 0.15, vy);
+    let vR = (xm + dw * 0.15, vy);
+
+    path stemL (stroke: stem) {
+        start (at: (xl, 0))
+        line  (to: (xl, capHeight.y))
+    }
+    path stemR (stroke: stem) {
+        start (at: (xr, 0))
+        line  (to: (xr, capHeight.y))
+    }
+    path diagL (fill: true) {
+        start (at: vL - half)
+        line  (to: vL + half)
+        line  (to: topL + half)
+        line  (to: topL - half)
+        close
+    }
+    path diagR (fill: true) {
+        start (at: vR - half)
+        line  (to: vR + half)
+        line  (to: topR + half)
+        line  (to: topR - half)
+        close
+    }
+}
+
+glyph N (codepoint: 'N', advance: cell) {
+    let dw = stem * length((xr, 0) - (xl, capHeight.y)) / capHeight.y;
+    let half = (dw / 2, 0);
+    let top = (x0 + dw / 2, capHeight.y);
+    let foot = (x1 - dw / 2, 0);
+
+    path stemL (stroke: stem) {
+        start (at: (xl, 0))
+        line  (to: (xl, capHeight.y))
+    }
+    path stemR (stroke: stem) {
+        start (at: (xr, 0))
+        line  (to: (xr, capHeight.y))
+    }
+    path diag (fill: true) {
+        start (at: foot - half)
+        line  (to: foot + half)
+        line  (to: top + half)
+        line  (to: top - half)
+        close
+    }
+}
+
+glyph O (codepoint: 'O', advance: cell) {
+    path bowl (stroke: stem) {
+        start (at: (xl, yt - rad))
+        line  (to: (xl, yb + rad))
+        arc   (center: (xl + rad, yb + rad), to: (xl + rad, yb), sweep: "ccw")
+        line  (to: (xr - rad, yb))
+        arc   (center: (xr - rad, yb + rad), to: (xr, yb + rad), sweep: "ccw")
+        line  (to: (xr, yt - rad))
+        arc   (center: (xr - rad, yt - rad), to: (xr - rad, yt), sweep: "ccw")
+        line  (to: (xl + rad, yt))
+        arc   (center: (xl + rad, yt - rad), to: (xl, yt - rad), sweep: "ccw")
+        close
+    }
+}
+
+glyph P (codepoint: 'P', advance: cell) {
+    path upright (stroke: stem) {
+        start (at: (xl, 0))
+        line  (to: (xl, capHeight.y))
+    }
+    path bowl (stroke: stem) {
+        start (at: (x0, yt))
+        line  (to: (xr - rad, yt))
+        arc   (center: (xr - rad, yt - rad), to: (xr, yt - rad), sweep: "cw")
+        line  (to: (xr, ym + rad))
+        arc   (center: (xr - rad, ym + rad), to: (xr - rad, ym), sweep: "cw")
+        line  (to: (x0, ym))
+    }
+}
+
+glyph Q (codepoint: 'Q', advance: cell) {
+    component (glyph: O)
+    path tail (stroke: stem) {
+        start (at: (xm, yb + 140))
+        cube  (c1: (xm + 30, yb + 40), c2: (xm + 80, -90), to: (x1, -90))
+    }
+}
+
+glyph R (codepoint: 'R', advance: cell) {
+    let dw = stem * length((xr, 0) - (xm, ym)) / ym;
+    let half = (dw / 2, 0);
+    let knee = (xm, ym);
+    let foot = (x1 - dw / 2, 0);
+
+    component (glyph: P)
+    path leg (fill: true) {
+        start (at: foot - half)
+        line  (to: foot + half)
+        line  (to: knee + half)
+        line  (to: knee - half)
+        close
+    }
+}
+
+glyph S (codepoint: 'S', advance: cell) {
+    path spine (stroke: stem) {
+        start (at: (x1, yt))
+        line  (to: (xl + rad, yt))
+        arc   (center: (xl + rad, yt - rad), to: (xl, yt - rad), sweep: "ccw")
+        line  (to: (xl, ym + rad))
+        arc   (center: (xl + rad, ym + rad), to: (xl + rad, ym), sweep: "ccw")
+        line  (to: (xr - rad, ym))
+        arc   (center: (xr - rad, ym - rad), to: (xr, ym - rad), sweep: "cw")
+        line  (to: (xr, yb + rad))
+        arc   (center: (xr - rad, yb + rad), to: (xr - rad, yb), sweep: "cw")
+        line  (to: (x0, yb))
+    }
+}
+
+glyph T (codepoint: 'T', advance: cell) {
+    path bar (stroke: stem) {
+        start (at: (x0, yt))
+        line  (to: (x1, yt))
+    }
+    path upright (stroke: stem) {
+        start (at: (xm, 0))
+        line  (to: (xm, yt))
+    }
+}
+
+glyph U (codepoint: 'U', advance: cell) {
+    path bowl (stroke: stem) {
+        start (at: (xl, capHeight.y))
+        line  (to: (xl, yb + rad))
+        arc   (center: (xl + rad, yb + rad), to: (xl + rad, yb), sweep: "ccw")
+        line  (to: (xr - rad, yb))
+        arc   (center: (xr - rad, yb + rad), to: (xr, yb + rad), sweep: "ccw")
+        line  (to: (xr, capHeight.y))
+    }
+}
+
+glyph V (codepoint: 'V', advance: cell) {
+    let dw = stem * length((xl, capHeight.y) - (xm, 0)) / capHeight.y;
+    let half = (dw / 2, 0);
+    let topL = (x0 + dw / 2, capHeight.y);
+    let topR = (x1 - dw / 2, capHeight.y);
+    let footL = (xm - dw * 0.15, 0);
+    let footR = (xm + dw * 0.15, 0);
+
+    path armL (fill: true) {
+        start (at: footL - half)
+        line  (to: footL + half)
+        line  (to: topL + half)
+        line  (to: topL - half)
+        close
+    }
+    path armR (fill: true) {
+        start (at: footR - half)
+        line  (to: footR + half)
+        line  (to: topR + half)
+        line  (to: topR - half)
+        close
+    }
+}
+
+glyph W (codepoint: 'W', advance: cell) {
+    let wy = capHeight.y * 0.62;  // the flat top of the middle peak
+    let dw = stem * length((xl, 0) - (xm, wy)) / wy;
+    let half = (dw / 2, 0);
+    let footL = (x0 + dw / 2, 0);
+    let footR = (x1 - dw / 2, 0);
+    let peakL = (xm - dw * 0.15, wy);
+    let peakR = (xm + dw * 0.15, wy);
+
+    path stemL (stroke: stem) {
+        start (at: (xl, 0))
+        line  (to: (xl, capHeight.y))
+    }
+    path stemR (stroke: stem) {
+        start (at: (xr, 0))
+        line  (to: (xr, capHeight.y))
+    }
+    path diagL (fill: true) {
+        start (at: footL - half)
+        line  (to: footL + half)
+        line  (to: peakL + half)
+        line  (to: peakL - half)
+        close
+    }
+    path diagR (fill: true) {
+        start (at: footR - half)
+        line  (to: footR + half)
+        line  (to: peakR + half)
+        line  (to: peakR - half)
+        close
+    }
+}
+
+glyph X (codepoint: 'X', advance: cell) {
+    let dw = stem * length((xr, capHeight.y) - (xl, 0)) / capHeight.y;
+    let half = (dw / 2, 0);
+    let lo = x0 + dw / 2;
+    let hi = x1 - dw / 2;
+
+    path rising (fill: true) {
+        start (at: (lo, 0) - half)
+        line  (to: (lo, 0) + half)
+        line  (to: (hi, capHeight.y) + half)
+        line  (to: (hi, capHeight.y) - half)
+        close
+    }
+    path falling (fill: true) {
+        start (at: (hi, 0) - half)
+        line  (to: (hi, 0) + half)
+        line  (to: (lo, capHeight.y) + half)
+        line  (to: (lo, capHeight.y) - half)
+        close
+    }
+}
+
+glyph Y (codepoint: 'Y', advance: cell) {
+    let dw = stem * length((xl, capHeight.y) - (xm, ym)) / (capHeight.y - ym);
+    let half = (dw / 2, 0);
+    let topL = (x0 + dw / 2, capHeight.y);
+    let topR = (x1 - dw / 2, capHeight.y);
+    // The arms' outer edges land on the stem's edges.
+    let forkL = (xm - stem / 2 + dw / 2, ym);
+    let forkR = (xm + stem / 2 - dw / 2, ym);
+
+    path upright (stroke: stem) {
+        start (at: (xm, 0))
+        line  (to: (xm, ym))
+    }
+    path armL (fill: true) {
+        start (at: forkL - half)
+        line  (to: forkL + half)
+        line  (to: topL + half)
+        line  (to: topL - half)
+        close
+    }
+    path armR (fill: true) {
+        start (at: forkR - half)
+        line  (to: forkR + half)
+        line  (to: topR + half)
+        line  (to: topR - half)
+        close
+    }
+}
+
+glyph Z (codepoint: 'Z', advance: cell) {
+    let dw = stem * length((xr, yt) - (xl, yb)) / (yt - yb);
+    let half = (dw / 2, 0);
+    let low = (x0 + dw / 2, yb);
+    let high = (x1 - dw / 2, yt);
+
+    path barT (stroke: stem) {
+        start (at: (x0, yt))
+        line  (to: (x1, yt))
+    }
+    path barB (stroke: stem) {
+        start (at: (x0, yb))
+        line  (to: (x1, yb))
+    }
+    path diag (fill: true) {
+        start (at: low - half)
+        line  (to: low + half)
+        line  (to: high + half)
+        line  (to: high - half)
+        close
     }
 }
 
 // ══ Figures ══════════════════════════════════════════════════════════
 
-glyph zero (codepoint: U+0030, advance: glyph.bbox.x1 + sidebear) {
-    let w = figW * 0.86;
-    let cy = figHeight.y / 2;
-    let ctr = (ox + w / 2, cy);
-    let top = (ox + w / 2, figHeight.ink - stem / 2);
+glyph zero (codepoint: '0', advance: cell) {
+    let zl = xl + 30;
+    let zr = xr - 30;
+    let cBL = (zl + rad, yb + rad);  // corner centres
+    let cTR = (zr - rad, yt - rad);
+    let slope = angle(cTR - cBL);
+    // The slash ends on the corners where they face along it.
+    let slash0 = polar(cBL, rad, slope + 180deg);
+    let slash1 = polar(cTR, rad, slope);
 
     path bowl (stroke: stem) {
-        start (at: top)
-        arc   (center: ctr, to: (ox + w, cy), sweep: "cw")
-        arc   (center: ctr,
-               to: (ox + w / 2, baseline.ink + stem / 2),
-               sweep: "cw")
-        arc   (center: ctr, to: (ox, cy), sweep: "cw")
-        arc   (center: ctr, to: top, sweep: "cw")
+        start (at: (zl, yt - rad))
+        line  (to: (zl, yb + rad))
+        arc   (center: cBL, to: (zl + rad, yb), sweep: "ccw")
+        line  (to: (zr - rad, yb))
+        arc   (center: (zr - rad, yb + rad), to: (zr, yb + rad), sweep: "ccw")
+        line  (to: (zr, yt - rad))
+        arc   (center: cTR, to: (zr - rad, yt), sweep: "ccw")
+        line  (to: (zl + rad, yt))
+        arc   (center: (zl + rad, yt - rad), to: (zl, yt - rad), sweep: "ccw")
+        close
+    }
+    path slash (stroke: stem * 0.8) {
+        start (at: slash0)
+        line  (to: slash1)
+    }
+}
+
+glyph one (codepoint: '1', advance: cell) {
+    let serif = 0.30 * cell;
+
+    path upright (stroke: stem) {
+        start (at: (xm, 0))
+        line  (to: (xm, capHeight.y))
+    }
+    path flag (stroke: stem) {
+        start (at: (xm, yt))
+        line  (to: (xm - serif * 0.8, yt - 110))
+    }
+    path base (stroke: stem) {
+        start (at: (xm - serif, yb))
+        line  (to: (xm + serif, yb))
+    }
+}
+
+glyph two (codepoint: '2', advance: cell) {
+    path spine (stroke: stem) {
+        start (at: (x0, yt))
+        line  (to: (xr - rad, yt))
+        arc   (center: (xr - rad, yt - rad), to: (xr, yt - rad), sweep: "cw")
+        line  (to: (xr, ym + rad))
+        arc   (center: (xr - rad, ym + rad), to: (xr - rad, ym), sweep: "cw")
+        line  (to: (xl, ym))
+        line  (to: (xl, yb))
+        line  (to: (x1, yb))
+    }
+}
+
+glyph three (codepoint: '3', advance: cell) {
+    path bowl (stroke: stem) {
+        start (at: (x0, yt))
+        line  (to: (xr - rad, yt))
+        arc   (center: (xr - rad, yt - rad), to: (xr, yt - rad), sweep: "cw")
+        line  (to: (xr, yb + rad))
+        arc   (center: (xr - rad, yb + rad), to: (xr - rad, yb), sweep: "cw")
+        line  (to: (x0, yb))
+    }
+    path bar (stroke: stem) {
+        start (at: (xm - 40, ym))
+        line  (to: (xr, ym))
+    }
+}
+
+glyph four (codepoint: '4', advance: cell) {
+    let sx = x1 - stem * 1.5;  // the upright's centreline
+    let barY = ym * 0.8;
+
+    path frame (stroke: stem) {
+        start (at: (xl, capHeight.y))
+        line  (to: (xl, barY))
+        line  (to: (x1, barY))
+    }
+    path upright (stroke: stem) {
+        start (at: (sx, 0))
+        line  (to: (sx, capHeight.y))
+    }
+}
+
+glyph five (codepoint: '5', advance: cell) {
+    let neck = ym + 20;
+
+    path spine (stroke: stem) {
+        start (at: (x1, yt))
+        line  (to: (xl, yt))
+        line  (to: (xl, neck))
+        line  (to: (xr - rad, neck))
+        arc   (center: (xr - rad, neck - rad), to: (xr, neck - rad), sweep: "cw")
+        line  (to: (xr, yb + rad))
+        arc   (center: (xr - rad, yb + rad), to: (xr - rad, yb), sweep: "cw")
+        line  (to: (x0, yb))
+    }
+}
+
+glyph six (codepoint: '6', advance: cell) {
+    path spine (stroke: stem) {
+        start (at: (x1, yt))
+        line  (to: (xl + rad, yt))
+        arc   (center: (xl + rad, yt - rad), to: (xl, yt - rad), sweep: "ccw")
+        line  (to: (xl, yb + rad))
+        arc   (center: (xl + rad, yb + rad), to: (xl + rad, yb), sweep: "ccw")
+        line  (to: (xr - rad, yb))
+        arc   (center: (xr - rad, yb + rad), to: (xr, yb + rad), sweep: "ccw")
+        line  (to: (xr, ym - rad))
+        arc   (center: (xr - rad, ym - rad), to: (xr - rad, ym), sweep: "ccw")
+        line  (to: (xl, ym))
+    }
+}
+
+glyph seven (codepoint: '7', advance: cell) {
+    let dw = stem * length((xr, yt) - (xm, 0)) / yt;
+    let half = (dw / 2, 0);
+    let top = (x1 - dw / 2, yt);
+    let foot = (xm - stem * 0.3, 0);
+
+    path bar (stroke: stem) {
+        start (at: (x0, yt))
+        line  (to: (x1, yt))
+    }
+    path diag (fill: true) {
+        start (at: foot - half)
+        line  (to: foot + half)
+        line  (to: top + half)
+        line  (to: top - half)
         close
     }
 }
 
-glyph one (codepoint: U+0031, advance: glyph.bbox.x1 + sidebear) {
-    let w = figW * 0.54;
-    let sx = sidebear + hair / 2 + w * 0.46;
-    let top = figHeight.y;
-
-    path upright (stroke: stem) {
-        start (at: (sx, top))
-        line  (to: (sx, 0))
-    }
-    path flag (stroke: hair) {
-        start (at: (sx, top))
-        line  (to: (sx - w * 0.46, top * 0.84))
-    }
-}
-
-glyph two (codepoint: U+0032, advance: glyph.bbox.x1 + sidebear) {
-    let w = figW;
-    let top = figHeight.y;
-    let turn = (ox + w * 0.93, top * 0.66);
-
-    path bowl (stroke: stem) {
-        start (at: (ox, top * 0.78))
-        arc   (center: (ox + w / 2, top * 0.78),
-               to: (ox + w / 2, figHeight.ink - stem / 2),
-               sweep: "cw")
-        arc   (center: (ox + w / 2, turn.y), to: turn, sweep: "cw")
-    }
-    path diag (stroke: stem) {
-        start (at: turn)
-        line  (to: (ox + hair * 0.6, hair * 0.6))
-    }
-    path base (stroke: hair) {
-        start (at: (ox, hair / 2))
-        line  (to: (ox + w, hair / 2))
-    }
-}
-
-glyph three (codepoint: U+0033, advance: glyph.bbox.x1 + sidebear) {
-    let w = figW * 0.90;
-    let top = figHeight.y;
-    let mid = (ox + w * 0.44, top * 0.52);  // where the two bowls meet
-    let tp = (ox + w / 2, figHeight.ink - stem / 2);
-    let yU = (tp.y + mid.y) / 2;  // upper bowl's right extreme
+glyph eight (codepoint: '8', advance: cell) {
+    let ul = xl + 20;  // the upper bowl is a little narrower
+    let ur = xr - 20;
 
     path bowlU (stroke: stem) {
-        start (at: (ox, top * 0.80))
-        arc   (center: (tp.x, top * 0.80), to: tp, sweep: "cw")
-        arc   (center: (tp.x, yU), to: (ox + w * 0.88, yU), sweep: "cw")
-        arc   (center: (mid.x, yU), to: mid, sweep: "cw")
-    }
-    path bowlL (stroke: stem) {
-        start (at: mid)
-        arc   (center: (mid.x, top * 0.26),
-               to: (ox + w, top * 0.26),
-               sweep: "cw")
-        arc   (center: (ox, top * 0.26), to: (ox, top * 0.14), sweep: "cw")
-    }
-}
-
-glyph four (codepoint: U+0034, advance: glyph.bbox.x1 + sidebear) {
-    let w = figW;
-    let top = figHeight.y;
-    let barY = top * 0.28;
-    let ax = sidebear + w * 0.72;
-
-    path diag (stroke: stem) {
-        start (at: (ax, top))
-        line  (to: (sidebear, barY))
-    }
-    path bar (stroke: hair) {
-        start (at: (sidebear, barY))
-        line  (to: (sidebear + w, barY))
-    }
-    path upright (stroke: stem) {
-        start (at: (ax, top))
-        line  (to: (ax, 0))
-    }
-}
-
-glyph five (codepoint: U+0035, advance: glyph.bbox.x1 + sidebear) {
-    let w = figW * 0.88;
-    let top = figHeight.y;
-    let neck = (ox, top * 0.56);
-
-    path barT (stroke: hair) {
-        start (at: (ox, top - hair / 2))
-        line  (to: (sidebear + w, top - hair / 2))
-    }
-    path spine (stroke: stem) {
-        start (at: (ox, top))
-        line  (to: neck)
-    }
-    path bowl (stroke: stem) {
-        start (at: neck)
-        arc   (center: (neck.x, top * 0.28),
-               to: (sidebear + w, top * 0.28),
-               sweep: "cw")
-        arc   (center: (sidebear, top * 0.28),
-               to: (sidebear, top * 0.10),
-               sweep: "cw")
-    }
-}
-
-glyph six (codepoint: U+0036, advance: glyph.bbox.x1 + sidebear) {
-    let w = figW * 0.88;
-    let cy = figHeight.y * 0.30;
-    let by = cy * 2;
-    let hk = w * 0.18;  // terminal handle length
-    let tm = (ox + w * 0.88, figHeight.y * 0.86);  // terminal
-    let tp = (ox + w * 0.40, figHeight.ink - stem / 2);
-    let bc = (ox + w / 2, cy);  // bowl centre
-
-    path spine (stroke: stem) {
-        start (at: tm)
-        cube  (c1: polar(tm, hk, 160deg), c2: polar(tp, hk, 0deg), to: tp)
-        arc   (center: (tp.x, cy), to: (ox, cy), sweep: "ccw")
-    }
-    path bowl (stroke: stem) {
-        start (at: (ox, cy))
-        arc   (center: bc,
-               to: (ox + w / 2, baseline.ink + stem / 2),
-               sweep: "ccw")
-        arc   (center: bc, to: (ox + w, cy), sweep: "ccw")
-        arc   (center: bc, to: (ox + w / 2, by), sweep: "ccw")
-        arc   (center: bc, to: (ox, cy), sweep: "ccw")
-        close
-    }
-}
-
-glyph seven (codepoint: U+0037, advance: glyph.bbox.x1 + sidebear) {
-    let w = figW * 0.92;
-    let top = figHeight.y;
-
-    path bar (stroke: hair) {
-        start (at: (sidebear, top - hair / 2))
-        line  (to: (sidebear + w, top - hair / 2))
-    }
-    path diag (stroke: stem) {
-        start (at: (sidebear + w - hair / 2, top))
-        line  (to: (sidebear + w * 0.28, 0))
-    }
-}
-
-glyph eight (codepoint: U+0038, advance: glyph.bbox.x1 + sidebear) {
-    let w = figW * 0.86;
-    let waist = figHeight.y * 0.53;
-    let uw = w * 0.84;
-    let ux = ox + (w - uw) / 2;
-    let uy = (waist + figHeight.y) / 2;
-
-    let tp = (ox + w / 2, figHeight.ink - stem / 2);
-    let cU = (ox + w / 2, uy);
-    let cL = (ox + w / 2, waist / 2);
-
-    path bowlU (stroke: stem) {
-        start (at: tp)
-        arc   (center: cU, to: (ux + uw, uy), sweep: "cw")
-        arc   (center: cU, to: (ox + w / 2, waist), sweep: "cw")
-        arc   (center: cU, to: (ux, uy), sweep: "cw")
-        arc   (center: cU, to: tp, sweep: "cw")
+        start (at: (ul, yt - rad))
+        line  (to: (ul, ym + rad))
+        arc   (center: (ul + rad, ym + rad), to: (ul + rad, ym), sweep: "ccw")
+        line  (to: (ur - rad, ym))
+        arc   (center: (ur - rad, ym + rad), to: (ur, ym + rad), sweep: "ccw")
+        line  (to: (ur, yt - rad))
+        arc   (center: (ur - rad, yt - rad), to: (ur - rad, yt), sweep: "ccw")
+        line  (to: (ul + rad, yt))
+        arc   (center: (ul + rad, yt - rad), to: (ul, yt - rad), sweep: "ccw")
         close
     }
     path bowlL (stroke: stem) {
-        start (at: (ox + w / 2, waist))
-        arc   (center: cL, to: (ox + w, waist / 2), sweep: "cw")
-        arc   (center: cL,
-               to: (ox + w / 2, baseline.ink + stem / 2),
-               sweep: "cw")
-        arc   (center: cL, to: (ox, waist / 2), sweep: "cw")
-        arc   (center: cL, to: (ox + w / 2, waist), sweep: "cw")
+        start (at: (xl, ym - rad))
+        line  (to: (xl, yb + rad))
+        arc   (center: (xl + rad, yb + rad), to: (xl + rad, yb), sweep: "ccw")
+        line  (to: (xr - rad, yb))
+        arc   (center: (xr - rad, yb + rad), to: (xr, yb + rad), sweep: "ccw")
+        line  (to: (xr, ym - rad))
+        arc   (center: (xr - rad, ym - rad), to: (xr - rad, ym), sweep: "ccw")
+        line  (to: (xl + rad, ym))
+        arc   (center: (xl + rad, ym - rad), to: (xl, ym - rad), sweep: "ccw")
         close
     }
 }
 
-glyph nine (codepoint: U+0039, advance: glyphs.six.advance) {
-    // 6 rotated about the origin, then moved back so its ink spans
-    // [sidebear, advance - sidebear] and its overshoots swap ends.
+glyph nine (codepoint: '9', advance: cell) {
+    // 6 turned half a turn about the cell's centre.
     component (glyph: six,
-               transform: (rotate(180deg), translate(glyphs.six.advance, figHeight.ink + baseline.ink)))
+               transform: (rotate(180deg), translate(cell, capHeight.y)))
 }

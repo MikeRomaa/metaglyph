@@ -333,7 +333,10 @@ pub fn convert_unit(expr: &ast::Expr, to_em: bool, em: f64) -> Option<Vec<TextEd
         (value * em, decimals(number).saturating_sub(shift), "")
     };
     let text = format_decimals(value, places);
-    Some(vec![TextEdit::replace(token_range(&token), format!("{text}{suffix}"))])
+    Some(vec![TextEdit::replace(
+        token_range(&token),
+        format!("{text}{suffix}"),
+    )])
 }
 
 // ---------------------------------------------------------------------
@@ -391,7 +394,10 @@ pub fn list_remove(src: &str, list: &ast::ListExpr, index: usize) -> Option<Vec<
         .filter(|t| t.kind() == SyntaxKind::COMMA)
         .collect();
     let after = commas.iter().find(|c| token_range(c).start >= range.end);
-    let before = commas.iter().rev().find(|c| token_range(c).end <= range.start);
+    let before = commas
+        .iter()
+        .rev()
+        .find(|c| token_range(c).end <= range.start);
     // Only a comma directly next to the element (nothing but trivia between).
     let after = after.filter(|c| src[range.end..token_range(c).start].trim().is_empty());
     let before = before.filter(|c| src[token_range(c).end..range.start].trim().is_empty());
@@ -483,7 +489,10 @@ pub fn set_field(src: &str, decl: &SyntaxNode, name: &str, text: &str) -> Vec<Te
         }
     } else {
         match trailing_comma {
-            Some(comma) => vec![TextEdit::insert(token_range(&comma).end, format!(" {entry}"))],
+            Some(comma) => vec![TextEdit::insert(
+                token_range(&comma).end,
+                format!(" {entry}"),
+            )],
             None => vec![TextEdit::insert(last_range.end, format!(", {entry}"))],
         }
     }
@@ -496,9 +505,8 @@ pub fn remove_field(src: &str, decl: &SyntaxNode, name: &str) -> Option<Vec<Text
     let field = find_field(decl, name)?;
     let range = node_range(field.syntax());
     let config = field.syntax().parent()?;
-    let is_comma = |t: &SyntaxToken| {
-        t.kind() == SyntaxKind::COMMA && t.parent().as_ref() == Some(&config)
-    };
+    let is_comma =
+        |t: &SyntaxToken| t.kind() == SyntaxKind::COMMA && t.parent().as_ref() == Some(&config);
     let after = next_token(decl, range.end).filter(is_comma);
     let before = prev_token(decl, range.start).filter(is_comma);
 
@@ -530,7 +538,12 @@ pub fn remove_field(src: &str, decl: &SyntaxNode, name: &str) -> Option<Vec<Text
 /// Insert `text` as a new declaration in `body` (plan 5, §1.2): on a new
 /// line after `after`, copying its indentation; with no `after`, first
 /// in the body.
-pub fn insert_decl(src: &str, body: &ast::Body, after: Option<&SyntaxNode>, text: &str) -> TextEdit {
+pub fn insert_decl(
+    src: &str,
+    body: &ast::Body,
+    after: Option<&SyntaxNode>,
+    text: &str,
+) -> TextEdit {
     if let Some(after) = after {
         let range = node_range(after);
         let indent = indent_of(src, range.start);
@@ -581,8 +594,17 @@ pub fn insert_let(src: &str, body: &ast::Body, text: &str) -> TextEdit {
 /// Insert a top-level declaration of `kind` (plan 5, §1.2): after the last
 /// declaration of the same kind, or at the end of the file. Glyphs are
 /// separated by one blank line.
-pub fn insert_top_level(src: &str, file: &ast::SourceFile, kind: SyntaxKind, text: &str) -> TextEdit {
-    let separator = if kind == SyntaxKind::GLYPH { "\n\n" } else { "\n" };
+pub fn insert_top_level(
+    src: &str,
+    file: &ast::SourceFile,
+    kind: SyntaxKind,
+    text: &str,
+) -> TextEdit {
+    let separator = if kind == SyntaxKind::GLYPH {
+        "\n\n"
+    } else {
+        "\n"
+    };
     if let Some(last) = file.items().filter(|n| n.kind() == kind).last() {
         let end = node_range(&last).end;
         return TextEdit::insert(end, format!("{separator}{text}"));

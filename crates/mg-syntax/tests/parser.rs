@@ -126,7 +126,7 @@ fn unexpected_token_in_config_names_the_expected_set() {
 /// diagnostics and round-trips byte-for-byte.
 #[test]
 fn conformance_sample_parses_with_zero_diagnostics_and_round_trips() {
-    let source = include_str!("../../../samples/metaglyph-sans.mg");
+    let source = include_str!("../../../tests/conformance.mg");
     let parsed = parse(source);
     assert!(parsed.diagnostics.is_empty(), "{:#?}", parsed.diagnostics);
     assert_eq!(parsed.syntax().text().to_string(), source);

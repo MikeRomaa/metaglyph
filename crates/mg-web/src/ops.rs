@@ -95,7 +95,10 @@ pub enum Op {
     /// A relationship tool (plan 5, §1.4): rewrite the local point `let`
     /// at `span` as `relation`.
     #[serde(rename_all = "camelCase")]
-    Relate { span: [usize; 2], relation: Relation },
+    Relate {
+        span: [usize; 2],
+        relation: Relation,
+    },
     /// Add `delta` (raw units) to field `name` of the declaration at
     /// `span` (plan 5, §1.2 `add_constant`): a metric line drag, or a
     /// typed number. `em` converts into `em`/`%` literals.
@@ -588,7 +591,10 @@ fn apply(
                     src,
                     &body,
                     last.as_ref(),
-                    &format!("component (glyph: {target}, offset: {})", point_text(*offset)),
+                    &format!(
+                        "component (glyph: {target}, offset: {})",
+                        point_text(*offset)
+                    ),
                 )])
             })?;
             Ok(Some(Created {
@@ -671,14 +677,23 @@ fn apply(
                 index = hir.kerns.len();
                 let file = ast::SourceFile::cast(root.clone()).ok_or(GONE)?;
                 let text = format!("kern (left: {left}, right: {right}, by: {})", coord(*by));
-                Ok(vec![edit::insert_top_level(src, &file, SyntaxKind::KERN, &text)])
+                Ok(vec![edit::insert_top_level(
+                    src,
+                    &file,
+                    SyntaxKind::KERN,
+                    &text,
+                )])
             })?;
             Ok(Some(Created {
                 kind: "kern",
                 name: index.to_string(),
             }))
         }
-        Op::KernUnit { span: at, em, font_em } => {
+        Op::KernUnit {
+            span: at,
+            em,
+            font_em,
+        } => {
             let range = span(at);
             s.step(|_, root| {
                 let node = decl_at(root, range).ok_or(GONE)?;
@@ -818,7 +833,7 @@ fn default_advance(src: &str, hir: &mg_hir::Hir) -> String {
 }
 
 /// A codepoint as a new glyph writes it (plan 5, §1.6): a char literal
-/// for a character that reads as itself, like `samples/a22x-mono.mg`;
+/// for a character that reads as itself, like `samples/metaglyph-sans.mg`;
 /// `U+XXXX` for anything invisible, combining, or needing an escape.
 /// `None` for a surrogate or a value past `U+10FFFF`.
 fn codepoint_text(cp: u32) -> Option<String> {
@@ -873,7 +888,12 @@ fn declare_group(s: &mut Session, name: &str, glyphs: &[String]) -> OpResult<()>
         }
         let file = ast::SourceFile::cast(root.clone()).expect("the root is a SOURCE_FILE");
         let text = format!("group {name} (glyphs: [ {} ])", glyphs.join(", "));
-        Ok(vec![edit::insert_top_level(src, &file, SyntaxKind::GROUP, &text)])
+        Ok(vec![edit::insert_top_level(
+            src,
+            &file,
+            SyntaxKind::GROUP,
+            &text,
+        )])
     })
 }
 
@@ -1103,11 +1123,7 @@ fn signed(delta: f64, plus: &str, minus: &str) -> String {
 /// A relationship tool's rewrite of the point `let` at `range` (plan 5,
 /// §1.4). Refused for a top-level `let`, and when the new expression
 /// would make the point depend on itself.
-fn relate(
-    s: &mut Session,
-    range: std::ops::Range<usize>,
-    relation: &Relation,
-) -> OpResult<()> {
+fn relate(s: &mut Session, range: std::ops::Range<usize>, relation: &Relation) -> OpResult<()> {
     let (text, refs): (String, Vec<&str>) = match relation {
         Relation::Coincident { b } => (b.clone(), vec![b]),
         Relation::Meet { l1, l2 } => (
@@ -1142,7 +1158,9 @@ fn relate(
             .ok_or("Top-level lets are never rewritten by a tool.")?;
         let target = name_of(&node).ok_or("This `let` has no name.")?;
         if let Some(name) = refs.iter().find(|r| depends_on(&glyph, r, &target)) {
-            return Err(format!("`{name}` depends on `{target}`: that would be a cycle."));
+            return Err(format!(
+                "`{name}` depends on `{target}`: that would be a cycle."
+            ));
         }
         let value = ast::LetStmt::cast(node)
             .and_then(|l| l.value())
@@ -1211,7 +1229,11 @@ fn check_parses(s: &Session, message: &str) -> OpResult<()> {
 /// A raw-unit coordinate: whole units (plan 5, "Literal precision").
 fn coord(v: f64) -> String {
     let r = v.round();
-    if r == 0.0 { "0".to_string() } else { format!("{r}") }
+    if r == 0.0 {
+        "0".to_string()
+    } else {
+        format!("{r}")
+    }
 }
 
 fn point_text(p: Pt) -> String {
@@ -1222,7 +1244,11 @@ fn point_text(p: Pt) -> String {
 fn number(v: f64) -> String {
     let s = format!("{v:.3}");
     let s = s.trim_end_matches('0').trim_end_matches('.');
-    if s == "-0" { "0".to_string() } else { s.to_string() }
+    if s == "-0" {
+        "0".to_string()
+    } else {
+        s.to_string()
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -1238,7 +1264,17 @@ fn is_decl(kind: SyntaxKind) -> bool {
     is_segment(kind)
         || matches!(
             kind,
-            LET_STMT | PARAM | METRIC | GLYPH | INSTANCE | GROUP | KERN | PATH | ANCHOR | COMPONENT | FONT
+            LET_STMT
+                | PARAM
+                | METRIC
+                | GLYPH
+                | INSTANCE
+                | GROUP
+                | KERN
+                | PATH
+                | ANCHOR
+                | COMPONENT
+                | FONT
         )
 }
 
@@ -1307,8 +1343,10 @@ fn has_close(path: &ast::Path) -> bool {
 fn taken_names(root: &SyntaxNode, glyph: &ast::Glyph) -> HashSet<String> {
     let mut names = HashSet::new();
     for item in root.children() {
-        if matches!(item.kind(), SyntaxKind::LET_STMT | SyntaxKind::PARAM | SyntaxKind::METRIC)
-            && let Some(n) = name_of(&item)
+        if matches!(
+            item.kind(),
+            SyntaxKind::LET_STMT | SyntaxKind::PARAM | SyntaxKind::METRIC
+        ) && let Some(n) = name_of(&item)
         {
             names.insert(n);
         }
@@ -1370,14 +1408,23 @@ fn add_named_let(s: &mut Session, glyph: &str, name: &str, value: String) -> OpR
         let g = glyph_named(root, glyph)?;
         out = fresh_named(root, &g, name);
         let body = g.body().ok_or("This glyph has no body.")?;
-        Ok(vec![edit::insert_let(src, &body, &format!("let {out} = {value};"))])
+        Ok(vec![edit::insert_let(
+            src,
+            &body,
+            &format!("let {out} = {value};"),
+        )])
     })?;
     Ok(out)
 }
 
 /// `stroke`, `caps` and `joins` of `path`, as config text.
 fn copied_config(path: &ast::Path) -> String {
-    let src = path.syntax().ancestors().last().expect("a root").to_string();
+    let src = path
+        .syntax()
+        .ancestors()
+        .last()
+        .expect("a root")
+        .to_string();
     ["stroke", "caps", "joins"]
         .iter()
         .filter_map(|name| {
@@ -1411,9 +1458,8 @@ fn insert_path(src: &str, body: &ast::Body, name: &str, config: &str, start: &st
         .chars()
         .take_while(|c| c.is_whitespace())
         .collect();
-    let text = format!(
-        "\n\n{indent}path {name}{config} {{\n{indent}    start (at: {start})\n{indent}}}"
-    );
+    let text =
+        format!("\n\n{indent}path {name}{config} {{\n{indent}    start (at: {start})\n{indent}}}");
     TextEdit {
         range: range.end..range.end,
         text,
@@ -1437,13 +1483,19 @@ fn lets_only_used_by(root: &SyntaxNode, segment: &SyntaxNode) -> Vec<SyntaxNode>
     for ident in segment
         .descendants()
         .filter_map(ast::IdentExpr::cast)
-        .filter(|i| i.syntax().parent().is_some_and(|p| p.kind() == SyntaxKind::FIELD))
+        .filter(|i| {
+            i.syntax()
+                .parent()
+                .is_some_and(|p| p.kind() == SyntaxKind::FIELD)
+        })
     {
         let Some(token) = ident.token() else { continue };
         let Some(def @ Def::GlyphLocal { .. }) = index.resolve(&token) else {
             continue;
         };
-        let Some(decl) = index.decl(&def) else { continue };
+        let Some(decl) = index.decl(&def) else {
+            continue;
+        };
         let refs = index.references(root, &def);
         let outside = refs.iter().filter(|r| {
             let inside = seg.start <= r.start && r.end <= seg.end;
@@ -1493,7 +1545,12 @@ fn set_segment_kind(
         )
     };
     let base = to_name.unwrap_or_else(|| name.clone().unwrap_or_else(|| "seg".to_string()));
-    let control = |i: usize| controls.get(i).copied().ok_or("Missing control point positions.");
+    let control = |i: usize| {
+        controls
+            .get(i)
+            .copied()
+            .ok_or("Missing control point positions.")
+    };
 
     // New control `let`s first, then the segment rewrite. The lets go at
     // the end of the glyph's `let`s, before its paths, so the segment
@@ -1588,7 +1645,10 @@ fn rename(root: &SyntaxNode, node: &SyntaxNode, name: &str) -> OpResult<Vec<Text
                 glyph: *glyph,
                 name: name.to_string(),
             }) {
-                Some(format!("glyph {} already declares `{name}`.", glyph_name(*glyph)))
+                Some(format!(
+                    "glyph {} already declares `{name}`.",
+                    glyph_name(*glyph)
+                ))
             } else if taken(Def::TopLevel(name.to_string())) {
                 Some(format!("`{name}` would shadow a top-level declaration."))
             } else {
@@ -1916,7 +1976,10 @@ mod tests {
     fn relationship_tools_rewrite_one_let() {
         let stem1 = span_of("let stem1 = (1, 1);");
         let cases: Vec<(Relation, &str)> = vec![
-            (Relation::Coincident { b: "stem0".into() }, "let stem1 = stem0;"),
+            (
+                Relation::Coincident { b: "stem0".into() },
+                "let stem1 = stem0;",
+            ),
             (
                 Relation::Fraction {
                     a: "stem0".into(),
@@ -1983,7 +2046,9 @@ mod tests {
         };
         let (text, _) = run_on(SRC, &op);
         assert!(
-            text.ends_with("glyph B (advance: h) {\n    component (glyph: A, offset: (40, 0))\n}\n"),
+            text.ends_with(
+                "glyph B (advance: h) {\n    component (glyph: A, offset: (40, 0))\n}\n"
+            ),
             "{text}"
         );
         let own = Op::AddComponent {
@@ -2208,11 +2273,26 @@ mod tests {
             text.contains("group other (glyphs: [ e ])\ngroup tall (glyphs: [ V, e ])\n"),
             "{text}"
         );
-        assert_eq!(refused(KERNED, &group("round", &["V"])), "`round` is already declared.");
-        assert_eq!(refused(KERNED, &group("kern", &["V"])), "`kern` is a reserved word.");
-        assert_eq!(refused(KERNED, &group("g", &[])), "A group needs at least one glyph.");
-        assert_eq!(refused(KERNED, &group("g", &["z"])), "There is no glyph `z`.");
-        assert_eq!(refused(KERNED, &group("g", &["V", "V"])), "`V` is listed twice.");
+        assert_eq!(
+            refused(KERNED, &group("round", &["V"])),
+            "`round` is already declared."
+        );
+        assert_eq!(
+            refused(KERNED, &group("kern", &["V"])),
+            "`kern` is a reserved word."
+        );
+        assert_eq!(
+            refused(KERNED, &group("g", &[])),
+            "A group needs at least one glyph."
+        );
+        assert_eq!(
+            refused(KERNED, &group("g", &["z"])),
+            "There is no glyph `z`."
+        );
+        assert_eq!(
+            refused(KERNED, &group("g", &["V", "V"])),
+            "`V` is listed twice."
+        );
     }
 
     #[test]
@@ -2226,8 +2306,14 @@ mod tests {
         assert!(text.contains("group round (glyphs: [ o, c, e ])"), "{text}");
         let (text, _) = run_on(KERNED, &member("round", "o", false));
         assert!(text.contains("group round (glyphs: [ c ])"), "{text}");
-        assert_eq!(refused(KERNED, &member("other", "e", false)), "group other needs at least one glyph.");
-        assert_eq!(refused(KERNED, &member("round", "o", true)), "`o` is already in round.");
+        assert_eq!(
+            refused(KERNED, &member("other", "e", false)),
+            "group other needs at least one glyph."
+        );
+        assert_eq!(
+            refused(KERNED, &member("round", "o", true)),
+            "`o` is already in round."
+        );
         // `other` becomes left-used; `e` then can't join `round` too.
         let (used, _) = run_on(
             KERNED,
@@ -2258,7 +2344,10 @@ mod tests {
             text.contains("group other (glyphs: [ e ])\ngroup tall (glyphs: [ V, e ])\n"),
             "{text}"
         );
-        assert!(text.ends_with("kern (left: tall, right: round, by: 5)\n"), "{text}");
+        assert!(
+            text.ends_with("kern (left: tall, right: round, by: 5)\n"),
+            "{text}"
+        );
         assert_eq!(created.map(|c| c.name), Some("1".into()));
         // One op: its steps compose into one undo step.
         let EditResult::Ok { steps, .. } = run(KERNED, 1, &op) else {
@@ -2329,18 +2418,28 @@ glyph g (advance: glyph.bbox.width) {
 }
 ";
         let (text, _) = run_on(src, &new_glyphs(&[("x", 0x78)]));
-        assert!(text.ends_with("glyph x (codepoint: 'x', advance: w) {
+        assert!(
+            text.ends_with(
+                "glyph x (codepoint: 'x', advance: w) {
 }
-"), "{text}");
+"
+            ),
+            "{text}"
+        );
         // None at all: half an em.
         let bare = "font (name: \"T\", em: 1200)
 glyph d (rsb: 0) {
 }
 ";
         let (text, _) = run_on(bare, &new_glyphs(&[("x", 0x78)]));
-        assert!(text.ends_with("glyph x (codepoint: 'x', advance: 600) {
+        assert!(
+            text.ends_with(
+                "glyph x (codepoint: 'x', advance: 600) {
 }
-"), "{text}");
+"
+            ),
+            "{text}"
+        );
     }
 
     #[test]
@@ -2348,7 +2447,10 @@ glyph d (rsb: 0) {
         let src = "glyph A (codepoint: 'A', rsb: 0) {\n}\n";
         let cases = [
             (new_glyphs(&[("A", 0x41)]), "`A` is already declared."),
-            (new_glyphs(&[("Alpha", 0x41)]), "U+0041 already belongs to `A`."),
+            (
+                new_glyphs(&[("Alpha", 0x41)]),
+                "U+0041 already belongs to `A`.",
+            ),
             (
                 new_glyphs(&[("b", 0x62), ("b", 0x63)]),
                 "`b` is already declared.",
@@ -2402,6 +2504,9 @@ glyph d (rsb: 0) {
             em: true,
             font_em: 1000.0,
         };
-        assert_eq!(refused(&text, &again), "`by` has no raw literal to convert.");
+        assert_eq!(
+            refused(&text, &again),
+            "`by` has no raw literal to convert."
+        );
     }
 }

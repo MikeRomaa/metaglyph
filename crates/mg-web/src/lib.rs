@@ -17,8 +17,8 @@ mod view;
 pub use build::build;
 pub use doc::{DiagnosticInfo, DocState, FontInfo, Model, analyze, check};
 pub use ops::{Change, EditResult, Op};
-pub use view::{FontData, GlyphScene, font_data, format_num, glyph_scene};
 use std::rc::Rc;
+pub use view::{FontData, GlyphScene, font_data, format_num, glyph_scene};
 
 use wasm_bindgen::prelude::*;
 

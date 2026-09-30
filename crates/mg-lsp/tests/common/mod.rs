@@ -204,7 +204,7 @@ pub fn code(diagnostic: &lsp_types::Diagnostic) -> &str {
     }
 }
 
-pub const SAMPLE: &str = include_str!("../../../../samples/metaglyph-sans.mg");
+pub const SAMPLE: &str = include_str!("../../../../tests/conformance.mg");
 
 /// The position of the `n`th (0-based) occurrence of `needle` in `text`,
 /// plus `into` bytes, for ASCII `text` (so bytes and UTF-16 units agree).

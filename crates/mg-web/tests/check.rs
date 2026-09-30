@@ -1,24 +1,25 @@
 use mg_web::check;
 
 fn sample(name: &str) -> String {
-    std::fs::read_to_string(format!("{}/../../samples/{name}", env!("CARGO_MANIFEST_DIR")))
-        .expect("sample exists")
+    std::fs::read_to_string(format!(
+        "{}/../../samples/{name}",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("sample exists")
 }
 
 #[test]
-fn samples_parse_and_lower() {
-    for name in ["a22x-mono.mg", "metaglyph-sans.mg"] {
-        let state = check(&sample(name), 7);
-        assert_eq!(state.version, 7);
-        assert!(state.parse_ok, "{name}");
-        assert!(state.glyph_count > 0);
-        assert!(!state.instances.is_empty());
-    }
+fn sample_parses_and_lowers() {
+    let state = check(&sample("metaglyph-sans.mg"), 7);
+    assert_eq!(state.version, 7);
+    assert!(state.parse_ok);
+    assert_eq!(state.glyph_count, 36);
+    assert!(!state.instances.is_empty());
 }
 
 #[test]
-fn a22x_checks_clean() {
-    let state = check(&sample("a22x-mono.mg"), 0);
+fn sample_checks_clean() {
+    let state = check(&sample("metaglyph-sans.mg"), 0);
     assert!(state.diagnostics.is_empty(), "{:?}", state.diagnostics);
 }
 
@@ -27,19 +28,23 @@ fn diagnostics_name_their_instances() {
     // metaglyph-sans has several instances; evaluation diagnostics are
     // tagged with the ones they fired in.
     let state = check(&sample("metaglyph-sans.mg"), 0);
-    for d in state.diagnostics.iter().filter(|d| d.code.starts_with("MG06")) {
+    for d in state
+        .diagnostics
+        .iter()
+        .filter(|d| d.code.starts_with("MG06"))
+    {
         assert!(d.message.ends_with(']'), "{}", d.message);
     }
 }
 
 #[test]
-fn a22x_font_info() {
-    let state = check(&sample("a22x-mono.mg"), 0);
+fn sample_font_info() {
+    let state = check(&sample("metaglyph-sans.mg"), 0);
     let font = state.font.expect("font info");
-    assert_eq!(font.name.as_deref(), Some("A220 Mono"));
-    assert_eq!(font.version, "2.000");
+    assert_eq!(font.name.as_deref(), Some("Metaglyph Sans"));
+    assert_eq!(font.version, "1.000");
     assert_eq!(font.em, Some(1000));
-    assert_eq!(state.instances, ["Regular"]);
+    assert_eq!(state.instances, ["Light", "Regular", "Bold"]);
 }
 
 #[test]
