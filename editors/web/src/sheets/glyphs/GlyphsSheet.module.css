@@ -162,6 +162,17 @@
     color: var(--faint);
 }
 
+.find {
+    padding: 0.4375rem 0.75rem;
+    border-bottom: 1px solid var(--rule);
+}
+
+.findInput {
+    width: 100%;
+    padding: 0.1875rem 0.3125rem;
+    font: 400 0.75rem var(--font-mono);
+}
+
 .set {
     display: flex;
     flex-direction: column;

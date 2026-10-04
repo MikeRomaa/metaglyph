@@ -7,6 +7,7 @@ import {
     sampleChar,
     verticalExtent,
 } from "../../font/lookup.ts";
+import { loadNames, type Names, search } from "../../font/unicode.ts";
 import { useStore } from "../../state/store.ts";
 import { GlyphThumb } from "../../ui/GlyphThumb.tsx";
 import { Centre, Empty, LeftColumn, Section, sheet } from "../../ui/Sheet.tsx";
@@ -21,7 +22,7 @@ interface Cell {
     glyph?: GlyphInfo;
 }
 
-function cellsFor(font: FontData, charset: number): Cell[] {
+function cellsFor(font: FontData, charset: number, found: number[]): Cell[] {
     if (charset === 0) {
         return font.glyphs.map((glyph) => ({
             key: glyph.name,
@@ -30,7 +31,8 @@ function cellsFor(font: FontData, charset: number): Cell[] {
         }));
     }
     const map = glyphsByCodepoint(font);
-    return CHARSETS[charset - 1].codepoints.map((cp) => ({
+    const cps = charset === -1 ? found : CHARSETS[charset - 1].codepoints;
+    return cps.map((cp) => ({
         key: hex(cp),
         cp,
         glyph: map.get(cp),
@@ -40,6 +42,9 @@ function cellsFor(font: FontData, charset: number): Cell[] {
 export function GlyphsSheet() {
     const font = useStore((s) => s.font);
     const charset = useStore((s) => s.charset);
+    const found = useStore((s) => s.found);
+    const query = useStore((s) => s.search);
+    const names = useNames(charset === -1);
     const picked = useStore((s) => s.picked);
     const setPicked = useStore((s) => s.setPicked);
     const setGlyph = useStore((s) => s.setGlyph);
@@ -70,7 +75,7 @@ export function GlyphsSheet() {
 
     // The grid's rows are all one height and its columns all one width, so
     // the cells on screen follow from its scroll position.
-    const cellCount = font ? cellsFor(font, charset).length : 0;
+    const cellCount = font ? cellsFor(font, charset, found).length : 0;
     useEffect(() => {
         const grid = gridRef.current;
         if (!grid) return;
@@ -129,12 +134,17 @@ export function GlyphsSheet() {
         );
     }
 
-    const cells = cellsFor(font, charset);
+    const cells = cellsFor(font, charset, found);
     const [descender, ascender] = verticalExtent(font);
     const missing = cells.filter((c) => !c.glyph && c.cp !== undefined);
     const inFont = cells.length - missing.length;
     const pickedSet = new Set(picked);
-    const setName = charset === 0 ? "All glyphs" : CHARSETS[charset - 1].name;
+    const setName =
+        charset === 0
+            ? "All glyphs"
+            : charset === -1
+              ? `Search · ${query.trim() || "…"}`
+              : CHARSETS[charset - 1].name;
 
     const toggle = (cell: Cell, range: boolean) => {
         if (cell.glyph) {
@@ -164,10 +174,12 @@ export function GlyphsSheet() {
             <span className={sheet.view}>View 01 · Charset</span>
             <span className={styles.setName}>{setName}</span>
             <span className={styles.counts} title={`${inFont} in font`}>
-                {charset > 0 ? `${missing.length} missing` : `${inFont} glyphs`}
+                {charset !== 0
+                    ? `${missing.length} missing`
+                    : `${inFont} glyphs`}
             </span>
             <span className={sheet.spacer} />
-            {charset > 0 && (
+            {charset !== 0 && (
                 <>
                     <button
                         type="button"
@@ -208,11 +220,23 @@ export function GlyphsSheet() {
     return (
         <>
             <LeftColumn>
+                <Find />
                 <Charsets font={font} />
                 <Legend />
             </LeftColumn>
             <Centre toolbar={toolbar}>
-                <div ref={gridRef} className={styles.grid}>
+                {charset === -1 && cells.length === 0 && (
+                    <Empty>
+                        {query.trim()
+                            ? `Nothing matches “${query.trim()}”.`
+                            : "Type a name (“arrow”, “dagger”), a codepoint (U+2192), or paste characters."}
+                    </Empty>
+                )}
+                <div
+                    ref={gridRef}
+                    className={styles.grid}
+                    hidden={cells.length === 0}
+                >
                     {cells.map((cell, i) => {
                         const isPicked =
                             cell.cp !== undefined && pickedSet.has(cell.cp);
@@ -227,11 +251,7 @@ export function GlyphsSheet() {
                                 key={cell.key}
                                 className={styles.cell}
                                 data-state={state}
-                                title={
-                                    cell.glyph
-                                        ? `${cell.glyph.name}${cell.cp !== undefined ? ` · U+${hex(cell.cp)}` : ""}`
-                                        : `U+${hex(cell.cp as number)}`
-                                }
+                                title={cellTitle(cell, names)}
                                 onPointerDown={(e) => {
                                     if (e.button !== 0 || e.shiftKey) return;
                                     if (charset === 0) return;
@@ -309,7 +329,7 @@ export function GlyphsSheet() {
                         }}
                     />
                 )}
-                {charset > 0 && (
+                {charset !== 0 && cells.length > 0 && (
                     <Coverage
                         name={setName}
                         cells={cells}
@@ -321,6 +341,59 @@ export function GlyphsSheet() {
                 )}
             </Centre>
         </>
+    );
+}
+
+function cellTitle(cell: Cell, names: Names | null): string {
+    const cp = cell.cp === undefined ? "" : `U+${hex(cell.cp)}`;
+    const name = cell.cp === undefined ? undefined : names?.get(cell.cp);
+    return [cell.glyph?.name, cp, name?.toLowerCase()]
+        .filter(Boolean)
+        .join(" · ");
+}
+
+/** The Unicode name table once `wanted` (it loads on first use, and stays
+ * for the session), for cell titles. */
+function useNames(wanted: boolean): Names | null {
+    const [names, setNames] = useState<Names | null>(null);
+    useEffect(() => {
+        if (wanted && !names) void loadNames().then(setNames);
+    }, [wanted, names]);
+    return names;
+}
+
+/** Finds any character: by name, codepoint, or pasting it. */
+function Find() {
+    const query = useStore((s) => s.search);
+    const charset = useStore((s) => s.charset);
+    const setSearch = useStore((s) => s.setSearch);
+    const latest = useRef(query);
+    const run = (q: string) => {
+        latest.current = q;
+        // Shown at once; the results follow when the names have loaded.
+        setSearch(q, useStore.getState().found);
+        void loadNames().then((names) => {
+            if (latest.current === q) setSearch(q, search(q, names));
+        });
+    };
+    return (
+        <Section title="Find a character" flush>
+            <div className={styles.find}>
+                <input
+                    type="search"
+                    className={styles.findInput}
+                    value={query}
+                    placeholder="name, U+hex, or paste"
+                    aria-label="Find a character by name, codepoint, or the character itself"
+                    spellCheck={false}
+                    onFocus={() => {
+                        void loadNames();
+                        if (charset !== -1) run(query);
+                    }}
+                    onChange={(e) => run(e.target.value)}
+                />
+            </div>
+        </Section>
     );
 }
 

@@ -129,8 +129,12 @@ interface Store {
     /** The selected point's drivers, for the DRIVERS panel. */
     drivers: DragInfo | null;
     // Glyphs sheet.
+    /** 0 is all glyphs, 1… the character sets, −1 the search results. */
     charset: number;
     picked: number[];
+    /** The character search's query, and the codepoints it found. */
+    search: string;
+    found: number[];
     /** Glyphs added from the 01 sheet this session, tagged NEW. */
     added: string[];
     // Spacing sheet.
@@ -164,6 +168,8 @@ interface Store {
     setDrivers(drivers: DragInfo | null): void;
     setCharset(charset: number): void;
     setPicked(picked: number[]): void;
+    /** Shows search results; picks made in earlier results are kept. */
+    setSearch(search: string, found: number[]): void;
     markAdded(names: string[]): void;
     setSpacingText(text: string): void;
     setKernContext(text: string): void;
@@ -222,6 +228,8 @@ export const useStore = create<Store>()((set) => ({
     tool: "V",
     charset: 0,
     picked: [],
+    search: "",
+    found: [],
     added: [],
     spacingText: "",
     kernContext: "nn<pair>nn · HH<pair>HH",
@@ -338,6 +346,13 @@ export const useStore = create<Store>()((set) => ({
     setDrivers: (drivers) => set({ drivers }),
     setCharset: (charset) => set({ charset, picked: [] }),
     setPicked: (picked) => set({ picked }),
+    setSearch: (search, found) =>
+        set((s) => ({
+            search,
+            found,
+            charset: -1,
+            picked: s.charset === -1 ? s.picked : [],
+        })),
     markAdded: (names) => set((s) => ({ added: [...s.added, ...names] })),
     setSpacingText: (spacingText) => set({ spacingText }),
     setKernContext: (kernContext) => set({ kernContext }),
