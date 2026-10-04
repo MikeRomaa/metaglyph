@@ -201,6 +201,7 @@ fn glyph_records(
     let mut records = vec![GlyphRecord {
         name: ".notdef".to_string(),
         codepoints: Vec::new(),
+        variations: Vec::new(),
         advance: (em as f64 / 2.0).round() as i64,
         glyph: PreparedGlyph::default(),
     }];
@@ -218,6 +219,7 @@ fn glyph_records(
         records.push(GlyphRecord {
             name: name.clone(),
             codepoints,
+            variations: decl.variations.clone(),
             advance: advance.round() as i64,
             glyph: prepared.swap_remove(name).unwrap_or_default(),
         });
@@ -298,10 +300,108 @@ fn limit_diagnostic(
     }
 }
 
-/// Spec §10.6's codepoint rules, which hold for every instance alike: a
-/// codepoint on more than one glyph, a surrogate, or a noncharacter is
-/// an error.
+fn unencodable(cp: u32) -> Option<&'static str> {
+    if (0xD800..=0xDFFF).contains(&cp) {
+        Some("a surrogate")
+    } else if (0xFDD0..=0xFDEF).contains(&cp) || cp & 0xFFFE == 0xFFFE {
+        Some("a noncharacter")
+    } else {
+        None
+    }
+}
+
+/// Spec §10.6's codepoint and variation-sequence rules, which hold for
+/// every instance alike: a codepoint or sequence on more than one glyph,
+/// or a surrogate or noncharacter, is an error; a VS1–VS16 sequence
+/// Unicode does not standardize, or one whose base no glyph encodes, is a
+/// warning.
 pub fn check_codepoints(hir: &Hir) -> Vec<Diagnostic> {
+    let mut diagnostics = check_single_codepoints(hir);
+    diagnostics.extend(check_variations(hir));
+    diagnostics
+}
+
+fn check_variations(hir: &Hir) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+    let encoded: std::collections::HashSet<u32> = hir
+        .glyphs
+        .iter()
+        .filter(|((_, set), _)| set.is_none())
+        .flat_map(|(_, decl)| decl.codepoints.iter().copied())
+        .collect();
+    let mut first_use: IndexMap<(u32, u32), (&str, Range<usize>)> = IndexMap::new();
+
+    for ((name, glyphset), decl) in &hir.glyphs {
+        if glyphset.is_some() {
+            continue;
+        }
+        let Some(expr) = &decl.variation_expr else {
+            continue;
+        };
+        let span: Range<usize> = expr.syntax().text_range().into();
+        let mut seen_here = Vec::new();
+        for &(base, selector) in &decl.variations {
+            if seen_here.contains(&(base, selector)) {
+                continue;
+            }
+            seen_here.push((base, selector));
+            let sequence = format!("<U+{base:04X}, U+{selector:04X}>");
+
+            if let Some(kind) = unencodable(base) {
+                diagnostics.push(Diagnostic::error(
+                    codes::UNENCODABLE_CODEPOINT,
+                    format!("the base of {sequence} is {kind}, which `cmap` cannot map"),
+                    Label::new(span.clone(), "in this sequence"),
+                ));
+                continue;
+            }
+            if let Some((other, other_span)) = first_use.get(&(base, selector)) {
+                diagnostics.push(
+                    Diagnostic::error(
+                        codes::DUPLICATE_VARIATION_SEQUENCE,
+                        format!("{sequence} is mapped by both `{other}` and `{name}`"),
+                        Label::new(span.clone(), format!("`{name}` maps it here")),
+                    )
+                    .with_secondary(Label::new(
+                        other_span.clone(),
+                        format!("`{other}` maps it here"),
+                    ))
+                    .with_help("a sequence maps to one glyph; remove it from one of them"),
+                );
+                continue;
+            }
+            first_use.insert((base, selector), (name.as_str(), span.clone()));
+
+            if selector <= 0xFE0F
+                && crate::sequences::STANDARDIZED
+                    .binary_search(&(base, selector))
+                    .is_err()
+            {
+                diagnostics.push(
+                    Diagnostic::warning(
+                        codes::UNSTANDARDIZED_VARIATION_SEQUENCE,
+                        format!("{sequence} is not a standardized variation sequence in Unicode 16.0"),
+                        Label::new(span.clone(), "not standardized"),
+                    )
+                    .with_help("text using it may not reach this glyph in other fonts or tools"),
+                );
+            }
+            if !encoded.contains(&base) {
+                diagnostics.push(
+                    Diagnostic::warning(
+                        codes::VARIATION_BASE_NOT_ENCODED,
+                        format!("no glyph has `codepoint: U+{base:04X}`, the base of {sequence}"),
+                        Label::new(span.clone(), "base not encoded"),
+                    )
+                    .with_help("text with the base alone falls back to another font"),
+                );
+            }
+        }
+    }
+    diagnostics
+}
+
+fn check_single_codepoints(hir: &Hir) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     let mut first_use: IndexMap<u32, (&str, Range<usize>)> = IndexMap::new();
 
@@ -320,14 +420,7 @@ pub fn check_codepoints(hir: &Hir) -> Vec<Diagnostic> {
             }
             seen_here.push(cp);
 
-            let kind = if (0xD800..=0xDFFF).contains(&cp) {
-                Some("a surrogate")
-            } else if (0xFDD0..=0xFDEF).contains(&cp) || cp & 0xFFFE == 0xFFFE {
-                Some("a noncharacter")
-            } else {
-                None
-            };
-            if let Some(kind) = kind {
+            if let Some(kind) = unencodable(cp) {
                 diagnostics.push(Diagnostic::error(
                     codes::UNENCODABLE_CODEPOINT,
                     format!("U+{cp:04X} is {kind}, which `cmap` cannot map"),

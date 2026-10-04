@@ -165,6 +165,15 @@ pub const GLYPH_FIELDS: &[FieldSchema] = &[
         ),
         &["glyphset"],
     ),
+    with_mutex(
+        field(
+            "variation",
+            false,
+            "pair | pair*",
+            "Variation sequences, `(base, selector)`: the selector is VS1–VS256 (U+FE00–U+FE0F, U+E0100–U+E01EF). A constant expression. Illegal with `glyphset`.",
+        ),
+        &["glyphset"],
+    ),
     field(
         "advance",
         false,
@@ -190,7 +199,7 @@ pub const GLYPH_FIELDS: &[FieldSchema] = &[
             "identifier",
             "Makes this the alternate, in that set, of the default glyph with the same name.",
         ),
-        &["codepoint"],
+        &["codepoint", "variation"],
     ),
 ];
 
@@ -562,4 +571,9 @@ pub fn collect_fields(
     }
 
     seen
+}
+
+/// VS1–VS16 or VS17–VS256 (spec §5.6).
+pub fn is_variation_selector(cp: u32) -> bool {
+    (0xFE00..=0xFE0F).contains(&cp) || (0xE0100..=0xE01EF).contains(&cp)
 }

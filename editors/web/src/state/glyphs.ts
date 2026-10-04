@@ -5,7 +5,7 @@
 
 import { AGLFN } from "../data/aglfn.ts";
 import type { FontData } from "../engine/types.ts";
-import { hex } from "../font/lookup.ts";
+import { type CharId, hex, unpack, vsNumber } from "../font/chars.ts";
 import { performEdit } from "./actions.ts";
 
 /** The language's reserved words (spec §5.4). */
@@ -34,15 +34,29 @@ const RESERVED = new Set([
     "close",
 ]);
 
-/** The default name for `cp`: its AGLFN name, else `uniXXXX` (`uXXXXX`
- * past the BMP), as the AGL specification forms them. */
-export function glyphName(cp: number): string {
-    return AGLFN.get(cp) ?? (cp > 0xffff ? `u${hex(cp)}` : `uni${hex(cp)}`);
+/** The default name for `id`: its AGLFN name, else `uniXXXX` (`uXXXXX`
+ * past the BMP), as the AGL specification forms them. A variation
+ * sequence is its base's name plus `_vsN` (plan 5: `zero_vs1`). */
+export function glyphName(id: CharId): string {
+    const { base, selector } = unpack(id);
+    const name =
+        AGLFN.get(base) ??
+        (base > 0xffff ? `u${hex(base)}` : `uni${hex(base)}`);
+    return selector === undefined ? name : `${name}_vs${vsNumber(selector)}`;
 }
 
 export interface NewGlyph {
     codepoint: number;
+    /** With a selector, the glyph is for the sequence `codepoint` +
+     * `selector` (spec §5.6). */
+    selector?: number;
     name: string;
+}
+
+/** A picked `id` as a new glyph with its default name. */
+export function newGlyph(id: CharId): NewGlyph {
+    const { base, selector } = unpack(id);
+    return { codepoint: base, selector, name: glyphName(id) };
 }
 
 /** Why each name can't be used, by row (`null` when it can): not an
@@ -95,7 +109,7 @@ export function defaultAdvance(font: FontData | null): string {
 
 /** How a new glyph's declaration reads (mirrors the engine's text). */
 export function glyphDecl(
-    { codepoint, name }: NewGlyph,
+    { codepoint, selector, name }: NewGlyph,
     advance: string,
 ): string {
     const c = String.fromCodePoint(codepoint);
@@ -103,7 +117,11 @@ export function glyphDecl(
         /^[\p{L}\p{N}\p{P}\p{S}]$/u.test(c) && !"'\\".includes(c)
             ? `'${c}'`
             : `U+${hex(codepoint)}`;
-    return `glyph ${name} (codepoint: ${literal}, advance: ${advance}) {\n}`;
+    const maps =
+        selector === undefined
+            ? `codepoint: ${literal}`
+            : `variation: (${literal}, U+${hex(selector)})`;
+    return `glyph ${name} (${maps}, advance: ${advance}) {\n}`;
 }
 
 /** Inserts `rows` as new glyphs: one edit, one undo step. */

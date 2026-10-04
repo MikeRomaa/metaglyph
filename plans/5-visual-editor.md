@@ -195,7 +195,7 @@ The spec §12.2 rules are enforced before the edit: a glyph may be in at most on
 
 **Font info form.** `set_field` / `remove_field` on the `font (…)` directive.
 
-**New glyph.** `glyph <name> (codepoint: '<c>', advance: <a>) {\n}` via `insert_top_level`, where `<a>` is the font's most common `advance` declaration (first on a tie; half an em when no glyph declares one). Not `rsb: 0`: `rsb` and `lsb` measure from the ink, and an empty glyph has none (MG0608), which would also block export; the same goes for an `advance` reading `glyph.*`. Printable characters use a char literal, like `samples/a22x-mono.mg`; other characters use `U+XXXX`. The name comes from the AGLFN (bundled), with `uniXXXX` as the fallback, and is editable before insert. Batch add from a Unicode block (bundled block table) inserts one glyph per missing codepoint in a single transaction.
+**New glyph.** `glyph <name> (codepoint: '<c>', advance: <a>) {\n}` via `insert_top_level`, where `<a>` is the font's most common `advance` declaration (first on a tie; half an em when no glyph declares one). Not `rsb: 0`: `rsb` and `lsb` measure from the ink, and an empty glyph has none (MG0608), which would also block export; the same goes for an `advance` reading `glyph.*`. Printable characters use a char literal, like `samples/a22x-mono.mg`; other characters use `U+XXXX`. The name comes from the AGLFN (bundled), with `uniXXXX` as the fallback, and is editable before insert. Batch add from a Unicode block (bundled block table) inserts one glyph per missing codepoint in a single transaction. A variation sequence (spec §5.6) gets `glyph <name> (variation: ('<c>', U+FE00), advance: <a>) {\n}` instead, named `<base name>_vsN` (`zero_vs1`; `N` is the selector's number, VS1–VS256).
 
 ---
 
@@ -220,7 +220,7 @@ All views share one worker-evaluated state for the **active instance**.
 ### 2.3 Glyph grid
 - Tiles in declaration order (the spec §10.6 glyph order), each rendered from the evaluated outline. Each tile shows its name and codepoint, plus badges for errors, "empty" (no ink), and components.
 - Filter by name or codepoint, and a toggle for "errors only".
-- "+" opens the new-glyph dialog (single codepoint or Unicode block).
+- "+" opens the new-glyph dialog (single codepoint, variation sequence, or Unicode block).
 - Double-click opens the glyph editor.
 
 ### 2.4 Glyph editor

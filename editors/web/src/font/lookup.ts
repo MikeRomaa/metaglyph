@@ -7,6 +7,9 @@ import type {
     Span,
 } from "../engine/types.ts";
 import type { Selection } from "../state/store.ts";
+import { type CharId, sequenceId, unpack } from "./chars.ts";
+
+export { hex } from "./chars.ts";
 
 /** A number as the design prints it: at most one decimal place. */
 export function fmt(n: number | undefined): string {
@@ -17,13 +20,12 @@ export function fmt(n: number | undefined): string {
 
 /** A character the font lacks, as its placeholder shows it: space as
  * `␣`, and anything with an emoji form held to text presentation (VS15),
- * so a fallback never turns it into a colour emoji. */
-export function sampleChar(cp: number): string {
-    return cp === 0x20 ? "␣" : `${String.fromCodePoint(cp)}︎`;
-}
-
-export function hex(cp: number): string {
-    return cp.toString(16).toUpperCase().padStart(4, "0");
+ * so a fallback never turns it into a colour emoji. A variation sequence
+ * keeps its own selector. */
+export function sampleChar(id: CharId): string {
+    const { base, selector } = unpack(id);
+    if (selector !== undefined) return String.fromCodePoint(base, selector);
+    return base === 0x20 ? "␣" : `${String.fromCodePoint(base)}︎`;
 }
 
 /** A metric's evaluated `y`, or `fallback`. */
@@ -47,12 +49,16 @@ export function spanContains(span: Span, offset: number): boolean {
     return span[0] <= offset && offset <= span[1];
 }
 
-/** Codepoint → glyph name. */
-export function glyphsByCodepoint(font: FontData): Map<number, GlyphInfo> {
-    const map = new Map<number, GlyphInfo>();
+/** Codepoint, or packed variation sequence (see `chars.ts`) → glyph. */
+export function glyphsByCodepoint(font: FontData): Map<CharId, GlyphInfo> {
+    const map = new Map<CharId, GlyphInfo>();
     for (const glyph of font.glyphs) {
-        for (const cp of glyph.codepoints) {
-            if (!map.has(cp)) map.set(cp, glyph);
+        const ids = [
+            ...glyph.codepoints,
+            ...glyph.variations.map(([b, s]) => sequenceId(b, s)),
+        ];
+        for (const id of ids) {
+            if (!map.has(id)) map.set(id, glyph);
         }
     }
     return map;

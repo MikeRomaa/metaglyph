@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import type { FontData, GlyphInfo } from "../../engine/types.ts";
 import { CHARSETS } from "../../font/blocks.ts";
+import { charCode, charLabel, shortLabel } from "../../font/chars.ts";
 import {
     glyphsByCodepoint,
-    hex,
     sampleChar,
     verticalExtent,
 } from "../../font/lookup.ts";
-import { loadNames, type Names, search } from "../../font/unicode.ts";
+import { describe, loadNames, type Names, search } from "../../font/unicode.ts";
 import { useStore } from "../../state/store.ts";
 import { GlyphThumb } from "../../ui/GlyphThumb.tsx";
 import { Centre, Empty, LeftColumn, Section, sheet } from "../../ui/Sheet.tsx";
@@ -33,7 +33,7 @@ function cellsFor(font: FontData, charset: number, found: number[]): Cell[] {
     const map = glyphsByCodepoint(font);
     const cps = charset === -1 ? found : CHARSETS[charset - 1].codepoints;
     return cps.map((cp) => ({
-        key: hex(cp),
+        key: charLabel(cp),
         cp,
         glyph: map.get(cp),
     }));
@@ -303,7 +303,7 @@ export function GlyphsSheet() {
                                     <span>
                                         {charset === 0
                                             ? cell.glyph?.name
-                                            : hex(cell.cp as number)}
+                                            : shortLabel(cell.cp as number)}
                                     </span>
                                     <Tag
                                         cell={cell}
@@ -345,11 +345,10 @@ export function GlyphsSheet() {
 }
 
 function cellTitle(cell: Cell, names: Names | null): string {
-    const cp = cell.cp === undefined ? "" : `U+${hex(cell.cp)}`;
-    const name = cell.cp === undefined ? undefined : names?.get(cell.cp);
-    return [cell.glyph?.name, cp, name?.toLowerCase()]
-        .filter(Boolean)
-        .join(" · ");
+    const cp = cell.cp === undefined ? "" : charCode(cell.cp);
+    const name =
+        cell.cp === undefined || !names ? undefined : describe(cell.cp, names);
+    return [cell.glyph?.name, cp, name].filter(Boolean).join(" · ");
 }
 
 /** The Unicode name table once `wanted` (it loads on first use, and stays
@@ -383,7 +382,7 @@ function Find() {
                     type="search"
                     className={styles.findInput}
                     value={query}
-                    placeholder="name, U+hex, or paste"
+                    placeholder="name, U+hex (U+0030 U+FE00), or paste"
                     aria-label="Find a character by name, codepoint, or the character itself"
                     spellCheck={false}
                     onFocus={() => {

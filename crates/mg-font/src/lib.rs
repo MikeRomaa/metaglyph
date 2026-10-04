@@ -11,6 +11,7 @@ pub mod build;
 pub mod kern;
 pub mod outline;
 pub mod prepare;
+pub mod sequences;
 
 pub use build::{BuildOptions, BuiltFont, build_fonts};
 pub use prepare::{PreparedComponent, PreparedGlyph, prepare_font};

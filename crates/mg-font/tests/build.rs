@@ -425,3 +425,107 @@ glyph x (advance: w) {{}}
     assert_eq!(error.code, codes::ADVANCE_OUT_OF_RANGE);
     assert_eq!(error.note, ["in instance `Broken`"]);
 }
+
+const ZERO: &str = r#"
+glyph zero (codepoint: '0', advance: 600) {
+  path bowl (stroke: 80) {
+    start (at: (300, 40))
+    line (to: (300, 660))
+  }
+}
+"#;
+
+/// The font's `cmap` format 14 subtable and its encoding record.
+fn format_14<'a>(
+    font: &FontRef<'a>,
+) -> (
+    (read_fonts::tables::cmap::PlatformId, u16),
+    read_fonts::tables::cmap::Cmap14<'a>,
+) {
+    use read_fonts::tables::cmap::CmapSubtable;
+    let cmap = font.cmap().unwrap();
+    cmap.encoding_records()
+        .iter()
+        .find_map(|r| match r.subtable(cmap.offset_data()).ok()? {
+            CmapSubtable::Format14(t) => Some(((r.platform_id(), r.encoding_id()), t)),
+            _ => None,
+        })
+        .expect("a format 14 subtable")
+}
+
+#[test]
+fn variation_sequences_build_cmap_format_14() {
+    use read_fonts::tables::cmap::{MapVariant, PlatformId};
+    let fonts = build_ok(&format!(
+        "{PREAMBLE}{GLYPHS}{ZERO}
+glyph zero_vs1 (variation: ('0', U+FE00), advance: 600) {{}}
+glyph zero_text (variation: ('0', U+FE0E), advance: 600) {{}}
+glyph I_text (codepoint: U+2139, variation: (U+2139, U+FE0E), advance: 200) {{}}
+"
+    ));
+    let font = font_named(&fonts, "Regular");
+    let gid = |name: &str| {
+        let order = ["I", "O", "Iacute", "Irot", "zero", "zero_vs1", "zero_text", "I_text"];
+        GlyphId::new(1 + order.iter().position(|n| *n == name).unwrap() as u32)
+    };
+
+    let (record, cmap14) = format_14(&font);
+    assert_eq!(record, (PlatformId::Unicode, 5));
+    assert_eq!(cmap14.map_variant(0x30u32, 0xFE00u32), Some(MapVariant::Variant(gid("zero_vs1"))));
+    assert_eq!(cmap14.map_variant(0x30u32, 0xFE0Eu32), Some(MapVariant::Variant(gid("zero_text"))));
+    // A sequence on the glyph its base encodes is a default-UVS mapping.
+    assert_eq!(cmap14.map_variant(0x2139u32, 0xFE0Eu32), Some(MapVariant::UseDefault));
+    assert_eq!(cmap14.map_variant(0x31u32, 0xFE00u32), None);
+    // Selector records are sorted.
+    let selectors: Vec<u32> = cmap14.var_selector().iter().map(|r| r.var_selector().to_u32()).collect();
+    assert_eq!(selectors, vec![0xFE00, 0xFE0E]);
+
+    // The splice left the other subtables intact.
+    let cmap = font.cmap().unwrap();
+    assert_eq!(cmap.map_codepoint('0'), Some(gid("zero")));
+    assert_eq!(cmap.map_codepoint('\u{1F600}'), Some(gid("Irot")));
+    let records: Vec<(u16, u16)> = cmap
+        .encoding_records()
+        .iter()
+        .map(|r| (r.platform_id() as u16, r.encoding_id()))
+        .collect();
+    assert_eq!(records, vec![(0, 3), (0, 4), (0, 5), (3, 1), (3, 10)]);
+}
+
+#[test]
+fn no_variation_sequences_means_no_format_14() {
+    let fonts = build_ok(&format!("{PREAMBLE}{GLYPHS}"));
+    let cmap = font_named(&fonts, "Regular").cmap().unwrap();
+    assert!(cmap.encoding_records().iter().all(|r| r.encoding_id() != 5 || r.platform_id() as u16 != 0));
+}
+
+#[test]
+fn a_variation_sequence_on_two_glyphs_is_an_error() {
+    let error = only_error(&format!(
+        "{PREAMBLE}{ZERO}
+glyph a (variation: ('0', U+FE00), advance: 600) {{}}
+glyph b (variation: [('0', U+FE00)], advance: 600) {{}}
+"
+    ));
+    assert_eq!(error.code, codes::DUPLICATE_VARIATION_SEQUENCE);
+    assert!(error.message.contains("`a` and `b`"), "{}", error.message);
+}
+
+#[test]
+fn variation_sequence_warnings_still_build() {
+    let (fonts, diagnostics) = build(&format!(
+        "{PREAMBLE}{ZERO}
+glyph odd (variation: ('0', U+FE05), advance: 600) {{}}
+glyph lone (variation: ('Q', U+E0100), advance: 600) {{}}
+"
+    ));
+    assert!(!fonts.is_empty(), "warnings don't stop a build");
+    let codes_found: Vec<_> = diagnostics.iter().map(|d| (d.code, d.severity)).collect();
+    assert_eq!(
+        codes_found,
+        vec![
+            (codes::UNSTANDARDIZED_VARIATION_SEQUENCE, mg_diag::Severity::Warning),
+            (codes::VARIATION_BASE_NOT_ENCODED, mg_diag::Severity::Warning),
+        ]
+    );
+}

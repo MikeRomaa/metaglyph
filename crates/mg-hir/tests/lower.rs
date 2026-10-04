@@ -652,3 +652,54 @@ fn a_glyph_takes_at_most_two_of_advance_lsb_rsb() {
     let (_, diagnostics) = lower(src);
     assert_eq!(codes(&diagnostics), vec!["MG0404"], "{diagnostics:#?}");
 }
+
+// ---------------------------------------------------------------------
+// Variation sequences (spec §5.6)
+
+const METRICS: &str = r#"
+    font (name: "T", em: 1000)
+    metric baseline (y: 0, align: "bottom")
+    metric xHeight (y: 500)
+    metric capHeight (y: 700)
+    metric ascender (y: 740)
+    metric descender (y: -200)
+"#;
+
+#[test]
+fn variation_lowers_one_pair_or_a_list() {
+    let (hir, diagnostics) = lower(&format!(
+        "{METRICS}
+        glyph zero_vs1 (advance: 1, variation: ('0', U+FE00)) {{}}
+        glyph more (advance: 1, variation: [(U+2229, U+FE00), (U+4E00, U+E0100)]) {{}}
+    "
+    ));
+    assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+    let variations = |name: &str| hir.glyphs[&(name.to_string(), None)].variations.clone();
+    assert_eq!(variations("zero_vs1"), vec![(0x30, 0xFE00)]);
+    assert_eq!(variations("more"), vec![(0x2229, 0xFE00), (0x4E00, 0xE0100)]);
+}
+
+#[test]
+fn variation_rejects_non_pairs_and_non_selectors() {
+    let (_, diagnostics) = lower(&format!(
+        "{METRICS}
+        glyph a (advance: 1, variation: U+0030) {{}}
+        glyph b (advance: 1, variation: ('0', 'A')) {{}}
+        glyph c (advance: 1, variation: ('0', U+FE00, U+FE01)) {{}}
+    "
+    ));
+    let found = codes(&diagnostics);
+    assert!(found.contains(&"MG0423"), "{diagnostics:#?}");
+    assert_eq!(found.iter().filter(|c| **c == "MG0301").count(), 2, "{diagnostics:#?}");
+}
+
+#[test]
+fn an_alternate_may_not_declare_variation() {
+    let (_, diagnostics) = lower(&format!(
+        "{METRICS}
+        glyph zero (advance: 1, codepoint: '0') {{}}
+        glyph zero (advance: 1, glyphset: Alt, variation: ('0', U+FE00)) {{}}
+    "
+    ));
+    assert!(codes(&diagnostics).contains(&"MG0410"), "{diagnostics:#?}");
+}

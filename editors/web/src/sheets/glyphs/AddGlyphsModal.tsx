@@ -1,13 +1,14 @@
 import { useState } from "react";
 import type { FontData } from "../../engine/types.ts";
-import { hex, sampleChar } from "../../font/lookup.ts";
+import { charCode } from "../../font/chars.ts";
+import { sampleChar } from "../../font/lookup.ts";
 import {
     addGlyphs,
     defaultAdvance,
     glyphDecl,
-    glyphName,
     type NewGlyph,
     nameErrors,
+    newGlyph,
 } from "../../state/glyphs.ts";
 import { Modal, modal } from "../../ui/Modal.tsx";
 import styles from "./AddGlyphsModal.module.css";
@@ -28,11 +29,9 @@ export function AddGlyphsModal({
     onClose: () => void;
     onAdded: (names: string[]) => void;
 }) {
-    const [rows, setRows] = useState<NewGlyph[]>(() =>
-        [...codepoints]
-            .sort((a, b) => a - b)
-            .map((codepoint) => ({ codepoint, name: glyphName(codepoint) })),
-    );
+    /** The picks, ascending; row `i` is `ids[i]`. */
+    const [ids] = useState(() => [...codepoints].sort((a, b) => a - b));
+    const [rows, setRows] = useState<NewGlyph[]>(() => ids.map(newGlyph));
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const errors = nameErrors(rows, font);
@@ -101,21 +100,21 @@ export function AddGlyphsModal({
                     </div>
                     {rows.map((row, i) => (
                         <div
-                            key={row.codepoint}
+                            key={ids[i]}
                             className={styles.row}
                             data-error={errors[i] ? true : undefined}
                         >
                             <span className={styles.char}>
-                                {sampleChar(row.codepoint)}
+                                {sampleChar(ids[i])}
                             </span>
                             <span className={styles.cp}>
-                                U+{hex(row.codepoint)}
+                                {charCode(ids[i])}
                             </span>
                             <span className={styles.nameCell}>
                                 <input
                                     className={styles.name}
                                     value={row.name}
-                                    aria-label={`Name for U+${hex(row.codepoint)}`}
+                                    aria-label={`Name for ${charCode(ids[i])}`}
                                     aria-invalid={errors[i] ? true : undefined}
                                     spellCheck={false}
                                     // biome-ignore lint/a11y/noAutofocus: the first name is what to check first

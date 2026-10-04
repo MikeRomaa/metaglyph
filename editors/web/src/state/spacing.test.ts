@@ -11,6 +11,7 @@ function glyph(fields: GlyphInfo["fields"]): GlyphInfo {
     return {
         name: "n",
         codepoints: [0x6e],
+        variations: [],
         span: [10, 20],
         advance: 400,
         shift: -60,

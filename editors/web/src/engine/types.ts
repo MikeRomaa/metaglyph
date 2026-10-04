@@ -71,6 +71,8 @@ export interface LetInfo {
 export interface GlyphInfo {
     name: string;
     codepoints: number[];
+    /** `[base, selector]` variation sequences (spec §5.6). */
+    variations: [number, number][];
     span: Span;
     advance?: number;
     /** Authored → placed x offset (spec §12.1). */
@@ -263,7 +265,11 @@ export type Op =
     | { op: "kernUnit"; span: Span; em: boolean; fontEm: number }
     | { op: "newGroup"; name: string; glyphs: string[] }
     | { op: "deleteGroup"; name: string }
-    | { op: "addGlyphs"; glyphs: { name: string; codepoint: number }[] }
+    | {
+          op: "addGlyphs";
+          /** With `selector`, a glyph for that variation sequence. */
+          glyphs: { name: string; codepoint: number; selector?: number }[];
+      }
     | { op: "groupMember"; group: string; glyphs: string[]; add: boolean };
 
 /** A new kern's side: a glyph or group by name, or a group to declare

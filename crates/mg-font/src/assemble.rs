@@ -33,6 +33,8 @@ use crate::prepare::PreparedGlyph;
 pub struct GlyphRecord {
     pub name: String,
     pub codepoints: Vec<u32>,
+    /// `(base, selector)` variation sequences (spec §5.6).
+    pub variations: Vec<(u32, u32)>,
     /// Rounded per spec §10.4; range-checked here.
     pub advance: i64,
     pub glyph: PreparedGlyph,
@@ -597,13 +599,17 @@ pub fn assemble(
         .and_then(|b| b.add_table(&maxp))
         .and_then(|b| b.add_table(&os2))
         .and_then(|b| b.add_table(&hmtx))
-        .and_then(|b| b.add_table(&cmap))
         .and_then(|b| b.add_table(&loca))
         .and_then(|b| b.add_table(&glyf))
         .and_then(|b| b.add_table(&name))
         .and_then(|b| b.add_table(&post))
         .and_then(|b| b.add_table(&gasp))
         .expect("every table is well-formed by construction");
+    let mut cmap = write_fonts::dump_table(&cmap).expect("cmap is well-formed by construction");
+    if let Some(format_14) = format_14(glyphs) {
+        cmap = with_format_14(&cmap, &format_14);
+    }
+    builder.add_raw(Tag::new(b"cmap"), cmap);
     if let Some(gpos) = kern::build_gpos(kerns, &ids) {
         builder
             .add_table(&gpos)
@@ -614,6 +620,126 @@ pub fn assemble(
 
 /// `OS/2.ulUnicodeRange1` bits for the Latin blocks (bits 0–3). Other
 /// blocks are left clear; nothing in spec §12 asks for them.
+/// The `cmap` format 14 subtable for every glyph's variation sequences
+/// (spec §10.6), or `None` when there are none. Written by hand: its
+/// `length` must cover its default- and non-default-UVS tables, which a
+/// generic serializer is free to share or place elsewhere.
+///
+/// Layout: the header, the selector records (sorted by selector), then
+/// each record's default-UVS table and non-default-UVS table in turn.
+pub fn format_14(glyphs: &[GlyphRecord]) -> Option<Vec<u8>> {
+    use std::collections::{BTreeMap, BTreeSet, HashMap};
+
+    let encoded: HashMap<u32, usize> = glyphs
+        .iter()
+        .enumerate()
+        .flat_map(|(gid, g)| g.codepoints.iter().map(move |&cp| (cp, gid)))
+        .collect();
+    // Per selector: bases mapped as their default glyph, and the rest.
+    let mut records: BTreeMap<u32, (BTreeSet<u32>, BTreeMap<u32, u16>)> = BTreeMap::new();
+    for (gid, glyph) in glyphs.iter().enumerate() {
+        for &(base, selector) in &glyph.variations {
+            let (default, non_default) = records.entry(selector).or_default();
+            if encoded.get(&base) == Some(&gid) {
+                default.insert(base);
+            } else {
+                non_default.insert(base, gid as u16);
+            }
+        }
+    }
+    if records.is_empty() {
+        return None;
+    }
+
+    let u24 = |out: &mut Vec<u8>, v: u32| out.extend_from_slice(&v.to_be_bytes()[1..]);
+    let mut tables = Vec::new();
+    let mut offsets = Vec::new();
+    let tables_start = 10 + 11 * records.len();
+    for (default, non_default) in records.values() {
+        let offset = |table: &Vec<u8>, present: bool| {
+            if present { (tables_start + table.len()) as u32 } else { 0 }
+        };
+        let default_offset = offset(&tables, !default.is_empty());
+        if !default.is_empty() {
+            // Runs of consecutive bases, at most 256 to a range.
+            let mut ranges: Vec<(u32, u8)> = Vec::new();
+            for &base in default {
+                match ranges.last_mut() {
+                    Some((start, extra)) if *start + *extra as u32 + 1 == base && *extra < 255 => {
+                        *extra += 1
+                    }
+                    _ => ranges.push((base, 0)),
+                }
+            }
+            tables.extend_from_slice(&(ranges.len() as u32).to_be_bytes());
+            for (start, extra) in ranges {
+                u24(&mut tables, start);
+                tables.push(extra);
+            }
+        }
+        let non_default_offset = offset(&tables, !non_default.is_empty());
+        if !non_default.is_empty() {
+            tables.extend_from_slice(&(non_default.len() as u32).to_be_bytes());
+            for (&base, &gid) in non_default {
+                u24(&mut tables, base);
+                tables.extend_from_slice(&gid.to_be_bytes());
+            }
+        }
+        offsets.push((default_offset, non_default_offset));
+    }
+
+    let mut out = Vec::with_capacity(tables_start + tables.len());
+    out.extend_from_slice(&14u16.to_be_bytes());
+    out.extend_from_slice(&((tables_start + tables.len()) as u32).to_be_bytes());
+    out.extend_from_slice(&(records.len() as u32).to_be_bytes());
+    for (selector, (default_offset, non_default_offset)) in records.keys().zip(offsets) {
+        u24(&mut out, *selector);
+        out.extend_from_slice(&default_offset.to_be_bytes());
+        out.extend_from_slice(&non_default_offset.to_be_bytes());
+    }
+    out.extend_from_slice(&tables);
+    Some(out)
+}
+
+/// `cmap` with `format_14` appended under encoding record (0, 5), placed
+/// after the other Unicode-platform records so records stay sorted.
+fn with_format_14(cmap: &[u8], format_14: &[u8]) -> Vec<u8> {
+    let be16 = |at: usize| u16::from_be_bytes([cmap[at], cmap[at + 1]]);
+    let count = be16(2) as usize;
+    let records: Vec<(u16, u16, u32)> = (0..count)
+        .map(|i| {
+            let at = 4 + 8 * i;
+            let offset = u32::from_be_bytes([cmap[at + 4], cmap[at + 5], cmap[at + 6], cmap[at + 7]]);
+            (be16(at), be16(at + 2), offset)
+        })
+        .collect();
+    let body = &cmap[4 + 8 * count..];
+    let new_header = 4 + 8 * (count + 1);
+    let at = records.iter().position(|&(p, e, _)| (p, e) > (0, 5)).unwrap_or(count);
+
+    let mut out = Vec::with_capacity(cmap.len() + 8 + format_14.len());
+    out.extend_from_slice(&be16(0).to_be_bytes());
+    out.extend_from_slice(&((count + 1) as u16).to_be_bytes());
+    let record = |out: &mut Vec<u8>, (p, e, o): (u16, u16, u32)| {
+        out.extend_from_slice(&p.to_be_bytes());
+        out.extend_from_slice(&e.to_be_bytes());
+        out.extend_from_slice(&o.to_be_bytes());
+    };
+    for (i, &(p, e, o)) in records.iter().enumerate() {
+        if i == at {
+            record(&mut out, (0, 5, (new_header + body.len()) as u32));
+        }
+        // Every subtable moves down by the new record's 8 bytes.
+        record(&mut out, (p, e, o + 8));
+    }
+    if at == count {
+        record(&mut out, (0, 5, (new_header + body.len()) as u32));
+    }
+    out.extend_from_slice(body);
+    out.extend_from_slice(format_14);
+    out
+}
+
 fn unicode_range_1(codepoints: &[u32]) -> u32 {
     const BLOCKS: [(u32, u32, u32); 4] = [
         (0, 0x0000, 0x007F),

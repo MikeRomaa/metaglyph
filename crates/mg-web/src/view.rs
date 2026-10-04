@@ -62,6 +62,8 @@ pub struct LetInfo {
 pub struct GlyphInfo {
     pub name: String,
     pub codepoints: Vec<u32>,
+    /// `[base, selector]` variation sequences (spec §5.6).
+    pub variations: Vec<[u32; 2]>,
     pub span: Span,
     pub advance: Option<f64>,
     /// Authored → placed x offset (spec §12.1).
@@ -405,6 +407,7 @@ fn glyph_info(ctx: &Ctx, glyph: &GlyphDecl) -> GlyphInfo {
     GlyphInfo {
         name: name.clone(),
         codepoints: glyph.codepoints.clone(),
+        variations: glyph.variations.iter().map(|&(b, s)| [b, s]).collect(),
         span: ctx.index.span(&range),
         advance: ctx.num(NodeId::GlyphAdvance(name.clone())),
         shift: ctx.num(NodeId::GlyphShift(name.clone())),

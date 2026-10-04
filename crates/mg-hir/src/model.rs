@@ -91,6 +91,9 @@ pub struct GlyphDecl {
     pub syntax: SyntaxNode,
     pub codepoint_expr: Option<ast::Expr>,
     pub codepoints: Vec<u32>,
+    pub variation_expr: Option<ast::Expr>,
+    /// `(base, selector)` variation sequences (spec §5.6).
+    pub variations: Vec<(u32, u32)>,
     pub advance: Option<ast::Expr>,
     /// The left and right sidebearings (spec §12.1). With `advance`, a
     /// glyph declares one or two of the three.

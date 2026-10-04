@@ -61,16 +61,18 @@ export const mgTheme = EditorView.theme({
     ".cm-tooltip.cm-tooltip-autocomplete > ul > li": {
         padding: "0.0625rem 0.5rem 0.0625rem 0.25rem",
     },
-    "&.cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]": {
-        background: "var(--inv)",
-        color: "var(--oninv)",
-    },
+    "&.cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]":
+        {
+            background: "var(--inv)",
+            color: "var(--oninv)",
+        },
     "&.cm-editor .cm-tooltip-autocomplete li[aria-selected] .cm-completionMatchedText":
         { color: "inherit", textDecoration: "underline" },
-    "&.cm-editor .cm-tooltip-autocomplete li[aria-selected] .cm-completionDetail": {
-        color: "inherit",
-        opacity: "0.7",
-    },
+    "&.cm-editor .cm-tooltip-autocomplete li[aria-selected] .cm-completionDetail":
+        {
+            color: "inherit",
+            opacity: "0.7",
+        },
     ".cm-completionMatchedText": {
         textDecoration: "none",
         fontWeight: "600",

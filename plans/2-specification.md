@@ -20,7 +20,7 @@ This document specifies the language, the geometry model, the compilation pipeli
 | Region operators | None. No `trim`, `union`, `difference`, or `intersection`, and no filled-area value in the language. Ink is produced by stroking and filling; a path's or glyph's extent is readable via `.bbox` only. |
 | Overlaps | Always kept. Overlapping contours of consistent winding are what ships. |
 | Output | Static TTF / OTF / WOFF2, with kerning, CFF hinting, and a TrueType `gasp` table. No OpenType substitutions, no variable fonts. |
-| Script scope | Arbitrary Unicode codepoints and component reuse. No contextual reordering, cursive attachment, or mark attachment. |
+| Script scope | Arbitrary Unicode codepoints, variation sequences (`cmap` format 14), and component reuse. No contextual reordering, cursive attachment, or mark attachment. |
 | Abstraction | None. No user-defined functions, macros, shapes, or glyph inheritance. Every glyph is written in full. |
 | Text ↔ editor | The DSL is canonical. Every editor action is a structured transform on the syntax tree. |
 | Italics | `slant` is a per-instance shear. A true italic is a glyph set selected by instance (§5.6). |
@@ -274,6 +274,7 @@ A param may not be named `slant`, `glyphset`, `styleName`, `weightClass`, or `wi
 | Field | Type | |
 |---|---|---|
 | `codepoint` | `int` \| `int*` | optional; constant expression; each value in `0`–`0x10FFFF`; illegal when `glyphset` is present |
+| `variation` | `pair` \| `pair*` | optional; constant expression; each pair is `(base, selector)`, both integers; illegal when `glyphset` is present; see below |
 | `advance` | `num` | optional; see below |
 | `lsb` | `num` | optional; the left sidebearing; see below |
 | `rsb` | `num` | optional; the right sidebearing; see below |
@@ -283,7 +284,16 @@ Body contains `let`, `path`, `anchor`, `component`.
 
 A glyph declares one or two of `advance`, `lsb`, `rsb`. Declaring none, or all three, is an error. Together they fix the glyph's advance and a horizontal **shift** applied to its ink (§12.1).
 
-A glyph without `glyphset` belongs to the **default set**. A glyph with `glyphset: S` is the alternate definition, in set `S`, of the default-set glyph with the same name. That default-set glyph must exist, and the alternate takes its codepoints. A name has at most one definition per set. A glyph set exists if and only if at least one glyph names it.
+**Variation sequences.** `variation` maps Unicode variation sequences to the glyph: a base character followed by a variation selector, the way `codepoint` maps single characters. Each `(base, selector)` pair has `base` in `0`–`0x10FFFF` and `selector` a variation selector: VS1–VS16 (`U+FE00`–`U+FE0F`) or VS17–VS256 (`U+E0100`–`U+E01EF`). A glyph may declare `variation` with or without `codepoint`; a glyph with only `variation` is reached through its sequences alone.
+
+```
+glyph zero (codepoint: '0', rsb: sidebear) { … }
+glyph zero_vs1 (variation: ('0', U+FE00), advance: glyphs.zero.advance) { … }  // DIGIT ZERO, short diagonal stroke form
+```
+
+`variation: [('0', U+FE00), (U+2229, U+FE00)]` declares several. The output is `cmap` format 14 (§10.6).
+
+A glyph without `glyphset` belongs to the **default set**. A glyph with `glyphset: S` is the alternate definition, in set `S`, of the default-set glyph with the same name. That default-set glyph must exist, and the alternate takes its codepoints and variation sequences. A name has at most one definition per set. A glyph set exists if and only if at least one glyph names it.
 
 **`instance <name> ( … )`** — no body.
 
@@ -851,7 +861,9 @@ Conversion operates on unrounded coordinates.
 - **Glyph identity is the DSL name**, not the codepoint. A glyph may carry zero codepoints or several. Glyph names are identifiers (§5.1), at most 63 bytes.
 - **Glyph order:** glyph ID 0 is `.notdef`, always generated, with no contours and advance `round(font.em / 2)`. The remaining glyphs follow in declaration order (§14).
 - **`cmap` subtables:** format 4 for the BMP, plus format 12 whenever any codepoint exceeds U+FFFF. Encoding records: (3,1) and (0,3) for format 4; (3,10) and (0,4) for format 12.
+- **Variation sequences:** whenever any glyph declares `variation`, a format 14 subtable with encoding record (0,5). Its variation-selector records are sorted by selector, and each record's mappings by base. A sequence on the glyph its base already maps to through `codepoint` goes in the record's default-UVS ranges; every other sequence is a non-default-UVS mapping to its glyph.
 - **Validation:** a codepoint on more than one glyph, a surrogate (U+D800–U+DFFF), or a noncharacter is an error. A codepoint unassigned in Unicode 16.0 is a warning.
+- **Sequence validation:** a sequence on more than one glyph, a `selector` outside the variation-selector ranges (§5.6), or a `base` that is a surrogate or noncharacter is an error. A sequence with a VS1–VS16 selector that is not a standardized variation sequence or an emoji variation sequence in Unicode 16.0 (`StandardizedVariants.txt`, `emoji-variation-sequences.txt`) is a warning; VS17–VS256 sequences are ideographic variation sequences, registered outside Unicode, and are not checked. A sequence whose `base` no glyph maps through `codepoint` is a warning: text without the selector falls back to another font.
 - **`post`** version 2.0 carries glyph names.
 
 ---
@@ -998,15 +1010,15 @@ Every diagnostic names a source location, an entity, and where possible a fix. D
 |---|---|
 | Syntax | Unexpected token; unclosed block; malformed segment declaration; malformed range; hex integer above 2^53; codepoint above `U+10FFFF`; character literal empty, holding more than one scalar value, or with an unknown escape (§5.1) |
 | Type | `pair` where `num` expected; `path` argument to a scalar function; `.bbox` on a value that has no extent; a mixed tuple; non-integral value in an `int` field |
-| Field validation | Unknown field; unknown enum value, with the legal set enumerated; missing required field; mutually exclusive fields both present; a field illegal in its position (§5.7); non-constant expression where one is required; param default or instance override outside `range`; param named after an instance field; alternate glyph with no default glyph, or with `codepoint`; `codepoint` value outside `0`–`0x10FFFF`; unknown glyph set; a glyph declaring none, or all three, of `advance`, `lsb`, `rsb` |
+| Field validation | Unknown field; unknown enum value, with the legal set enumerated; missing required field; mutually exclusive fields both present; a field illegal in its position (§5.7); non-constant expression where one is required; param default or instance override outside `range`; param named after an instance field; alternate glyph with no default glyph, or with `codepoint` or `variation`; a `variation` selector outside VS1–VS256; `codepoint` value outside `0`–`0x10FFFF`; unknown glyph set; a glyph declaring none, or all three, of `advance`, `lsb`, `rsb` |
 | Name resolution | Unresolved identifier with scope and near-miss suggestions; duplicate definition; shadowing a top-level name; reserved word as a declaration name; anchor named `advance` or `bbox` |
 | Cycle | Circular definition, reported as the full cycle path with file and line per hop, plus a suggested edge to break (§4.3) |
 | Domain | `sqrt` of a negative; division by zero; `asin`/`acos` out of range; `meet` on parallel lines; `lineThrough` of two equal points; an `ellipse` or `circle` radius ≤ 0; `cast` with no crossing ahead of the line's origin; path parameter out of domain; `minOf`/`maxOf` of an empty list; `.bbox` of a glyph with no ink |
 | Geometry | Zero-length path or segment; a centre-mode `arc` whose endpoints admit no axis-aligned ellipse about its `center`, or a radii-mode `arc` whose chord is longer than its radii can span (§6.3); `stroke` ≤ 0; curvature radius below `stroke/2` (§7.2), naming glyph, path, segment, parameter interval, and instance; a corner whose inner offsets do not cross within its two adjacent segments (§7.4), naming glyph, path, segment, and instance; a self-intersecting filled contour (§8.3) |
 | Path structure | Every structural error of §6.3 |
 | Metrics | A missing reserved metric; `baseline.y` ≠ 0; negative `overshoot` |
-| Export | Point or contour count over `maxp` limits; coordinate out of int16 range; `kern` or `group` naming an undefined glyph; duplicate, surrogate, or noncharacter codepoint; component cycle or excessive depth; self-intersection introduced by quantization; kerning group overlap (§12.2) |
-| **Warnings** | Alignment zones dropped (§11.1); codepoint unassigned in Unicode 16.0 |
+| Export | Point or contour count over `maxp` limits; coordinate out of int16 range; `kern` or `group` naming an undefined glyph; duplicate, surrogate, or noncharacter codepoint; duplicate variation sequence, or one with a surrogate or noncharacter base; component cycle or excessive depth; self-intersection introduced by quantization; kerning group overlap (§12.2) |
+| **Warnings** | Alignment zones dropped (§11.1); codepoint unassigned in Unicode 16.0; a VS1–VS16 sequence that Unicode 16.0 does not standardize; a sequence whose base no glyph encodes (§10.6) |
 
 ---
 
@@ -1060,6 +1072,7 @@ Named constants. Tolerances scale with the em size.
    - Fuzzed self-intersecting filled contours each trigger §8.3's error.
 7. **Export**
    - `fonttools ttx` round-trip, `ots-sanitize`, and FontBakery (OpenType profile) in CI.
+   - `cmap` format 14: a sequence on a glyph without `codepoint` is a non-default-UVS mapping; a sequence on the glyph its base encodes is a default-UVS range; records sorted by selector and base; HarfBuzz shapes `0030 FE00` to the `variation` glyph and `0030` alone to the `codepoint` one.
    - Render a pangram at 8–48 ppem with FreeType and diff against golden rasters.
 
 Acceptance test: build a typeface covering uppercase, lowercase, digits, and basic punctuation in three weights from one source, install it, and set text in it.

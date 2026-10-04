@@ -593,6 +593,11 @@ fn lower_glyph(
         .as_ref()
         .map(|expr| lower_codepoints(expr, font_em, diagnostics))
         .unwrap_or_default();
+    let variation_expr = fields.get("variation").and_then(|f| f.value());
+    let variations = variation_expr
+        .as_ref()
+        .map(|expr| lower_variations(expr, font_em, diagnostics))
+        .unwrap_or_default();
 
     let mut glyph_scope = ValueNamespace::new();
     let mut lets = IndexMap::new();
@@ -720,6 +725,8 @@ fn lower_glyph(
             syntax: glyph_node.syntax().clone(),
             codepoint_expr,
             codepoints,
+            variation_expr,
+            variations,
             advance,
             lsb,
             rsb,
@@ -809,6 +816,80 @@ fn lower_codepoints(
         codepoints.push(value as u32);
     }
     codepoints
+}
+
+/// `variation` (spec §5.6): a `pair` or `pair*` field of constant
+/// `(base, selector)` integers, the base in `0`..=`0x10FFFF` and the
+/// selector a variation selector.
+fn lower_variations(
+    expr: &ast::Expr,
+    font_em: Option<f64>,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Vec<(u32, u32)> {
+    let elements: Vec<ast::Expr> = match expr {
+        ast::Expr::List(list) => list.elements().collect(),
+        other => vec![other.clone()],
+    };
+
+    let int = |expr: &ast::Expr, what: &str, diagnostics: &mut Vec<Diagnostic>| {
+        let span: Range<usize> = expr.syntax().text_range().into();
+        let Some(value) = const_eval::eval_const(expr, font_em) else {
+            diagnostics.push(Diagnostic::error(
+                codes::NON_CONSTANT_EXPRESSION,
+                format!("a `variation` {what} must be a constant expression"),
+                Label::new(span, "not constant"),
+            ));
+            return None;
+        };
+        if value.fract() != 0.0 || !(0.0..=0x10FFFF as f64).contains(&value) {
+            diagnostics.push(Diagnostic::error(
+                codes::CODEPOINT_OUT_OF_RANGE,
+                format!("a `variation` {what} must be a codepoint, found {value}"),
+                Label::new(span, "not a codepoint"),
+            ));
+            return None;
+        }
+        Some(value as u32)
+    };
+
+    let mut variations = Vec::new();
+    for element in &elements {
+        let span: Range<usize> = element.syntax().text_range().into();
+        let parts: Vec<ast::Expr> = match element {
+            ast::Expr::Tuple(tuple) => tuple.elements().collect(),
+            _ => Vec::new(),
+        };
+        let [base, selector] = parts.as_slice() else {
+            diagnostics.push(
+                Diagnostic::error(
+                    codes::TYPE_MISMATCH,
+                    "`variation` takes `(base, selector)` pairs",
+                    Label::new(span, "not a pair"),
+                )
+                .with_help("for DIGIT ZERO's short diagonal stroke form: `variation: ('0', U+FE00)`"),
+            );
+            continue;
+        };
+        let (Some(base), Some(selector)) = (
+            int(base, "base", diagnostics),
+            int(selector, "selector", diagnostics),
+        ) else {
+            continue;
+        };
+        if !schema::is_variation_selector(selector) {
+            diagnostics.push(
+                Diagnostic::error(
+                    codes::INVALID_VARIATION_SELECTOR,
+                    format!("U+{selector:04X} is not a variation selector"),
+                    Label::new(parts[1].syntax().text_range().into(), "not VS1–VS256"),
+                )
+                .with_help("variation selectors are U+FE00–U+FE0F and U+E0100–U+E01EF"),
+            );
+            continue;
+        }
+        variations.push((base, selector));
+    }
+    variations
 }
 
 fn lower_path(
@@ -1698,12 +1779,17 @@ fn check_glyph_and_group_namespace(hir: &Hir, diagnostics: &mut Vec<Diagnostic>)
                         Label::new(decl.syntax.text_range().into(), "no default glyph"),
                     ));
                 }
-                if let Some(codepoint_expr) = &decl.codepoint_expr {
-                    diagnostics.push(Diagnostic::error(
-                        codes::ALTERNATE_WITH_CODEPOINT,
-                        format!("alternate glyph `{name}` in glyph set `{set_name}` may not declare `codepoint`"),
-                        Label::new(codepoint_expr.syntax().text_range().into(), "illegal here"),
-                    ));
+                for (field, expr) in [
+                    ("codepoint", &decl.codepoint_expr),
+                    ("variation", &decl.variation_expr),
+                ] {
+                    if let Some(expr) = expr {
+                        diagnostics.push(Diagnostic::error(
+                            codes::ALTERNATE_WITH_CODEPOINT,
+                            format!("alternate glyph `{name}` in glyph set `{set_name}` may not declare `{field}`"),
+                            Label::new(expr.syntax().text_range().into(), "illegal here"),
+                        ));
+                    }
                 }
             }
         }

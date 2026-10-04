@@ -89,6 +89,8 @@ pub const MISSING_DECLARATION_NAME: Code = Code::new("MG0420");
 pub const UNEXPECTED_DECLARATION_NAME: Code = Code::new("MG0421");
 /// `font.version` not of the form `digits.digits` (spec §5.6).
 pub const MALFORMED_VERSION: Code = Code::new("MG0422");
+/// A `variation` selector outside VS1–VS256 (spec §5.6).
+pub const INVALID_VARIATION_SELECTOR: Code = Code::new("MG0423");
 
 // -- MG05xx: path structure (mg-hir) --------------------------------------
 
@@ -169,3 +171,9 @@ pub const UNENCODABLE_CODEPOINT: Code = Code::new("MG0806");
 pub const ADVANCE_OUT_OF_RANGE: Code = Code::new("MG0807");
 /// A `kern` value outside GPOS's int16 range.
 pub const KERN_OUT_OF_RANGE: Code = Code::new("MG0808");
+/// One variation sequence mapped by more than one glyph (spec §10.6).
+pub const DUPLICATE_VARIATION_SEQUENCE: Code = Code::new("MG0809");
+/// Warning: a VS1–VS16 sequence Unicode does not standardize (spec §10.6).
+pub const UNSTANDARDIZED_VARIATION_SEQUENCE: Code = Code::new("MG0810");
+/// Warning: a variation sequence whose base no glyph encodes (spec §10.6).
+pub const VARIATION_BASE_NOT_ENCODED: Code = Code::new("MG0811");

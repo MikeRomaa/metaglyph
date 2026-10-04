@@ -17,6 +17,7 @@ function glyph(
     return {
         name,
         codepoints: [cp],
+        variations: [],
         span: [0, 0],
         fields: {},
         outline: "",

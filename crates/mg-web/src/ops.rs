@@ -174,6 +174,10 @@ pub enum Op {
 pub struct NewGlyph {
     pub name: String,
     pub codepoint: u32,
+    /// With a selector, the glyph is for the variation sequence
+    /// `(codepoint, selector)` (spec §5.6), not the codepoint alone.
+    #[serde(default)]
+    pub selector: Option<u32>,
 }
 
 /// One side of an [`Op::NewKern`]: an existing glyph or group by name, or
@@ -737,9 +741,19 @@ fn apply(
                     .values()
                     .flat_map(|g| g.codepoints.iter().map(|cp| (*cp, g.name.clone())))
                     .collect();
+                let mut sequences: std::collections::HashMap<(u32, u32), String> = hir
+                    .glyphs
+                    .values()
+                    .flat_map(|g| g.variations.iter().map(|v| (*v, g.name.clone())))
+                    .collect();
                 let advance = default_advance(src, &hir);
                 let mut decls = Vec::new();
-                for NewGlyph { name, codepoint } in glyphs {
+                for NewGlyph {
+                    name,
+                    codepoint,
+                    selector,
+                } in glyphs
+                {
                     if let Some(why) = edit::invalid_name(name) {
                         return Err(format!("`{name}` is {why}."));
                     }
@@ -748,6 +762,21 @@ fn apply(
                     }
                     let cp = codepoint_text(*codepoint)
                         .ok_or_else(|| format!("{codepoint:#X} is not a codepoint."))?;
+                    if let Some(selector) = *selector {
+                        if !mg_hir::schema::is_variation_selector(selector) {
+                            return Err(format!("U+{selector:04X} is not a variation selector."));
+                        }
+                        let sequence = (*codepoint, selector);
+                        if let Some(other) = sequences.insert(sequence, name.clone()) {
+                            return Err(format!(
+                                "U+{codepoint:04X} U+{selector:04X} already belongs to `{other}`."
+                            ));
+                        }
+                        decls.push(format!(
+                            "glyph {name} (variation: ({cp}, U+{selector:04X}), advance: {advance}) {{\n}}"
+                        ));
+                        continue;
+                    }
                     if let Some(other) = used.insert(*codepoint, name.clone()) {
                         return Err(format!("U+{codepoint:04X} already belongs to `{other}`."));
                     }
@@ -2374,9 +2403,43 @@ mod tests {
                 .map(|(name, codepoint)| NewGlyph {
                     name: name.to_string(),
                     codepoint: *codepoint,
+                    selector: None,
                 })
                 .collect(),
         }
+    }
+
+    #[test]
+    fn an_added_variation_sequence_declares_variation() {
+        let op = Op::AddGlyphs {
+            glyphs: vec![NewGlyph {
+                name: "zero_vs1".into(),
+                codepoint: 0x30,
+                selector: Some(0xFE00),
+            }],
+        };
+        let (text, _) = run_on(SRC, &op);
+        assert!(
+            text.ends_with("glyph zero_vs1 (variation: ('0', U+FE00), advance: h) {\n}\n"),
+            "{text}"
+        );
+        // The same sequence again, under another name, is refused.
+        let again = Op::AddGlyphs {
+            glyphs: vec![NewGlyph {
+                name: "slashed_zero".into(),
+                codepoint: 0x30,
+                selector: Some(0xFE00),
+            }],
+        };
+        assert!(refused(&text, &again).contains("already belongs to `zero_vs1`"));
+        let bad = Op::AddGlyphs {
+            glyphs: vec![NewGlyph {
+                name: "x".into(),
+                codepoint: 0x30,
+                selector: Some(0x41),
+            }],
+        };
+        assert!(refused(SRC, &bad).contains("not a variation selector"));
     }
 
     #[test]

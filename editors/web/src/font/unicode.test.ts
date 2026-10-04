@@ -1,9 +1,13 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { parseNames, search } from "./unicode.ts";
+import { sequenceId } from "./chars.ts";
+import { describe as describeChar, parseNames, search } from "./unicode.ts";
 
+const data = (file: string) =>
+    readFileSync(new URL(`../data/${file}`, import.meta.url), "utf8");
 const names = parseNames(
-    readFileSync(new URL("../data/unicode-names.txt", import.meta.url), "utf8"),
+    data("unicode-names.txt"),
+    data("variation-sequences.txt"),
 );
 
 describe("search", () => {
@@ -32,8 +36,8 @@ describe("search", () => {
     it("ranks an exact name first, then shorter names", () => {
         expect(search("rightwards arrow", names)[0]).toBe(0x2192);
         const hits = search("arrow", names);
-        expect(names.get(hits[0])?.length).toBeLessThanOrEqual(
-            names.get(hits[hits.length - 1])?.length ?? 0,
+        expect(names.chars.get(hits[0])?.length).toBeLessThanOrEqual(
+            names.chars.get(hits[hits.length - 1])?.length ?? 0,
         );
     });
 
@@ -44,5 +48,37 @@ describe("search", () => {
 
     it("caps the results", () => {
         expect(search("letter", names, 50)).toHaveLength(50);
+    });
+
+    it("finds a variation sequence by its codepoints", () => {
+        const zeroVs1 = sequenceId(0x30, 0xfe00);
+        for (const q of ["U+0030 U+FE00", "0030 FE00", "0x30 0xFE00"]) {
+            expect(search(q, names)[0]).toBe(zeroVs1);
+        }
+        expect(search("U+0030 U+FE00", names)).toEqual([zeroVs1, 0x30]);
+    });
+
+    it("finds a pasted variation sequence", () => {
+        expect(search("0︀", names)).toEqual([sequenceId(0x30, 0xfe00)]);
+        expect(search("a0︀b", names)).toEqual([
+            0x61,
+            sequenceId(0x30, 0xfe00),
+            0x62,
+        ]);
+    });
+
+    it("finds a sequence by its base name and description", () => {
+        expect(search("zero short diagonal", names)).toContain(
+            sequenceId(0x30, 0xfe00),
+        );
+    });
+
+    it("describes a sequence by base name and description", () => {
+        expect(describeChar(sequenceId(0x30, 0xfe00), names)).toBe(
+            "DIGIT ZERO · short diagonal stroke form",
+        );
+        expect(describeChar(sequenceId(0x30, 0xfe05), names)).toBe(
+            "DIGIT ZERO · VS6 (U+FE05)",
+        );
     });
 });
