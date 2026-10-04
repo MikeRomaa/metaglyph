@@ -1,5 +1,5 @@
 .pane {
-    width: 25rem;
+    position: relative;
     flex: none;
     min-height: 0;
     display: flex;

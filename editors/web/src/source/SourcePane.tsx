@@ -22,6 +22,7 @@ import { useEffect, useRef } from "react";
 import { check, onResult } from "../engine/client.ts";
 import type { Sheet } from "../state/store.ts";
 import { useStore } from "../state/store.ts";
+import { Resizer, usePanelWidth } from "../ui/Resizer.tsx";
 import { setEditorView } from "./editor.ts";
 import { flashExtension } from "./flash.ts";
 import { mgHighlight, mgLanguage } from "./mgLanguage.ts";
@@ -186,12 +187,20 @@ export function SourcePane() {
         check(initialText, version);
     }, [epoch]);
 
+    const [width, setWidth, initial] = usePanelWidth("source", 25, 16, 60);
+
     const errors =
         doc?.diagnostics.filter((d) => d.severity === "error").length ?? 0;
     const problems = doc?.diagnostics.length ?? 0;
 
     return (
-        <section className={styles.pane}>
+        <section className={styles.pane} style={{ width: `${width}rem` }}>
+            <Resizer
+                edge="left"
+                width={width}
+                onResize={setWidth}
+                initial={initial}
+            />
             <header className={styles.head}>
                 <span className={styles.title}>Source</span>
                 <span className={styles.status}>

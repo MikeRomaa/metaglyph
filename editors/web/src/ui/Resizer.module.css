@@ -1,0 +1,28 @@
+/* Sits over the panel's 2px border, a little wider for an easy grab. */
+.handle {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 0.5rem;
+    z-index: 5;
+    cursor: col-resize;
+    touch-action: none;
+}
+
+.handle[data-edge="right"] {
+    right: calc(-0.25rem - 1px);
+}
+
+.handle[data-edge="left"] {
+    left: calc(-0.25rem - 1px);
+}
+
+.handle:hover,
+.handle:active {
+    background: linear-gradient(
+        to right,
+        transparent calc(50% - 1px),
+        var(--acc) calc(50% - 1px) calc(50% + 1px),
+        transparent calc(50% + 1px)
+    );
+}

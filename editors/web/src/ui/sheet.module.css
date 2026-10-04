@@ -2,7 +2,7 @@
  * key/value rows and bill-of-materials tables. */
 
 .left {
-    width: 16.5rem;
+    position: relative;
     flex: none;
     min-height: 0;
     display: flex;

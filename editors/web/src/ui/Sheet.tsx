@@ -1,13 +1,21 @@
 import type { ReactNode } from "react";
 import { useStore } from "../state/store.ts";
+import { Resizer, usePanelWidth } from "./Resizer.tsx";
 import styles from "./sheet.module.css";
 
 /** The left column: sheet-specific inspector over the GLOBALS panel. */
 export function LeftColumn({ children }: { children: ReactNode }) {
+    const [width, setWidth, initial] = usePanelWidth("left", 16.5, 12, 36);
     return (
-        <aside className={styles.left}>
+        <aside className={styles.left} style={{ width: `${width}rem` }}>
             <div className={styles.leftBody}>{children}</div>
             <Globals />
+            <Resizer
+                edge="right"
+                width={width}
+                onResize={setWidth}
+                initial={initial}
+            />
         </aside>
     );
 }
