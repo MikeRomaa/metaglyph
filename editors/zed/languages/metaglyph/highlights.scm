@@ -41,6 +41,7 @@
     "length" "angle" "unit" "dir" "dot" "cross" "perpendicular"
     "meet" "mediate" "project" "polar" "mirror"
     "lineThrough" "lineAt" "hline" "vline"
+    "ellipse" "circle" "crossings" "along" "cast"
     "translate" "rotate" "scale" "slant" "reflect" "apply"
     "pointAt" "directionAt" "curvatureAt" "arcLength" "pointAtLength"
     "intersect" "subpath" "reverse" "extrema"

@@ -141,14 +141,17 @@
     cursor: pointer;
 }
 
-.conLine line {
+.conLine line,
+.conShape {
+    fill: none;
     stroke: var(--con);
     stroke-width: 1.2;
     stroke-dasharray: 10 7;
     opacity: 0.8;
 }
 
-.conLine[data-on] line {
+.conLine[data-on] line,
+.conLine[data-on] .conShape {
     stroke: var(--acc);
     opacity: 1;
 }

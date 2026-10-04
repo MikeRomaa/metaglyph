@@ -181,6 +181,16 @@ export interface LineInfo {
     radiusExpr?: string;
 }
 
+/** A local `let` bound to `ellipse` / `circle`. */
+export interface EllipseInfo {
+    name: string;
+    center: Pt;
+    rx: number;
+    ry: number;
+    expr: string;
+    span: Span;
+}
+
 export interface GlyphScene {
     name: string;
     span: Span;
@@ -190,6 +200,7 @@ export interface GlyphScene {
     paths: PathInfo[];
     points: PointInfo[];
     lines: LineInfo[];
+    ellipses: EllipseInfo[];
     /** Measurements, `let dN = length(b - a);`. */
     measures: MeasureInfo[];
 }

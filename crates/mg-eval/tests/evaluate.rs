@@ -579,3 +579,28 @@ glyph C (lsb: 0) {{
     let c = outline("C");
     assert_eq!(c.components[0].transform.translation().x, 5.0 - 25.0);
 }
+
+#[test]
+fn a_ray_cast_onto_an_ellipse() {
+    let source = format!(
+        r#"{PREAMBLE}
+glyph O (advance: 600) {{
+  let e = ellipse((300, 350), 250, 300);
+  let top = cast(lineAt(e.center, 90deg), e);
+  let l = hline(350);
+  let east = along(l, maxOf(crossings(l, e)));
+  let rx = e.rx;
+}}
+"#
+    );
+    let hir = lower(&source);
+    let (_, outcome) = mg_eval::evaluate(&hir, regular(&hir));
+    assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
+    let local = |name: &str| NodeId::GlyphLocal("O".into(), name.into());
+    let pair = |name: &str| outcome.values[&local(name)].as_pair().unwrap();
+    let top = pair("top");
+    assert!((top.x - 300.0).abs() < 1e-9 && (top.y - 650.0).abs() < 1e-9, "{top:?}");
+    let east = pair("east");
+    assert!((east.x - 550.0).abs() < 1e-9 && (east.y - 350.0).abs() < 1e-9, "{east:?}");
+    assert_eq!(num(&outcome.values, local("rx")), 250.0);
+}

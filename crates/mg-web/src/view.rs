@@ -117,6 +117,7 @@ pub struct GlyphScene {
     pub paths: Vec<PathInfo>,
     pub points: Vec<PointInfo>,
     pub lines: Vec<LineInfo>,
+    pub ellipses: Vec<EllipseInfo>,
     /// Measurements, `let dN = length(b - a);`, drawn as dimensions.
     pub measures: Vec<MeasureInfo>,
 }
@@ -221,6 +222,18 @@ pub struct LineInfo {
     pub of: Option<String>,
     /// For a `polar` ray: the `len` argument's source text.
     pub radius_expr: Option<String>,
+}
+
+/// A local `let` bound to `ellipse` / `circle`.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EllipseInfo {
+    pub name: String,
+    pub center: Pt,
+    pub rx: f64,
+    pub ry: f64,
+    pub expr: String,
+    pub span: Span,
 }
 
 struct Ctx<'a> {
@@ -547,6 +560,7 @@ pub fn glyph_scene(model: &Model, instance: &str, name: &str) -> Option<GlyphSce
 
     let mut points = Vec::new();
     let mut lines = Vec::new();
+    let mut ellipses = Vec::new();
     let mut measures = Vec::new();
     for decl in glyph.lets.values() {
         let node = NodeId::GlyphLocal(name.to_string(), decl.name.clone());
@@ -601,6 +615,14 @@ pub fn glyph_scene(model: &Model, instance: &str, name: &str) -> Option<GlyphSce
                 of: None,
                 radius_expr: None,
             }),
+            Some(Value::Ellipse(e)) => ellipses.push(EllipseInfo {
+                name: decl.name.clone(),
+                center: pt(e.center),
+                rx: e.rx,
+                ry: e.ry,
+                expr,
+                span,
+            }),
             Some(Value::Num(value)) => {
                 if let Some((a, b)) = measured(&ctx, name, decl.value.as_ref()) {
                     measures.push(MeasureInfo {
@@ -624,6 +646,7 @@ pub fn glyph_scene(model: &Model, instance: &str, name: &str) -> Option<GlyphSce
         paths,
         points,
         lines,
+        ellipses,
         measures,
     })
 }
@@ -750,6 +773,7 @@ pub fn format_value(value: &Value) -> String {
         Value::Pair(p) => format!("({}, {})", format_num(p.x), format_num(p.y)),
         Value::Zone(z) => format_num(z.y),
         Value::Line(_) => "line".to_string(),
+        Value::Ellipse(_) => "ellipse".to_string(),
         Value::Path(_) => "path".to_string(),
         other => other.to_string(),
     }

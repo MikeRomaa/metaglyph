@@ -86,7 +86,7 @@ Invariants, checked by tests on every op:
 
 ### 1.3 Naming
 
-- A new named declaration gets a placeholder (`p0`, `p1`, …; `path0`; `l0` for lines; `d0` for measurements; `seg0`) that is unique in its namespace. The canvas immediately opens an inline rename field; **Enter keeps the placeholder**, and typing issues a `rename`.
+- A new named declaration gets a placeholder (`p0`, `p1`, …; `path0`; `l0` for lines; `e0` for ellipses; `d0` for measurements; `seg0`) that is unique in its namespace. The canvas immediately opens an inline rename field; **Enter keeps the placeholder**, and typing issues a `rename`.
 - Control points of new curve segments are auto-named `<to-name>_c1`, `<to-name>_c2`, `<to-name>_c` (for a quad) without a prompt, to keep curve creation quick.
 - Names are validated against reserved words (spec §5.4), shadowing (§5.11 rule 3), and duplicates before the rename is applied.
 
@@ -102,6 +102,7 @@ Coordinates are raw units unless stated. `pN` means a new named `let`.
 | Line through two points | `let lN = lineThrough(a, b);` | — |
 | Horizontal / vertical guide | `let lN = hline(y);` / `vline(x);` | — |
 | Line at angle through a point | `let lN = lineAt(p, θdeg);` | — |
+| Ellipse / circle by centre and corner | `let eN = ellipse(c, rx, ry);` / `circle(c, r);` (shift-drag) | — |
 | Measurement | `let dN = length(b - a);`, drawn as a dimension | — |
 | Metric guide | `metric name (y: <n>)` via `insert_top_level` | — |
 
@@ -135,6 +136,7 @@ Coordinates are raw units unless stated. `pN` means a new named `let`.
 | Make coincident | `b` | — |
 | Snap to intersection | `meet(l1, l2)` when both lines are named lets; else `meet(lineThrough(a, b), lineThrough(c, d))` | — |
 | Project onto line | `project(q, l)` | — |
+| Cast onto ellipse | `cast(l, e)` when a named line is picked; else `cast(lineAt(e.center, θdeg), e)`, with `θ` the current position's angle about the centre | `θ` 1 decimal |
 | Place at fraction | `mediate(a, b, t)`, with `t` from the current position projected onto `ab` | `t`, 3 decimals |
 | Polar from point | `polar(q, len, θdeg)`, from the current position | `len` whole units, `θ` 1 decimal |
 | Mirror across axis | `mirror(q, axis)` | — |
@@ -222,7 +224,7 @@ All views share one worker-evaluated state for the **active instance**.
 - Double-click opens the glyph editor.
 
 ### 2.4 Glyph editor
-- **Canvas layers** (each can be toggled): metric lines; origin and advance guides; construction points, lines and measurements; skeletons with segment endpoints and control handles; the stroked/filled outline; components (dimmed, clickable to open); diagnostics anchored at their geometry (e.g. a curvature-limit interval).
+- **Canvas layers** (each can be toggled): metric lines; origin and advance guides; construction points, lines, ellipses and measurements; skeletons with segment endpoints and control handles; the stroked/filled outline; components (dimmed, clickable to open); diagnostics anchored at their geometry (e.g. a curvature-limit interval).
 - **Tools:** select/drag, path tool, construction point/line/guide/measurement, component place, plus the relationship tools on the current selection.
 - **Inspector:** the selected declaration's fields, as editable expressions (typed text is spliced as-is) and quick controls (stroke, caps, joins, fill, sweep/large, segment kind).
 - **Drag feedback:** the active driver literal (and its value) is shown near the cursor, locked axes are indicated, a single-driver track is drawn, and the key hint for cycling drivers is shown.

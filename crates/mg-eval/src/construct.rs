@@ -10,7 +10,7 @@ use kurbo::{Affine, Line, ParamCurve, ParamCurveArclen, Point, Vec2};
 use mg_geom::skeleton;
 
 use crate::errors::EvalError;
-use crate::value::{Rect, Value};
+use crate::value::{Ellipse, Rect, Value};
 
 /// Arc-length and curve–curve intersection numerics have no spec-named
 /// tolerance (unlike the M4 constants in spec §14); this is just "close
@@ -32,6 +32,11 @@ fn line(v: &Value) -> Line {
         .expect("mg-hir already type-checked this argument as `line`")
 }
 
+fn ellipse(v: &Value) -> Ellipse {
+    v.as_ellipse()
+        .expect("mg-hir already type-checked this argument as `ellipse`")
+}
+
 fn transform(v: &Value) -> Affine {
     v.as_transform()
         .expect("mg-hir already type-checked this argument as `transform`")
@@ -50,8 +55,9 @@ fn num_list(v: &Value) -> Vec<f64> {
 /// Dispatches one call (spec §5.9). `name` is assumed to be a real
 /// function name — callers resolve that separately, the same way
 /// `mg_hir::type_check` does — so an unknown name here is also a bug
-/// upstream, not a domain error.
-pub fn call(name: &str, args: &[Value]) -> Result<Value, EvalError> {
+/// upstream, not a domain error. `arc_tolerance` is spec §14's
+/// `ARC_TOLERANCE`, for the line–ellipse queries.
+pub fn call(name: &str, args: &[Value], arc_tolerance: f64) -> Result<Value, EvalError> {
     match name {
         "abs" => Ok(Value::Num(num(&args[0]).abs())),
         "sign" => Ok(Value::Num(num(&args[0]).signum())),
@@ -136,7 +142,14 @@ pub fn call(name: &str, args: &[Value]) -> Result<Value, EvalError> {
             Ok(Value::Pair(reflect * pair(&args[0])))
         }
 
-        "lineThrough" => Ok(Value::Line(Line::new(pair(&args[0]), pair(&args[1])))),
+        "lineThrough" => {
+            let (a, b) = (pair(&args[0]), pair(&args[1]));
+            if a == b {
+                Err(EvalError::LineThroughOnePoint)
+            } else {
+                Ok(Value::Line(Line::new(a, b)))
+            }
+        }
         "lineAt" => {
             let (p, theta) = (pair(&args[0]), num(&args[1]));
             Ok(Value::Line(Line::new(p, p + Vec2::from_angle(theta))))
@@ -148,6 +161,37 @@ pub fn call(name: &str, args: &[Value]) -> Result<Value, EvalError> {
         "vline" => {
             let x = num(&args[0]);
             Ok(Value::Line(Line::new((x, 0.0), (x, 1.0))))
+        }
+
+        "ellipse" | "circle" => {
+            let center = pair(&args[0]);
+            let rx = num(&args[1]);
+            let ry = if name == "circle" { rx } else { num(&args[2]) };
+            for r in [rx, ry] {
+                if r <= 0.0 {
+                    return Err(EvalError::NonPositiveRadius(r));
+                }
+            }
+            Ok(Value::Ellipse(Ellipse { center, rx, ry }))
+        }
+        "crossings" => Ok(Value::List(
+            crossings(line(&args[0]), ellipse(&args[1]), arc_tolerance)
+                .into_iter()
+                .map(Value::Num)
+                .collect(),
+        )),
+        "along" => {
+            let (origin, direction) = ray(line(&args[0]));
+            Ok(Value::Pair(origin + direction * num(&args[1])))
+        }
+        "cast" => {
+            let l = line(&args[0]);
+            let (origin, direction) = ray(l);
+            crossings(l, ellipse(&args[1]), arc_tolerance)
+                .into_iter()
+                .find(|&s| s > arc_tolerance)
+                .map(|s| Value::Pair(origin + direction * s))
+                .ok_or(EvalError::CastMissesEllipse)
         }
 
         "translate" => Ok(Value::Transform(Affine::translate((
@@ -267,6 +311,42 @@ fn inverse_trig(function: &'static str, value: f64, f: fn(f64) -> f64) -> Result
 /// (spec §5.9 `project`) — `Line`'s own `ParamCurveNearest` clamps to the
 /// segment `[0, 1]`, which is the wrong shape for an infinite line, so
 /// this projects by hand instead.
+/// A line's origin and unit direction (spec §5.9). Every constructor
+/// gives `p1 ≠ p0`, so the direction is defined.
+fn ray(line: Line) -> (Point, Vec2) {
+    (line.p0, (line.p1 - line.p0).normalize())
+}
+
+/// Distances along `line` from its origin where it crosses `e`, ascending
+/// (spec §5.9): two, one when tangent within `tolerance`, or none.
+///
+/// Solved in coordinates scaled by `(1/rx, 1/ry)`, where `e` is the unit
+/// circle: `|u + s·v|² = 1`. Tangency measures the line's nearest approach
+/// to the centre (in scaled terms) against the ellipse point on the same
+/// ray from the centre.
+fn crossings(line: Line, e: Ellipse, tolerance: f64) -> Vec<f64> {
+    let (origin, direction) = ray(line);
+    let scale = |v: Vec2| Vec2::new(v.x / e.rx, v.y / e.ry);
+    let u = scale(origin - e.center);
+    let v = scale(direction);
+    let a = v.hypot2();
+    let nearest = -u.dot(v) / a;
+    // The nearest approach's scaled radius: 1 on the ellipse.
+    let m = (u + v * nearest).hypot();
+    if m > 0.0 {
+        // Its distance from the ellipse, along the ray from the centre.
+        let r = (origin + direction * nearest - e.center).hypot();
+        if r * (1.0 - 1.0 / m).abs() <= tolerance {
+            return vec![nearest];
+        }
+    }
+    if m > 1.0 {
+        return Vec::new();
+    }
+    let half = (1.0 - m * m).sqrt() / a.sqrt();
+    vec![nearest - half, nearest + half]
+}
+
 fn project_onto_line(p: Point, line: Line) -> Point {
     let dir = line.p1 - line.p0;
     let t = (p - line.p0).dot(dir) / dir.dot(dir);
@@ -361,6 +441,13 @@ pub fn bbox(bez: &kurbo::BezPath) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The tolerance the tests below run at: `ARC_TOLERANCE` at em 1000.
+    const TOL: f64 = 0.01;
+
+    fn call(name: &str, args: &[Value]) -> Result<Value, EvalError> {
+        super::call(name, args, TOL)
+    }
 
     fn p(x: f64, y: f64) -> Value {
         Value::Pair(Point::new(x, y))
@@ -501,5 +588,126 @@ mod tests {
                 max: 1.0
             })
         );
+    }
+
+    fn nums(v: Value) -> Vec<f64> {
+        v.as_num_list().unwrap()
+    }
+
+    fn deg(d: f64) -> Value {
+        Value::Num(d.to_radians())
+    }
+
+    /// The ellipse about (0, 0) with radii 4, 2.
+    fn oval() -> Value {
+        call("ellipse", &[p(0.0, 0.0), Value::Num(4.0), Value::Num(2.0)]).unwrap()
+    }
+
+    #[test]
+    fn ellipse_members_and_circle() {
+        let c = call("circle", &[p(1.0, 2.0), Value::Num(3.0)])
+            .unwrap()
+            .as_ellipse()
+            .unwrap();
+        assert_eq!((c.center, c.rx, c.ry), (Point::new(1.0, 2.0), 3.0, 3.0));
+    }
+
+    #[test]
+    fn non_positive_radius_is_a_domain_error() {
+        assert_eq!(
+            call("ellipse", &[p(0.0, 0.0), Value::Num(4.0), Value::Num(0.0)]),
+            Err(EvalError::NonPositiveRadius(0.0))
+        );
+        assert_eq!(
+            call("circle", &[p(0.0, 0.0), Value::Num(-1.0)]),
+            Err(EvalError::NonPositiveRadius(-1.0))
+        );
+    }
+
+    #[test]
+    fn line_through_one_point_is_a_domain_error() {
+        assert_eq!(
+            call("lineThrough", &[p(1.0, 1.0), p(1.0, 1.0)]),
+            Err(EvalError::LineThroughOnePoint)
+        );
+    }
+
+    #[test]
+    fn crossings_of_a_secant_from_outside() {
+        // From (-10, 0) along +x: crosses x = -4 and x = 4.
+        let l = call("lineAt", &[p(-10.0, 0.0), deg(0.0)]).unwrap();
+        let hits = nums(call("crossings", &[l, oval()]).unwrap());
+        assert_eq!(hits.len(), 2);
+        approx(hits[0], 6.0);
+        approx(hits[1], 14.0);
+    }
+
+    #[test]
+    fn crossings_behind_the_origin_are_negative() {
+        let l = call("lineAt", &[p(10.0, 0.0), deg(0.0)]).unwrap();
+        let hits = nums(call("crossings", &[l.clone(), oval()]).unwrap());
+        approx(hits[0], -14.0);
+        approx(hits[1], -6.0);
+        assert_eq!(
+            call("cast", &[l, oval()]),
+            Err(EvalError::CastMissesEllipse)
+        );
+    }
+
+    #[test]
+    fn cast_from_the_centre_at_each_quadrant() {
+        for (angle, x, y) in [
+            (0.0, 4.0, 0.0),
+            (90.0, 0.0, 2.0),
+            (180.0, -4.0, 0.0),
+            (270.0, 0.0, -2.0),
+        ] {
+            let l = call("lineAt", &[p(0.0, 0.0), deg(angle)]).unwrap();
+            approx_point(&call("cast", &[l, oval()]).unwrap(), x, y);
+        }
+    }
+
+    #[test]
+    fn cast_at_an_angle_lands_on_the_ellipse() {
+        let l = call("lineAt", &[p(0.0, 0.0), deg(30.0)]).unwrap();
+        let hit = call("cast", &[l, oval()]).unwrap().as_pair().unwrap();
+        approx((hit.x / 4.0).powi(2) + (hit.y / 2.0).powi(2), 1.0);
+        approx(hit.y.atan2(hit.x), 30f64.to_radians());
+    }
+
+    #[test]
+    fn cast_from_a_point_on_the_ellipse_finds_the_far_side() {
+        let l = call("lineThrough", &[p(-4.0, 0.0), p(0.0, 0.0)]).unwrap();
+        approx_point(&call("cast", &[l, oval()]).unwrap(), 4.0, 0.0);
+    }
+
+    #[test]
+    fn a_tangent_line_crosses_once() {
+        // y = 2 touches the top of the oval at (0, 2).
+        let l = call("hline", &[Value::Num(2.0)]).unwrap();
+        let hits = nums(call("crossings", &[l.clone(), oval()]).unwrap());
+        assert_eq!(hits.len(), 1);
+        approx_point(&call("along", &[l, Value::Num(hits[0])]).unwrap(), 0.0, 2.0);
+        // Within tolerance either side, too.
+        for y in [2.0 + TOL / 2.0, 2.0 - TOL / 2.0] {
+            let l = call("hline", &[Value::Num(y)]).unwrap();
+            assert_eq!(nums(call("crossings", &[l, oval()]).unwrap()).len(), 1, "y = {y}");
+        }
+    }
+
+    #[test]
+    fn a_miss_has_no_crossings() {
+        let l = call("hline", &[Value::Num(3.0)]).unwrap();
+        assert!(nums(call("crossings", &[l.clone(), oval()]).unwrap()).is_empty());
+        assert_eq!(
+            call("cast", &[l, oval()]),
+            Err(EvalError::CastMissesEllipse)
+        );
+    }
+
+    #[test]
+    fn along_measures_from_the_origin_in_units() {
+        let l = call("lineThrough", &[p(1.0, 1.0), p(1.0, 11.0)]).unwrap();
+        approx_point(&call("along", &[l, Value::Num(3.0)]).unwrap(), 1.0, 4.0);
     }
 }

@@ -515,7 +515,7 @@ fn eval_call(ctx: &mut EvalCtx, call: &ast::CallExpr) -> Result<Value, ()> {
     let values = values?;
 
     let span: Range<usize> = call.syntax().text_range().into();
-    match construct::call(&name, &values) {
+    match construct::call(&name, &values, tolerances(ctx.hir).arc) {
         Ok(v) => Ok(v),
         Err(e) => ctx.fail(span, e),
     }
@@ -577,6 +577,12 @@ fn eval_member(ctx: &mut EvalCtx, member: &ast::MemberExpr) -> Result<Value, ()>
         },
         Value::Path(p) => match field {
             "bbox" => Value::Rect(construct::bbox(&p.path)),
+            _ => unreachable!(),
+        },
+        Value::Ellipse(e) => match field {
+            "center" => Value::Pair(e.center),
+            "rx" => Value::Num(e.rx),
+            "ry" => Value::Num(e.ry),
             _ => unreachable!(),
         },
         _ => unreachable!("mg-hir already type-checked this member access"),
@@ -1151,6 +1157,9 @@ fn diagnostic_for(span: Range<usize>, err: EvalError) -> Diagnostic {
         EvalError::InverseTrigOutOfRange { .. } => codes::INVERSE_TRIG_OUT_OF_RANGE,
         EvalError::PowerDomainError { .. } => codes::POWER_DOMAIN_ERROR,
         EvalError::MeetOnParallelLines => codes::MEET_ON_PARALLEL_LINES,
+        EvalError::LineThroughOnePoint => codes::LINE_THROUGH_ONE_POINT,
+        EvalError::NonPositiveRadius(_) => codes::NON_POSITIVE_RADIUS,
+        EvalError::CastMissesEllipse => codes::CAST_MISSES_ELLIPSE,
         EvalError::UnitOfZeroVector => codes::ZERO_VECTOR,
         EvalError::PathParameterOutOfDomain { .. } => codes::PATH_PARAMETER_OUT_OF_DOMAIN,
         EvalError::EmptyListReduction { .. } => codes::EMPTY_LIST_REDUCTION,
@@ -1166,6 +1175,9 @@ fn diagnostic_for(span: Range<usize>, err: EvalError) -> Diagnostic {
     };
     let diagnostic = Diagnostic::error(code, err.to_string(), Label::new(span, "here"));
     match err {
+        EvalError::CastMissesEllipse => diagnostic.with_help(
+            "`crossings(l, e)` lists every crossing, including those behind the origin",
+        ),
         EvalError::NoAxisAlignedEllipse => diagnostic.with_help(
             "or switch to radii mode: a half-oval from the top of an oval to its bottom is \
              `arc (to: b, rx: w/2, ry: h/2, sweep: \"cw\")`",

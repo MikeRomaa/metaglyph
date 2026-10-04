@@ -22,6 +22,12 @@ pub enum EvalError {
         exponent: f64,
     },
     MeetOnParallelLines,
+    /// `lineThrough` of two equal points: no direction (spec §5.9).
+    LineThroughOnePoint,
+    /// An `ellipse` or `circle` radius ≤ 0 (spec §5.9).
+    NonPositiveRadius(f64),
+    /// `cast` found no crossing ahead of the line's origin (spec §5.9).
+    CastMissesEllipse,
     UnitOfZeroVector,
     PathParameterOutOfDomain {
         param: f64,
@@ -81,6 +87,15 @@ impl std::fmt::Display for EvalError {
                 )
             }
             EvalError::MeetOnParallelLines => write!(f, "`meet` on parallel lines"),
+            EvalError::LineThroughOnePoint => {
+                write!(f, "`lineThrough` of two equal points has no direction")
+            }
+            EvalError::NonPositiveRadius(r) => {
+                write!(f, "an ellipse radius must be greater than 0 (got {r})")
+            }
+            EvalError::CastMissesEllipse => {
+                write!(f, "the ray meets the ellipse nowhere ahead of its origin")
+            }
             EvalError::UnitOfZeroVector => write!(f, "`unit` of a zero-length pair"),
             EvalError::PathParameterOutOfDomain { param, max } => {
                 write!(f, "path parameter {param} is outside [0, {max}]")

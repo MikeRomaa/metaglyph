@@ -14,6 +14,8 @@ pub enum Type {
     /// `pair` / `point` (spec §5.5: `point` is an alias of `pair`).
     Pair,
     Line,
+    /// An axis-aligned ellipse (spec §5.5), from `ellipse` / `circle`.
+    Ellipse,
     Transform,
     Path,
     Rect,
@@ -35,6 +37,7 @@ impl fmt::Display for Type {
             Type::String => write!(f, "string"),
             Type::Pair => write!(f, "pair"),
             Type::Line => write!(f, "line"),
+            Type::Ellipse => write!(f, "ellipse"),
             Type::Transform => write!(f, "transform"),
             Type::Path => write!(f, "path"),
             Type::Rect => write!(f, "rect"),
@@ -84,6 +87,11 @@ pub fn lookup_function(name: &str) -> Option<Vec<FnSig>> {
         "lineThrough" => vec![sig(vec![Pair, Pair], Line)],
         "lineAt" => vec![sig(vec![Pair, Num], Line)],
         "hline" | "vline" => vec![sig(vec![Num], Line)],
+        "ellipse" => vec![sig(vec![Pair, Num, Num], Ellipse)],
+        "circle" => vec![sig(vec![Pair, Num], Ellipse)],
+        "crossings" => vec![sig(vec![Line, Ellipse], Type::list_of(Num))],
+        "along" => vec![sig(vec![Line, Num], Pair)],
+        "cast" => vec![sig(vec![Line, Ellipse], Pair)],
         "translate" => vec![sig(vec![Num, Num], Transform)],
         "rotate" | "slant" => vec![sig(vec![Num], Transform)],
         "scale" => vec![sig(vec![Num], Transform), sig(vec![Num, Num], Transform)],
@@ -140,6 +148,11 @@ pub const FUNCTION_NAMES: &[&str] = &[
     "lineAt",
     "hline",
     "vline",
+    "ellipse",
+    "circle",
+    "crossings",
+    "along",
+    "cast",
     "translate",
     "rotate",
     "scale",
@@ -173,6 +186,11 @@ pub fn member_type(receiver: &Type, member: &str) -> Option<Type> {
         },
         Type::Zone => matches!(member, "y" | "ink" | "overshoot").then_some(Type::Num),
         Type::Path => (member == "bbox").then_some(Type::Rect),
+        Type::Ellipse => match member {
+            "center" => Some(Type::Pair),
+            "rx" | "ry" => Some(Type::Num),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -185,6 +203,7 @@ pub fn member_names(receiver: &Type) -> &'static [&'static str] {
         Type::Rect => &["x0", "y0", "x1", "y1", "width", "height", "center"],
         Type::Zone => &["y", "ink", "overshoot"],
         Type::Path => &["bbox"],
+        Type::Ellipse => &["center", "rx", "ry"],
         _ => &[],
     }
 }
@@ -280,10 +299,24 @@ pub fn function_doc(name: &str) -> Option<FnDoc> {
         "project" => (&["p", "l"], "The foot of the perpendicular from p to l."),
         "polar" => (&["p", "len", "θ"], "The point len from p at angle θ."),
         "mirror" => (&["p", "l"], "p reflected across l."),
-        "lineThrough" => (&["a", "b"], "The line through two points."),
-        "lineAt" => (&["p", "θ"], "The line through p at angle θ."),
+        "lineThrough" => (&["a", "b"], "The line from a through b."),
+        "lineAt" => (&["p", "θ"], "The line from p at angle θ."),
         "hline" => (&["y"], "The horizontal line at y."),
         "vline" => (&["x"], "The vertical line at x."),
+        "ellipse" => (
+            &["center", "rx", "ry"],
+            "The axis-aligned ellipse about center with radii rx, ry.",
+        ),
+        "circle" => (&["center", "r"], "The circle about center with radius r."),
+        "crossings" => (
+            &["l", "e"],
+            "Distances along l from its origin where it crosses e, ascending.",
+        ),
+        "along" => (&["l", "s"], "The point at distance s along l from its origin."),
+        "cast" => (
+            &["l", "e"],
+            "Where the ray from l's origin along its direction first meets e.",
+        ),
         "translate" => (&["dx", "dy"], "A translation."),
         "rotate" => (&["θ"], "A counter-clockwise rotation about the origin."),
         "scale" => (&["s"], "A uniform scale; `scale(sx, sy)` scales each axis."),

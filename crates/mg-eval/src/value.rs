@@ -64,6 +64,15 @@ impl From<kurbo::Rect> for Rect {
     }
 }
 
+/// An `ellipse` / `circle` value (spec §5.9): axis-aligned, with positive
+/// radii.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Ellipse {
+    pub center: Point,
+    pub rx: f64,
+    pub ry: f64,
+}
+
 /// A `metric` declaration's value (spec §5.6): `.y` is the flat position,
 /// `.ink` is where a round glyph reaches (`y + overshoot` when `align` is
 /// `"top"`, `y − overshoot` when `"bottom"`), and `.overshoot` is given
@@ -82,7 +91,10 @@ pub enum Value {
     String(String),
     /// `pair` / `point` (spec §5.5: `point` is an alias of `pair`).
     Pair(Point),
+    /// From `p0` (the origin) towards `p1` (spec §5.9: a line's origin
+    /// and direction).
     Line(Line),
+    Ellipse(Ellipse),
     Transform(Affine),
     /// A realized skeleton (see `mg_geom::skeleton`), plus the
     /// authored-segment piece counts a parameter-domain query needs (spec
@@ -108,6 +120,11 @@ impl std::fmt::Display for Value {
             Value::String(s) => write!(f, "{s:?}"),
             Value::Pair(p) => write!(f, "({}, {})", p.x, p.y),
             Value::Line(l) => write!(f, "line[({}, {})-({}, {})]", l.p0.x, l.p0.y, l.p1.x, l.p1.y),
+            Value::Ellipse(e) => write!(
+                f,
+                "ellipse[({}, {}), {}, {}]",
+                e.center.x, e.center.y, e.rx, e.ry
+            ),
             Value::Transform(_) => write!(f, "transform"),
             Value::Path(p) => write!(f, "path[{} segments]", p.piece_counts.len()),
             Value::Rect(r) => write!(f, "rect[{}, {}, {}, {}]", r.x0, r.y0, r.x1, r.y1),
@@ -135,6 +152,7 @@ impl Value {
             Value::String(_) => "string",
             Value::Pair(_) => "pair",
             Value::Line(_) => "line",
+            Value::Ellipse(_) => "ellipse",
             Value::Transform(_) => "transform",
             Value::Path(_) => "path",
             Value::Rect(_) => "rect",
@@ -168,6 +186,13 @@ impl Value {
     pub fn as_line(&self) -> Option<Line> {
         match self {
             Value::Line(l) => Some(*l),
+            _ => None,
+        }
+    }
+
+    pub fn as_ellipse(&self) -> Option<Ellipse> {
+        match self {
+            Value::Ellipse(e) => Some(*e),
             _ => None,
         }
     }

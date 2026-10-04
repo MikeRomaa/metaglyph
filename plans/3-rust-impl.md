@@ -150,6 +150,7 @@ Every error in spec §13's "field validation", "name resolution", "type", and "p
 - **Kahn's algorithm with a min-heap keyed on declaration index** (spec §14). When nodes remain unsorted, recover an actual cycle by DFS with a parent stack. Report every hop with file and line, plus the break hint (spec §4.3).
 - **Failure containment (spec §4.6):** a failed node marks its downstream nodes failed; everything else still evaluates. A failed top-level node reports once. A build with any error writes nothing.
 - Full spec §5.9 construction library, mostly thin wrappers over kurbo. Angles are radians; suffixes convert at lowering. Path queries use the `[0, n]` parameter domain of spec §5.9.
+- **Ellipses and rays (spec §5.9):** `Value::Ellipse { center, rx, ry }`. A `line` is already stored as kurbo's `Line` from its origin to `origin + direction`, so `crossings` / `cast` / `along` read the origin and direction straight off `p0` and `p1`; `hline` and `vline` already build theirs as the spec defines. `crossings` solves the quadratic in coordinates scaled by `(1/rx, 1/ry)` and maps the roots back to distances along the unit direction; the tangent case compares the line's nearest approach to the ellipse against `ARC_TOLERANCE`.
 - Every domain error of spec §13 is named.
 - Memoization and a dirty-set API on the graph now, exercised by a test (spec §4.5).
 

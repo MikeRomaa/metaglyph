@@ -210,7 +210,8 @@ Types are checked statically after name resolution. Every type error is reported
 | `string` | |
 | `pair` | `.x` `.y`; constructed `(a, b)` |
 | `point` | Alias of `pair` |
-| `line` | Infinite line. Opaque; from §5.9 constructors only |
+| `line` | Infinite line with an origin and a direction (§5.9). Opaque; from §5.9 constructors only |
+| `ellipse` | Axis-aligned ellipse. `.center` `.rx` `.ry`; from `ellipse` / `circle` (§5.9) only |
 | `transform` | Affine. Opaque; from §5.9 constructors, `identity`, or a transform sequence (§5.8) |
 | `path` | `.bbox`; otherwise opaque. A declared path, referenced by name, or the result of `subpath` / `reverse` |
 | `rect` | `.x0` `.y0` `.x1` `.y1` `.width` `.height` `.center` |
@@ -407,6 +408,16 @@ Complete. Nothing outside this list is callable. Angle arguments and results are
 
 **Line construction:** `lineThrough(point,point)→line` · `lineAt(p, θ)→line` · `hline(y)→line` · `vline(x)→line`. `line` is a declaration keyword; the line constructor is `lineThrough`.
 
+Every line has an **origin** and a unit **direction**, fixed by its constructor: `lineThrough(a, b)` has origin `a` and direction `unit(b − a)` (`a == b` is a domain error); `lineAt(p, θ)` has origin `p` and direction `dir(θ)`; `hline(y)` has origin `(0, y)` and direction `right`; `vline(x)` has origin `(x, 0)` and direction `up`. Origin and direction only matter to the ray queries below; `meet`, `project`, `mirror`, and `reflect` treat the line as infinite and unoriented.
+
+**Ellipse construction:** `ellipse(center, rx, ry)→ellipse` · `circle(center, r)→ellipse` (`rx = ry = r`). The ellipse is axis-aligned, like an `arc`'s (§6.3), so an `arc (center: e.center, …)` or `arc (rx: e.rx, ry: e.ry, …)` between two points on `e` lies on `e`. A radius ≤ 0 is a domain error. A rotated ellipse is not expressible.
+
+**Line–ellipse queries.** Distances are measured from the line's origin along its direction; negative distances lie behind the origin.
+
+`crossings(line, ellipse)→num*` (distances where the infinite line crosses the ellipse, ascending: two values, or one when the line is tangent within `ARC_TOLERANCE` (§14), or empty) · `along(line, s)→point` (`origin + s · direction`) · `cast(line, ellipse)→point` (treats the line as a ray: the point of the smallest crossing distance greater than `ARC_TOLERANCE`; a domain error when there is none)
+
+`cast(lineAt(e.center, θ), e)` is the point where the ray from the centre at angle `θ` meets `e`. A ray from a point on the ellipse skips that point and finds the far side. For the crossing behind the origin, or the farther of two, use `along(l, minOf(crossings(l, e)))` or `maxOf`.
+
 **Transform construction:** `translate(dx, dy)` · `rotate(θ)` (about the origin, counter-clockwise) · `scale(s)` · `scale(sx, sy)` · `slant(θ)` (`(x, y) → (x + y·tan θ, y)`) · `reflect(line)` · `apply(transform, point)→point`
 
 **Path queries.** A path with `n` segments (counting a non-omitted closing segment) has parameter domain `[0, n]`; segment `i` (0-based) spans `[i, i+1]` with its own Bézier parameter. An `arc` realized as `m` cubic pieces (§6.3) divides its span uniformly: piece `k` spans `[i + k/m, i + (k+1)/m]`. A parameter outside the domain is a domain error. Queries read the skeleton, never the stroked outline.
@@ -478,10 +489,11 @@ No user-defined functions, macros, shapes, or glyph inheritance · no loops, rec
 Construction geometry never renders.
 
 1. **Points** — literal, or derived via the §5.9 constructors.
-2. **Lines** — `lineThrough`, `lineAt`, `hline`, `vline`. Infinite.
-3. **Metric guides** — `metric` declarations (§5.6), exposing `.y`, `.ink`, `.overshoot`.
-4. **Construction paths** — a `path` with neither `stroke` nor `fill`.
-5. **Measurements** — any `let`; the editor displays named scalars and pairs as dimensions.
+2. **Lines** — `lineThrough`, `lineAt`, `hline`, `vline`. Infinite, with an origin and a direction (§5.9).
+3. **Ellipses** — `ellipse`, `circle`. Axis-aligned; exact, never approximated by curves.
+4. **Metric guides** — `metric` declarations (§5.6), exposing `.y`, `.ink`, `.overshoot`.
+5. **Construction paths** — a `path` with neither `stroke` nor `fill`.
+6. **Measurements** — any `let`; the editor displays named scalars and pairs as dimensions.
 
 ### 6.2 `path` is the only shape construct
 
@@ -735,6 +747,7 @@ Each tool that changes the design maps to a named structured edit on the syntax 
 |---|---|
 | point | a `let` with a literal pair or a §5.9 constructor |
 | line, vertical guide, symmetry axis | a `let` bound to `lineThrough` / `lineAt` / `hline` / `vline` |
+| ellipse, circle | a `let` bound to `ellipse` / `circle` |
 | metric guide | a `metric` declaration |
 | measurement | a `let` |
 | grid | nothing — grid snapping is a canvas setting and is not part of the source |
@@ -759,6 +772,7 @@ Every tool sets a property on a single block. Switching a segment's kind removes
 |---|---|
 | Make coincident | one point's definition becomes a reference to the other |
 | Snap to intersection | `let p = meet(lineThrough(a,b), lineThrough(c,d));` |
+| Cast onto ellipse | `let p = cast(lineAt(c, θ), e);` |
 | Project onto line | `let p = project(q, l);` |
 | Place at fraction | `let p = mediate(a, b, 0.35);` |
 | Make parallel / at angle | `let p = polar(q, len, θ);` |
@@ -987,7 +1001,7 @@ Every diagnostic names a source location, an entity, and where possible a fix. D
 | Field validation | Unknown field; unknown enum value, with the legal set enumerated; missing required field; mutually exclusive fields both present; a field illegal in its position (§5.7); non-constant expression where one is required; param default or instance override outside `range`; param named after an instance field; alternate glyph with no default glyph, or with `codepoint`; `codepoint` value outside `0`–`0x10FFFF`; unknown glyph set; a glyph declaring none, or all three, of `advance`, `lsb`, `rsb` |
 | Name resolution | Unresolved identifier with scope and near-miss suggestions; duplicate definition; shadowing a top-level name; reserved word as a declaration name; anchor named `advance` or `bbox` |
 | Cycle | Circular definition, reported as the full cycle path with file and line per hop, plus a suggested edge to break (§4.3) |
-| Domain | `sqrt` of a negative; division by zero; `asin`/`acos` out of range; `meet` on parallel lines; path parameter out of domain; `minOf`/`maxOf` of an empty list; `.bbox` of a glyph with no ink |
+| Domain | `sqrt` of a negative; division by zero; `asin`/`acos` out of range; `meet` on parallel lines; `lineThrough` of two equal points; an `ellipse` or `circle` radius ≤ 0; `cast` with no crossing ahead of the line's origin; path parameter out of domain; `minOf`/`maxOf` of an empty list; `.bbox` of a glyph with no ink |
 | Geometry | Zero-length path or segment; a centre-mode `arc` whose endpoints admit no axis-aligned ellipse about its `center`, or a radii-mode `arc` whose chord is longer than its radii can span (§6.3); `stroke` ≤ 0; curvature radius below `stroke/2` (§7.2), naming glyph, path, segment, parameter interval, and instance; a corner whose inner offsets do not cross within its two adjacent segments (§7.4), naming glyph, path, segment, and instance; a self-intersecting filled contour (§8.3) |
 | Path structure | Every structural error of §6.3 |
 | Metrics | A missing reserved metric; `baseline.y` ≠ 0; negative `overshoot` |
@@ -1025,6 +1039,7 @@ Named constants. Tolerances scale with the em size.
    - Property test: permuting statement order within a scope yields identical results.
    - Cycle detection covering self-reference, two-node, and long cycles, asserting the reported path is the actual cycle.
    - Golden tests on `meet` / `mediate` / `project` / `polar` / `mirror` against hand-computed geometry.
+   - `crossings`, `cast`, and `along` on circles and ellipses against hand-computed geometry: a secant from outside, a ray from the centre at each quadrant angle, a ray from a point on the ellipse (finds the far side), a tangent line (one crossing), a miss (empty; `cast` is a domain error), and a ray pointing away from the ellipse (`cast` is a domain error; `crossings` has two negative values).
 2. **Segments**
    - A `quad`'s elevated cubic evaluates identically to the quadratic.
    - An `arc`'s pieces stay within `3e-4 · max(rx, ry)` of the exact ellipse (the 90°-piece bound), checked by dense sampling; quarter, half, and three-quarter arcs in both sweeps.

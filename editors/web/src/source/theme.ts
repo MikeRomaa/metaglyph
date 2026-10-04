@@ -61,15 +61,13 @@ export const mgTheme = EditorView.theme({
     ".cm-tooltip.cm-tooltip-autocomplete > ul > li": {
         padding: "0.0625rem 0.5rem 0.0625rem 0.25rem",
     },
-    // `&light` to match the specificity of the autocomplete base theme's
-    // own selected-row rule, which would win otherwise.
-    "&light .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]": {
+    "&.cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]": {
         background: "var(--inv)",
         color: "var(--oninv)",
     },
-    "&light .cm-tooltip-autocomplete li[aria-selected] .cm-completionMatchedText":
+    "&.cm-editor .cm-tooltip-autocomplete li[aria-selected] .cm-completionMatchedText":
         { color: "inherit", textDecoration: "underline" },
-    "&light .cm-tooltip-autocomplete li[aria-selected] .cm-completionDetail": {
+    "&.cm-editor .cm-tooltip-autocomplete li[aria-selected] .cm-completionDetail": {
         color: "inherit",
         opacity: "0.7",
     },

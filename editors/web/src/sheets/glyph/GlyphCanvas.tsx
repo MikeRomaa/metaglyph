@@ -398,6 +398,40 @@ export function GlyphCanvas({
                     </g>
                 );
             })}
+            {scene.ellipses.map((e) => {
+                const [cx, cy] = [e.center[0], Y(e.center[1])];
+                return (
+                    <g
+                        key={`ellipse:${e.name}`}
+                        className={styles.conLine}
+                        data-on={isSelected("let", e.name) || undefined}
+                    >
+                        <ellipse
+                            cx={cx}
+                            cy={cy}
+                            rx={e.rx}
+                            ry={e.ry}
+                            className={styles.hit}
+                            onPointerDown={pick({
+                                kind: "let",
+                                name: e.name,
+                                span: e.span,
+                            })}
+                        />
+                        <ellipse
+                            cx={cx}
+                            cy={cy}
+                            rx={e.rx}
+                            ry={e.ry}
+                            className={styles.conShape}
+                        />
+                        {text(cx, cy - e.ry - 6 * k, `${e.name} · ${e.expr}`, {
+                            cls: styles.conLabel,
+                            anchor: "middle",
+                        })}
+                    </g>
+                );
+            })}
             {scene.paths.flatMap((path) =>
                 path.segments.map((seg) =>
                     seg.arc && seg.to ? (

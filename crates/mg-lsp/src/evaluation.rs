@@ -93,6 +93,13 @@ pub fn format_value(value: &Value) -> String {
             n(r.y1)
         ),
         Value::Zone(z) => format!(".y {} / .ink {}", n(z.y), n(z.ink)),
+        Value::Ellipse(e) => format!(
+            "ellipse ({}, {}) · rx {} · ry {}",
+            n(e.center.x),
+            n(e.center.y),
+            n(e.rx),
+            n(e.ry)
+        ),
         Value::Line(l) => format!(
             "line ({}, {}) → ({}, {})",
             n(l.p0.x),

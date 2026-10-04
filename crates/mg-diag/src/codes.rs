@@ -141,6 +141,12 @@ pub const SELF_INTERSECTING_FILL: Code = Code::new("MG0619");
 /// 180° reversal also has no crossing, but is a legitimate shape, not this
 /// error.
 pub const INNER_CORNER_NO_CROSSING: Code = Code::new("MG0620");
+/// `lineThrough` of two equal points (spec §5.9).
+pub const LINE_THROUGH_ONE_POINT: Code = Code::new("MG0621");
+/// An `ellipse` or `circle` radius ≤ 0 (spec §5.9).
+pub const NON_POSITIVE_RADIUS: Code = Code::new("MG0622");
+/// `cast` with no crossing ahead of the line's origin (spec §5.9).
+pub const CAST_MISSES_ELLIPSE: Code = Code::new("MG0623");
 
 // -- MG08xx: export (mg-font) ---------------------------------------------
 
