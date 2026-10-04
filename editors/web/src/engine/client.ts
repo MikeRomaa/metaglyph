@@ -77,6 +77,11 @@ function call<T>(run: (engine: Remote) => Promise<T>, fallback: T): Promise<T> {
     });
 }
 
+/** The completions at UTF-16 `offset` in `source`. */
+export function complete(source: string, offset: number) {
+    return call((e) => e.complete(source, offset), []);
+}
+
 /** Runs an edit op against document `version`. */
 export function runEdit(op: Op, version: number): Promise<EditResult> {
     return call((e) => e.edit(op, version), {

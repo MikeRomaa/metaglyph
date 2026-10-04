@@ -53,6 +53,43 @@ export const mgTheme = EditorView.theme({
         boxShadow: "0.1875rem 0.1875rem 0 var(--ink)",
         borderRadius: "0",
     },
+    ".cm-tooltip.cm-tooltip-autocomplete > ul": {
+        fontFamily: "var(--font-mono)",
+        fontSize: "0.75rem",
+        maxHeight: "14rem",
+    },
+    ".cm-tooltip.cm-tooltip-autocomplete > ul > li": {
+        padding: "0.0625rem 0.5rem 0.0625rem 0.25rem",
+    },
+    // `&light` to match the specificity of the autocomplete base theme's
+    // own selected-row rule, which would win otherwise.
+    "&light .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]": {
+        background: "var(--inv)",
+        color: "var(--oninv)",
+    },
+    "&light .cm-tooltip-autocomplete li[aria-selected] .cm-completionMatchedText":
+        { color: "inherit", textDecoration: "underline" },
+    "&light .cm-tooltip-autocomplete li[aria-selected] .cm-completionDetail": {
+        color: "inherit",
+        opacity: "0.7",
+    },
+    ".cm-completionMatchedText": {
+        textDecoration: "none",
+        fontWeight: "600",
+        color: "var(--acc)",
+    },
+    ".cm-completionDetail": {
+        marginLeft: "0.75rem",
+        fontStyle: "normal",
+        color: "var(--faint)",
+    },
+    ".cm-tooltip.cm-completionInfo": {
+        fontFamily: "var(--font-mono)",
+        fontSize: "0.6875rem",
+        whiteSpace: "pre-wrap",
+        padding: "0.25rem 0.5rem",
+        maxWidth: "24rem",
+    },
     ".cm-diagnostic": {
         fontFamily: "var(--font-mono)",
         fontSize: "0.6875rem",

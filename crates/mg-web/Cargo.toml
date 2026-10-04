@@ -16,12 +16,14 @@ mg-eval = { workspace = true }
 mg-font = { workspace = true }
 mg-geom = { workspace = true }
 mg-hir = { workspace = true }
+mg-lsp = { workspace = true }
 mg-syntax = { workspace = true }
 
 indexmap = { workspace = true }
 js-sys = { workspace = true }
 kurbo = { workspace = true }
 log = { workspace = true }
+lsp-types = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde-wasm-bindgen = { workspace = true }
 wasm-bindgen = { workspace = true }

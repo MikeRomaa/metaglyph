@@ -1,4 +1,4 @@
-// Mirrors the serde types in crates/mg-web/src/{doc,view}.rs.
+// Mirrors the serde types in crates/mg-web/src/{doc,view,complete}.rs.
 
 export type Severity = "error" | "warning";
 
@@ -9,6 +9,19 @@ export interface DiagnosticInfo {
     severity: Severity;
     code: string;
     message: string;
+}
+
+/** One completion; `type` is CodeMirror's completion type (its icon). */
+export interface CompletionInfo {
+    label: string;
+    type: string;
+    detail?: string;
+    /** Documentation, as Markdown. */
+    info?: string;
+    /** The text to insert, when it differs from the label. */
+    apply?: string;
+    /** Whether `apply` has `${1:name}` snippet placeholders. */
+    snippet: boolean;
 }
 
 export interface FontInfo {

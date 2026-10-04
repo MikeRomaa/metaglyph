@@ -23,6 +23,7 @@ import { check, onResult } from "../engine/client.ts";
 import type { Sheet } from "../state/store.ts";
 import { useStore } from "../state/store.ts";
 import { Resizer, usePanelWidth } from "../ui/Resizer.tsx";
+import { mgCompletion } from "./complete.ts";
 import { setEditorView } from "./editor.ts";
 import { flashExtension } from "./flash.ts";
 import { mgHighlight, mgLanguage } from "./mgLanguage.ts";
@@ -42,6 +43,7 @@ function extensions(): Extension[] {
         EditorState.tabSize.of(4),
         mgLanguage,
         mgHighlight,
+        mgCompletion,
         mgTheme,
         lintGutter(),
         highlightExtension(),

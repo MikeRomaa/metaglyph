@@ -8,6 +8,7 @@
 //! CodeMirror (and every JS string) counts in; the crates count bytes.
 
 mod build;
+mod complete;
 mod doc;
 mod drag;
 mod offsets;
@@ -15,6 +16,7 @@ mod ops;
 mod view;
 
 pub use build::build;
+pub use complete::{Completion, complete};
 pub use doc::{DiagnosticInfo, DocState, FontInfo, Model, analyze, check};
 pub use ops::{Change, EditResult, Op};
 use std::rc::Rc;
@@ -65,6 +67,9 @@ pub struct Engine {
     drag: Option<drag::Session>,
     /// The driver chosen per axis, per point, for this session.
     prefs: drag::Preferences,
+    /// Name types of the last text completion saw lower, for member
+    /// completion while the text has errors.
+    types: Option<mg_lsp::types::NameTypes>,
 }
 
 #[wasm_bindgen]
@@ -102,6 +107,12 @@ impl Engine {
             now() - start,
         );
         Ok(serde_wasm_bindgen::to_value(&state)?)
+    }
+
+    /// The [`Completion`]s at UTF-16 `offset` in `source`.
+    pub fn complete(&mut self, source: &str, offset: usize) -> Result<JsValue, JsError> {
+        let items = complete(source, offset, &mut self.types);
+        Ok(serde_wasm_bindgen::to_value(&items)?)
     }
 
     /// [`FontData`] for `instance`, from the last good text; `null` before

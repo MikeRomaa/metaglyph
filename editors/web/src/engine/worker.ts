@@ -2,6 +2,7 @@ import * as Comlink from "comlink";
 import init, { Engine } from "../wasm/mg_web.js";
 import type {
     BuildResult,
+    CompletionInfo,
     DocState,
     DragInfo,
     DragStep,
@@ -53,6 +54,11 @@ const api = {
         // instances.
         if (doc.evaluated) instances = doc.instances;
         return { doc, view: view(engine, instance, glyph) };
+    },
+
+    /** The completions at UTF-16 `offset` in `source`. */
+    async complete(source: string, offset: number): Promise<CompletionInfo[]> {
+        return (await ready).complete(source, offset) as CompletionInfo[];
     },
 
     /** Runs an edit op against document `version`. */
