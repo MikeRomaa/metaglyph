@@ -77,4 +77,34 @@ describe("search", () => {
             "DIGIT ZERO · VS6 (U+FE05)",
         );
     });
+
+    it("finds what a scan of every name finds", () => {
+        // The index (a sorted vocabulary of words) against the plain
+        // definition: every query word starts some word of the name.
+        const scan = (query: string) => {
+            const words = query
+                .toUpperCase()
+                .split(/[\s-]+/)
+                .filter(Boolean);
+            const found = new Set<number>();
+            for (const [cp, name] of names.chars) {
+                const own = name.split(/[ -]/);
+                if (words.every((w) => own.some((t) => t.startsWith(w))))
+                    found.add(cp);
+            }
+            return found;
+        };
+        for (const query of [
+            "arrow left",
+            "latin capital a",
+            "cjk",
+            "di",
+            "zz",
+        ]) {
+            const indexed = search(query, names, 1e6).filter(
+                (id) => id <= 0x10ffff,
+            );
+            expect(new Set(indexed)).toEqual(scan(query));
+        }
+    });
 });

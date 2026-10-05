@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useRef, useState } from "react";
 import type { FontData, GlyphInfo } from "../../engine/types.ts";
 import { CHARSETS } from "../../font/blocks.ts";
 import { charCode, charLabel, shortLabel } from "../../font/chars.ts";
@@ -42,7 +42,9 @@ function cellsFor(font: FontData, charset: number, found: number[]): Cell[] {
 export function GlyphsSheet() {
     const font = useStore((s) => s.font);
     const charset = useStore((s) => s.charset);
-    const found = useStore((s) => s.found);
+    // Deferred: a long result grid renders in the background, and gives
+    // way to anything more urgent (typing, the next search).
+    const found = useDeferredValue(useStore((s) => s.found));
     const query = useStore((s) => s.search);
     const names = useNames(charset === -1);
     const picked = useStore((s) => s.picked);
@@ -362,18 +364,28 @@ function useNames(wanted: boolean): Names | null {
 }
 
 /** Finds any character: by name, codepoint, or pasting it. */
+/** How long typing must pause before the results update. */
+const SEARCH_DELAY_MS = 120;
+
 function Find() {
-    const query = useStore((s) => s.search);
+    const committed = useStore((s) => s.search);
     const charset = useStore((s) => s.charset);
     const setSearch = useStore((s) => s.setSearch);
+    // The box holds what is typed; the store (and the grid, which is the
+    // slow part) only hears about it once typing pauses.
+    const [query, setQuery] = useState(committed);
     const latest = useRef(query);
-    const run = (q: string) => {
+    const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+    useEffect(() => () => clearTimeout(timer.current), []);
+    const run = (q: string, delay: number) => {
         latest.current = q;
-        // Shown at once; the results follow when the names have loaded.
-        setSearch(q, useStore.getState().found);
-        void loadNames().then((names) => {
-            if (latest.current === q) setSearch(q, search(q, names));
-        });
+        setQuery(q);
+        clearTimeout(timer.current);
+        timer.current = setTimeout(() => {
+            void loadNames().then((names) => {
+                if (latest.current === q) setSearch(q, search(q, names));
+            });
+        }, delay);
     };
     return (
         <Section title="Find a character" flush>
@@ -387,9 +399,9 @@ function Find() {
                     spellCheck={false}
                     onFocus={() => {
                         void loadNames();
-                        if (charset !== -1) run(query);
+                        if (charset !== -1) run(query, 0);
                     }}
-                    onChange={(e) => run(e.target.value)}
+                    onChange={(e) => run(e.target.value, SEARCH_DELAY_MS)}
                 />
             </div>
         </Section>

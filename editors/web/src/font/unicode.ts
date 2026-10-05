@@ -137,28 +137,109 @@ export function search(query: string, names: Names, limit = 1000): CharId[] {
         .split(/[\s-]+/)
         .filter(Boolean);
     const exact = q.toUpperCase();
-    const hits: [CharId, string][] = [];
-    const match = (id: CharId, text: string) => {
-        const textWords = text.split(/[ -]/);
-        if (words.every((w) => textWords.some((t) => t.startsWith(w)))) {
-            hits.push([id, text]);
-        }
-    };
-    for (const [cp, name] of names.chars) match(cp, name);
-    for (const [id, description] of names.sequences) {
-        const base = names.chars.get(unpack(id).base) ?? "";
-        match(id, `${base} ${description.toUpperCase()}`);
-    }
+    const index = searchIndex(names);
+    const hits = matching(index, words);
     hits.sort(
-        ([a, an], [b, bn]) =>
-            Number(bn === exact) - Number(an === exact) ||
-            an.length - bn.length ||
-            a - b,
+        (a, b) =>
+            Number(index.texts[b] === exact) -
+                Number(index.texts[a] === exact) ||
+            index.texts[a].length - index.texts[b].length ||
+            index.ids[a] - index.ids[b],
     );
-    for (const [id] of hits) {
+    for (const entry of hits) {
         if (out.length >= limit) break;
-        const { base, selector } = unpack(id);
+        const { base, selector } = unpack(index.ids[entry]);
         add(base, selector);
     }
     return out;
+}
+
+/**
+ * Every name and sequence description, split into words once: a sorted
+ * vocabulary with, per word, the entries that contain it. A query word
+ * then costs a binary search for the first vocabulary word it prefixes
+ * and a walk over the run of words it prefixes — what a trie would do,
+ * in flat arrays. Built on first search and kept on the `Names`.
+ */
+interface SearchIndex {
+    /** Entry → what it finds: a codepoint or a packed sequence. */
+    ids: CharId[];
+    /** Entry → its searchable text, upper case: a name, or a sequence's
+     * base name and description. */
+    texts: string[];
+    /** Every word, sorted. */
+    vocab: string[];
+    /** `vocab[k]` → the entries containing it, ascending. */
+    postings: Uint32Array[];
+}
+
+const indexes = new WeakMap<Names, SearchIndex>();
+
+function searchIndex(names: Names): SearchIndex {
+    const cached = indexes.get(names);
+    if (cached) return cached;
+    const ids: CharId[] = [];
+    const texts: string[] = [];
+    for (const [cp, name] of names.chars) {
+        ids.push(cp);
+        texts.push(name);
+    }
+    for (const [id, description] of names.sequences) {
+        const base = names.chars.get(unpack(id).base) ?? "";
+        ids.push(id);
+        texts.push(`${base} ${description.toUpperCase()}`);
+    }
+    const byWord = new Map<string, number[]>();
+    texts.forEach((text, entry) => {
+        for (const word of new Set(text.split(/[ -]/))) {
+            if (!word) continue;
+            const list = byWord.get(word);
+            if (list) list.push(entry);
+            else byWord.set(word, [entry]);
+        }
+    });
+    const vocab = [...byWord.keys()].sort();
+    const postings = vocab.map((word) =>
+        Uint32Array.from(byWord.get(word) ?? []),
+    );
+    const index = { ids, texts, vocab, postings };
+    indexes.set(names, index);
+    return index;
+}
+
+/** The entries in which every one of `words` starts some word. */
+function matching(index: SearchIndex, words: string[]): number[] {
+    // `seen[e]` counts the query words entry `e` has matched so far; an
+    // entry only advances on query word `q` if it matched all before it.
+    const seen = new Uint8Array(index.ids.length);
+    for (let q = 0; q < words.length; q++) {
+        const word = words[q];
+        for (
+            let k = lowerBound(index.vocab, word);
+            k < index.vocab.length;
+            k++
+        ) {
+            if (!index.vocab[k].startsWith(word)) break;
+            for (const entry of index.postings[k]) {
+                if (seen[entry] === q) seen[entry] = q + 1;
+            }
+        }
+    }
+    const hits: number[] = [];
+    for (let entry = 0; entry < seen.length; entry++) {
+        if (seen[entry] === words.length) hits.push(entry);
+    }
+    return hits;
+}
+
+/** The first index in sorted `list` whose word is not before `word`. */
+function lowerBound(list: string[], word: string): number {
+    let lo = 0;
+    let hi = list.length;
+    while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (list[mid] < word) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo;
 }
