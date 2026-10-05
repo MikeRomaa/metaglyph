@@ -94,17 +94,18 @@ fn a_cycle_lists_every_hop_as_related_information() {
 }
 
 #[test]
-fn the_sample_reports_its_curvature_errors_per_instance() {
+fn the_sample_reports_no_curvature_diagnostics() {
+    // Tight curves in the heavier instances are trimmed silently (spec
+    // §7.2).
     let (client, _, published) = evaluated(SAMPLE);
-    let curvature: Vec<&str> = published
-        .diagnostics
-        .iter()
-        .filter(|d| code(d) == "MG0618")
-        .map(|d| d.message.as_str())
-        .collect();
-    assert!(!curvature.is_empty());
-    assert!(curvature.iter().all(|m| m.ends_with(']')), "{curvature:#?}");
-    assert!(curvature.iter().any(|m| m.contains("Bold")));
+    assert!(
+        published
+            .diagnostics
+            .iter()
+            .all(|d| !d.message.contains("curvature")),
+        "{:#?}",
+        published.diagnostics
+    );
     client.stop();
 }
 

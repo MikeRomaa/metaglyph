@@ -137,7 +137,7 @@ fn a_duplicate_codepoint_is_reported_as_mg_check_does() {
         valid("glyph A (codepoint: 'A', advance: 1) {}\nglyph B (codepoint: 'A', advance: 1) {}");
     let published = client.open(&uri("dup.mg"), &text);
     let codes: Vec<&str> = published.diagnostics.iter().map(code).collect();
-    assert_eq!(codes, ["MG0805"]);
+    assert_eq!(codes, ["MG0705"]);
     client.stop();
 }
 

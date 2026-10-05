@@ -979,9 +979,9 @@ fn stroke_error_to_eval(
             mg_syntax::trimmed_range(&path.syntax),
             EvalError::NonPositiveStroke,
         ),
-        mg_geom::stroke::StrokeError::Curvature(violation) => (
+        mg_geom::stroke::StrokeError::Cusp(violation) => (
             span_of(violation.segment_index),
-            EvalError::CurvatureLimitExceeded {
+            EvalError::InteriorCusp {
                 segment_index: violation.segment_index,
                 local_t: violation.local_t,
             },
@@ -1169,7 +1169,7 @@ fn diagnostic_for(span: Range<usize>, err: EvalError) -> Diagnostic {
         EvalError::ZeroLengthSegment => codes::ZERO_LENGTH_SEGMENT,
         EvalError::ZeroLengthPath => codes::ZERO_LENGTH_PATH,
         EvalError::NonPositiveStroke => codes::NON_POSITIVE_STROKE,
-        EvalError::CurvatureLimitExceeded { .. } => codes::CURVATURE_LIMIT_EXCEEDED,
+        EvalError::InteriorCusp { .. } => codes::INTERIOR_CUSP,
         EvalError::SelfIntersectingFill { .. } => codes::SELF_INTERSECTING_FILL,
         EvalError::InnerCornerNoCrossing { .. } => codes::INNER_CORNER_NO_CROSSING,
     };

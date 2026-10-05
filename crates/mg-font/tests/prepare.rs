@@ -77,10 +77,9 @@ fn sample() -> Hir {
     lower(&source)
 }
 
-/// Every sample glyph that evaluates cleanly, in every instance. Some
-/// sample glyphs currently fail the spec §7.2 curvature check during
-/// evaluation (MG0618); those are skipped here rather than hidden, and
-/// the test fails if fewer than half the glyphs remain.
+/// Every sample glyph, in every instance. Tight curves in the heavier
+/// instances are trimmed with a warning (spec §7.2), not failed, so all
+/// 16 glyphs evaluate.
 #[test]
 fn the_sample_prepares_cleanly_in_every_instance() {
     let hir = sample();
@@ -103,8 +102,9 @@ fn the_sample_prepares_cleanly_in_every_instance() {
                     .contains(&mg_eval::NodeId::GlyphBbox(name.to_string()))
             })
             .collect();
-        assert!(
-            clean.len() >= 8,
+        assert_eq!(
+            clean.len(),
+            16,
             "{}: only {} clean glyphs",
             instance.name,
             clean.len()

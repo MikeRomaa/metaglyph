@@ -843,6 +843,8 @@ The argument against: `stroke` is a swept parameter. A design that is fine at Re
 
 **Decision: error.** It is a reversible decision with a real trade, so it is recorded here rather than folded silently into §1. If real designs trip it too often, the fallback is to implement resolution — and the interface between the two is just "what §8.3 does when it detects the condition."
 
+**Revised: resolve, silently.** Real designs did trip it: a narrow ellipse vertex in the `A220 Mono` sample's `!` was refused at its only weight. The fallback is now the decision (spec §7.2). A fold is trimmed the way the inner-corner trim already works, but the search for the crossing runs along the whole contour rather than two adjacent segments, since a fold's loop can reach past its own segment. The result is the ink of a round pen swept along the skeleton. Since that is a well-defined shape at any `stroke`, it carries no diagnostic: the swept-`stroke` concern above was about failing builds, and a resolved fold fails nothing.
+
 ### 9.3 Contour roles and winding direction
 
 Export must normalize, because the two formats disagree:

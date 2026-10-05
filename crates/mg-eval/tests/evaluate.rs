@@ -165,7 +165,10 @@ let w = glyphs.A.bbox.x1;
 }
 
 #[test]
-fn a_curvature_violation_is_reported_before_stroking() {
+fn tight_curvature_is_trimmed_silently() {
+    // A radius-2 circle stroked at 20 (spec §7.2): the pen fills the
+    // counter, so the ink is a solid disc of radius 12, with no
+    // diagnostic.
     let source = format!(
         r#"{PREAMBLE}
 glyph A (advance: 10) {{
@@ -180,12 +183,41 @@ glyph A (advance: 10) {{
     let hir = lower(&source);
     let instance = regular(&hir);
     let (_, outcome) = mg_eval::evaluate(&hir, instance);
-    assert!(outcome.failed.contains(&NodeId::PathBbox("A".into(), 0)));
-    assert_eq!(outcome.diagnostics.len(), 1, "{:#?}", outcome.diagnostics);
-    assert_eq!(
-        outcome.diagnostics[0].code,
-        mg_diag::codes::CURVATURE_LIMIT_EXCEEDED
+    assert!(!outcome.failed.contains(&NodeId::PathBbox("A".into(), 0)));
+    assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
+    let bbox = outcome.values[&NodeId::PathBbox("A".into(), 0)]
+        .as_rect()
+        .unwrap();
+    assert!((bbox.x1 - bbox.x0 - 24.0).abs() < 0.1, "{bbox:?}");
+
+    let contours = mg_eval::render_glyph(
+        &hir,
+        instance,
+        "A",
+        &outcome.values,
+        &outcome.failed,
+        &mut Vec::new(),
+    )
+    .unwrap();
+    assert_eq!(contours.len(), 1, "the counter is filled");
+}
+
+#[test]
+fn an_interior_cusp_is_an_error() {
+    let source = format!(
+        r#"{PREAMBLE}
+glyph A (advance: 10) {{
+  path p (stroke: 2) {{
+    start (at: (0, 0))
+    cube (c1: (1, 0), c2: (0.5, -0.5), to: (0.5, 0.5))
+  }}
+}}
+"#
     );
+    let hir = lower(&source);
+    let (_, outcome) = mg_eval::evaluate(&hir, regular(&hir));
+    assert!(outcome.failed.contains(&NodeId::PathBbox("A".into(), 0)));
+    assert_eq!(outcome.diagnostics[0].code, mg_diag::codes::INTERIOR_CUSP);
 }
 
 #[test]
@@ -603,4 +635,33 @@ glyph O (advance: 600) {{
     let east = pair("east");
     assert!((east.x - 550.0).abs() < 1e-9 && (east.y - 350.0).abs() < 1e-9, "{east:?}");
     assert_eq!(num(&outcome.values, local("rx")), 250.0);
+}
+
+#[test]
+fn a_narrow_filled_and_stroked_path_evaluates_cleanly() {
+    // The `!` in samples/a22x-mono.mg with `fill: true`: its arcs' piece
+    // joints are not self-crossings (spec §8.3), and the stroke's tight
+    // vertices are trimmed silently (spec §7.2).
+    let source = format!(
+        r#"{PREAMBLE}
+glyph exclam (advance: 500) {{
+  let upper = ellipse((250, 880), 60, 120);
+  let lower = ellipse((250, 500), 25, 50);
+  let upper0 = cast(lineAt(upper.center, 185deg), upper);
+  let upper1 = cast(lineAt(upper.center, -5deg), upper);
+  let lower0 = cast(lineAt(lower.center, -5deg), lower);
+  let lower1 = cast(lineAt(lower.center, 185deg), lower);
+  path top (stroke: 100, joins: "round", fill: true) {{
+    start (at: upper0)
+    arc   (to: upper1, rx: 60, ry: 120, sweep: "cw", large: true)
+    line  (to: lower0)
+    arc   (to: lower1, rx: 25, ry: 50, sweep: "cw")
+    close
+  }}
+}}
+"#
+    );
+    let hir = lower(&source);
+    let (_, outcome) = mg_eval::evaluate(&hir, regular(&hir));
+    assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
 }

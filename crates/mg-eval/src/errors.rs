@@ -49,10 +49,10 @@ pub enum EvalError {
     ZeroLengthPath,
     /// `stroke` is not greater than zero (spec §7.3).
     NonPositiveStroke,
-    /// The curvature radius drops below `stroke / 2` somewhere in a
-    /// segment's interior (spec §7.2). `local_t` is that segment's own
-    /// `[0, 1]` domain, not the spec §5.9 path-query one.
-    CurvatureLimitExceeded {
+    /// A stroked segment's derivative vanishes at an interior point
+    /// (spec §7.3). `local_t` is that segment's own `[0, 1]` domain, not
+    /// the spec §5.9 path-query one.
+    InteriorCusp {
         segment_index: usize,
         local_t: std::ops::Range<f64>,
     },
@@ -119,15 +119,15 @@ impl std::fmt::Display for EvalError {
             EvalError::ZeroLengthSegment => write!(f, "zero-length segment"),
             EvalError::ZeroLengthPath => write!(f, "path has zero total arc length"),
             EvalError::NonPositiveStroke => write!(f, "`stroke` must be greater than 0"),
-            EvalError::CurvatureLimitExceeded {
+            EvalError::InteriorCusp {
                 segment_index,
                 local_t,
             } => {
                 write!(
                     f,
-                    "curvature radius drops below `stroke / 2` in segment {segment_index} \
-                     over parameters {:.4}..{:.4}",
-                    local_t.start, local_t.end
+                    "segment {segment_index} has a cusp at parameter {:.4}, where its \
+                     stroke has no direction",
+                    (local_t.start + local_t.end) / 2.0
                 )
             }
             EvalError::SelfIntersectingFill { crossings } => {

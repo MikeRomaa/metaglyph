@@ -969,23 +969,26 @@ glyph a (advance: w) {
 
     #[test]
     fn a_drag_bottoms_out_before_the_source_becomes_invalid() {
-        // `a`'s stem arc has stroke 50 about `arc_ctr` with radius
-        // `arc_radius = 0.500 * w`: a radius below 25 (stroke / 2) is a
-        // curvature error, so shrinking it stops just above 25 / 500.
-        let mut s = session("a", "arc0");
-        while s.info().axis[0].map(|i| s.drivers[i].owner.as_str()) != Some("arc_radius") {
+        // `sqrt(k)` is a domain error below 0, so dragging `k` down stops
+        // just above it, at the literal's own precision (0.001).
+        let source = "font (name: \"T\", em: 1000)\nmetric baseline (y: 0)\nmetric xHeight (y: 500)\nmetric capHeight (y: 700)\nmetric ascender (y: 800)\nmetric descender (y: -200)\ninstance Regular ()\nglyph A (advance: 500) {\n    let k = 4.000;\n    let p = (sqrt(k) * 100, 0);\n}\n";
+        let model = crate::doc::analyze(source, 0).1.expect("evaluates");
+        let mut s = Session::begin(Rc::new(model), "Regular", "A", "p", [None, None]).unwrap();
+        for _ in 0..s.info().drivers.len() {
+            if s.info().drivers[s.info().axis[0].unwrap()].literal == "4.000" {
+                break;
+            }
             s.cycle(0);
         }
-        let radius = s.info().axis[0].unwrap();
-        let step = s.set(radius, 0.001);
+        let k = s.info().axis[0].unwrap();
+        let step = s.set(k, -1.0);
         assert!(step.limited, "{step:?}");
         let (_, literal) = &step.literals[0];
         let value: f64 = literal.parse().unwrap();
-        assert!(value >= 0.05, "stopped at {value}");
-        assert!(value < 0.2, "stopped near the extreme, at {value}");
-        // The value it stopped at is valid; one step further is not.
-        assert!(s.valid(&[(radius, value)]));
-        assert!(!s.valid(&[(radius, value - 0.001)]));
+        assert!((0.0..0.2).contains(&value), "stopped at {value}");
+        // The value it stopped at is valid; past 0 is not.
+        assert!(s.valid(&[(k, value)]));
+        assert!(!s.valid(&[(k, -0.001)]));
     }
 
     #[test]

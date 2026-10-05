@@ -2,9 +2,9 @@
 ///
 /// Codes are grouped by class: `MG01xx` syntax, `MG02xx` name resolution,
 /// `MG03xx` type checking, `MG04xx` field validation, `MG05xx` path
-/// structure, `MG06xx` evaluation and domain errors, `MG07xx` geometry,
-/// `MG08xx` export. Each milestone adds its codes here; a shipped code is
-/// never renumbered or reused for a different error.
+/// structure, `MG06xx` evaluation, domain, and geometry errors, `MG07xx`
+/// export. Within a class, codes are numbered sequentially from `01`, with
+/// no gaps; a new code takes the next number in its class.
 ///
 /// All codes live in this one file, regardless of which crate raises
 /// them, so the whole numbering scheme can be read (and grepped) in one
@@ -108,11 +108,8 @@ pub const INVALID_REFLECTION: Code = Code::new("MG0508");
 // -- MG06xx: evaluation and domain errors (mg-eval) -----------------------
 //
 // Includes cycles, arithmetic/geometric domain errors, and the geometry
-// kernel's own errors (spec §7–§8): degenerate stroke/fill input, the
-// curvature limit, and self-intersecting fills. MG0610 and MG0612 are
-// deliberately unused — they briefly named M3-scope stubs ("stroking not
-// yet implemented," "needs Bézier clipping") that M4 fully resolved, so
-// per this file's own rule the numbers are retired rather than reused.
+// kernel's own errors (spec §7–§8): degenerate stroke/fill input, interior
+// cusps, unresolvable inner corners, and self-intersecting fills.
 
 pub const CYCLE: Code = Code::new("MG0601");
 pub const DIVISION_BY_ZERO: Code = Code::new("MG0602");
@@ -123,57 +120,57 @@ pub const PATH_PARAMETER_OUT_OF_DOMAIN: Code = Code::new("MG0606");
 pub const EMPTY_LIST_REDUCTION: Code = Code::new("MG0607");
 pub const GLYPH_HAS_NO_INK: Code = Code::new("MG0608");
 pub const NO_AXIS_ALIGNED_ELLIPSE: Code = Code::new("MG0609");
-pub const ZERO_LENGTH_SEGMENT: Code = Code::new("MG0611");
-pub const POWER_DOMAIN_ERROR: Code = Code::new("MG0613");
-pub const ZERO_VECTOR: Code = Code::new("MG0614");
+pub const ZERO_LENGTH_SEGMENT: Code = Code::new("MG0610");
+pub const POWER_DOMAIN_ERROR: Code = Code::new("MG0611");
+pub const ZERO_VECTOR: Code = Code::new("MG0612");
 /// A radii-mode `arc` (spec §6.3) whose chord is longer than `rx`/`ry` can
 /// span, or whose `rx`/`ry` is non-positive.
-pub const RADII_TOO_SMALL_FOR_CHORD: Code = Code::new("MG0615");
+pub const RADII_TOO_SMALL_FOR_CHORD: Code = Code::new("MG0613");
 /// A path being stroked or filled has zero total arc length (spec §7.3).
-pub const ZERO_LENGTH_PATH: Code = Code::new("MG0616");
+pub const ZERO_LENGTH_PATH: Code = Code::new("MG0614");
 /// `stroke` is not greater than zero (spec §7.3).
-pub const NON_POSITIVE_STROKE: Code = Code::new("MG0617");
-/// The curvature radius drops below `stroke / 2` in a segment's interior
-/// (spec §7.2).
-pub const CURVATURE_LIMIT_EXCEEDED: Code = Code::new("MG0618");
+pub const NON_POSITIVE_STROKE: Code = Code::new("MG0615");
 /// A filled contour crosses itself (spec §8.3).
-pub const SELF_INTERSECTING_FILL: Code = Code::new("MG0619");
+pub const SELF_INTERSECTING_FILL: Code = Code::new("MG0616");
 /// A corner's inner offsets don't cross within its two adjacent segments
 /// (spec §7.4): a sharp turn beside a segment too short for the stroke. A
 /// 180° reversal also has no crossing, but is a legitimate shape, not this
 /// error.
-pub const INNER_CORNER_NO_CROSSING: Code = Code::new("MG0620");
+pub const INNER_CORNER_NO_CROSSING: Code = Code::new("MG0617");
 /// `lineThrough` of two equal points (spec §5.9).
-pub const LINE_THROUGH_ONE_POINT: Code = Code::new("MG0621");
+pub const LINE_THROUGH_ONE_POINT: Code = Code::new("MG0618");
 /// An `ellipse` or `circle` radius ≤ 0 (spec §5.9).
-pub const NON_POSITIVE_RADIUS: Code = Code::new("MG0622");
+pub const NON_POSITIVE_RADIUS: Code = Code::new("MG0619");
 /// `cast` with no crossing ahead of the line's origin (spec §5.9).
-pub const CAST_MISSES_ELLIPSE: Code = Code::new("MG0623");
+pub const CAST_MISSES_ELLIPSE: Code = Code::new("MG0620");
+/// A stroked segment whose derivative vanishes at an interior point
+/// (spec §7.3).
+pub const INTERIOR_CUSP: Code = Code::new("MG0621");
 
-// -- MG08xx: export (mg-font) ---------------------------------------------
+// -- MG07xx: export (mg-font) ---------------------------------------------
 
 /// A filled contour that was simple before quantization crosses itself
 /// after it (spec §10.4 step 4).
-pub const QUANTIZED_FILL_SELF_INTERSECTS: Code = Code::new("MG0801");
+pub const QUANTIZED_FILL_SELF_INTERSECTS: Code = Code::new("MG0701");
 /// A point, component offset, or glyph bounding box outside `glyf`'s
 /// int16 range (spec §10.5).
-pub const COORDINATE_OUT_OF_RANGE: Code = Code::new("MG0802");
+pub const COORDINATE_OUT_OF_RANGE: Code = Code::new("MG0702");
 /// A glyph with more points or contours than `maxp`'s uint16 counts
 /// allow, or a font with more than 65535 glyphs (spec §10.5).
-pub const GLYPH_LIMIT_EXCEEDED: Code = Code::new("MG0803");
+pub const GLYPH_LIMIT_EXCEEDED: Code = Code::new("MG0703");
 /// Components nest deeper than `COMPONENT_DEPTH` (spec §10.1).
-pub const COMPONENT_TOO_DEEP: Code = Code::new("MG0804");
+pub const COMPONENT_TOO_DEEP: Code = Code::new("MG0704");
 /// One codepoint mapped by more than one glyph (spec §10.6).
-pub const DUPLICATE_CODEPOINT: Code = Code::new("MG0805");
+pub const DUPLICATE_CODEPOINT: Code = Code::new("MG0705");
 /// A surrogate or noncharacter codepoint (spec §10.6).
-pub const UNENCODABLE_CODEPOINT: Code = Code::new("MG0806");
+pub const UNENCODABLE_CODEPOINT: Code = Code::new("MG0706");
 /// An advance width outside `hmtx`'s uint16 range.
-pub const ADVANCE_OUT_OF_RANGE: Code = Code::new("MG0807");
+pub const ADVANCE_OUT_OF_RANGE: Code = Code::new("MG0707");
 /// A `kern` value outside GPOS's int16 range.
-pub const KERN_OUT_OF_RANGE: Code = Code::new("MG0808");
+pub const KERN_OUT_OF_RANGE: Code = Code::new("MG0708");
 /// One variation sequence mapped by more than one glyph (spec §10.6).
-pub const DUPLICATE_VARIATION_SEQUENCE: Code = Code::new("MG0809");
+pub const DUPLICATE_VARIATION_SEQUENCE: Code = Code::new("MG0709");
 /// Warning: a VS1–VS16 sequence Unicode does not standardize (spec §10.6).
-pub const UNSTANDARDIZED_VARIATION_SEQUENCE: Code = Code::new("MG0810");
+pub const UNSTANDARDIZED_VARIATION_SEQUENCE: Code = Code::new("MG0710");
 /// Warning: a variation sequence whose base no glyph encodes (spec §10.6).
-pub const VARIATION_BASE_NOT_ENCODED: Code = Code::new("MG0811");
+pub const VARIATION_BASE_NOT_ENCODED: Code = Code::new("MG0711");

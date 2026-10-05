@@ -51,9 +51,9 @@ source files
   → build dependency graph         → per-glyph node sets (§4)
   → topological evaluation         → all values known (§4)
   → geometry realization           → skeleton paths (cubic Béziers) + stroke widths (§6)
-  → curvature check                → tight-curvature errors (§7.2)
   → offset generation              → per-stroke outline contours (§7);
                                      filled paths bypass this stage
+  → fold trim                      → tight curves resolved (§7.2)
   → contour roles + winding        → roles and direction (§8)
   → slant                          → instance shear applied to outlines (§12.3)
   → extrema insertion              → on-curve points at x/y extrema (§10.2)
@@ -654,7 +654,7 @@ glyph A (codepoint: U+0041, rsb: sidebear) {
 - Counters form between separate overlapping open paths, such as the stem and bowl of `B` or the spine and bowl of `6`: no contour covers the enclosed area, so nonzero winding leaves it empty.
 - A filled contour nested inside another filled contour is a counter (§8.1).
 
-**Filling.** `fill: true` inks the closed path's interior. The path's own skeleton is the contour; no offsetting happens, so caps, joins, and the §7.2 curvature limit do not apply to it.
+**Filling.** `fill: true` inks the closed path's interior. The path's own skeleton is the contour; no offsetting happens, so caps, joins, and fold trimming (§7.2) do not apply to it.
 
 ```
 path wedge (fill: true) {                   // wide base, rounded top
@@ -686,17 +686,27 @@ This stage processes paths that declare `stroke`. A `fill`-only path passes stra
 
 The stroke boundary is `p(t) ± r·n̂(t)` with `r = stroke/2`, plus the caps and joins of §6.4. The generated outline consists of cubic Béziers whose Hausdorff distance from that exact boundary is at most `OFFSET_TOLERANCE` (§14). The approximation method is the implementation's choice.
 
-### 7.2 Curvature limit
+### 7.2 Tight curvature
 
-Within the interior of any skeleton segment, the curvature radius must not be smaller than `r`. Where it is, the offset on the concave side folds back. Corners between segments are not subject to this check; joins handle them. The joints between an `arc`'s cubic pieces are interior to that segment and are checked. A skeleton segment whose derivative vanishes at an interior point (a cusp) also fails the check.
+Where the curvature radius inside a skeleton segment is smaller than `r`, the offset on the concave side folds back on itself: it doubles back past the curve's centre of curvature and crosses itself, leaving a small reversed loop (a swallowtail) — the same kind of inner-side self-crossing §7.4 trims at corners. Where the fold reaches all the way round a closed path, the offset also cuts a counter the pen actually fills. The joints between an `arc`'s cubic pieces are interior to that segment; corners between segments are not, and joins handle them (§6.4).
 
-This is an **error**, checked before offset generation. Report the glyph, the path, the segment, the parameter interval, and the instance being built.
+**Folds are resolved.** The stroke's ink is defined as a round pen of radius `r` swept along the skeleton, so on the concave side of a fold the ink edge is the part of the offset that stays at least `r` from the skeleton. After offset generation, every fold is trimmed:
+
+1. A **fold interval** is a maximal parameter interval inside one segment where the curvature radius is below `r` on the side the curve turns toward.
+2. The output contour crosses itself around each fold. Starting from the fold, search outward along the contour, in both directions, for the nearest crossing pair that encloses the fold's reversed piece. Cut both pieces at that crossing and drop the loop between them. The inner edge then meets itself at one point: a corner on the outline where the skeleton has none.
+3. The search covers the whole contour: other segments' offsets, joins, and caps. A fold that runs into a cap is cut where the folded offset crosses the cap.
+4. A closed path's counter contour (§8.1) that has no length left after trimming is dropped: the stroke has filled the counter.
+
+Trimming never changes the outer side of the stroke. When folds overlap or adjoin, they are trimmed as one loop.
+
+Folds produce **no diagnostic**: the stroke is the pen's ink, and a tight curve is a legitimate shape at any `stroke`.
 
 ### 7.3 Degenerate input
 
 - A path with zero total arc length → geometry error.
 - A segment whose endpoint equals its start point → geometry error. The omitted closing segment of §5.7 is exempt.
 - `stroke` ≤ 0 → geometry error.
+- A segment of a stroked path whose derivative vanishes at an interior point (a cusp) → geometry error. Its offset has no defined direction there.
 
 An open path whose final point coincides with its start point is valid; it is capped at both ends.
 
@@ -741,7 +751,7 @@ Compute the signed area of each contour and reverse any contour whose direction 
 
 ### 8.3 Self-intersecting fills
 
-A self-intersecting filled contour is an **error**, naming the glyph, the path, and the parameter values of each crossing. It is not resolved. Detection is a curve–curve intersection test over the contour's own segments, excluding the shared endpoints of adjacent segments.
+A self-intersecting filled contour is an **error**, naming the glyph, the path, and the parameter values of each crossing. It is not resolved. Detection is a curve–curve intersection test over the contour's own segments, excluding the shared endpoints of adjacent segments. Where adjacent pieces meet tangentially (an `arc`'s own cubic pieces), they stay within the solver's tolerance of each other a short way past the joint, so a hit between neighbours within `1e-3` of the shorter piece's length of their shared point is that joint, not a crossing.
 
 ---
 
@@ -1014,7 +1024,7 @@ Every diagnostic names a source location, an entity, and where possible a fix. D
 | Name resolution | Unresolved identifier with scope and near-miss suggestions; duplicate definition; shadowing a top-level name; reserved word as a declaration name; anchor named `advance` or `bbox` |
 | Cycle | Circular definition, reported as the full cycle path with file and line per hop, plus a suggested edge to break (§4.3) |
 | Domain | `sqrt` of a negative; division by zero; `asin`/`acos` out of range; `meet` on parallel lines; `lineThrough` of two equal points; an `ellipse` or `circle` radius ≤ 0; `cast` with no crossing ahead of the line's origin; path parameter out of domain; `minOf`/`maxOf` of an empty list; `.bbox` of a glyph with no ink |
-| Geometry | Zero-length path or segment; a centre-mode `arc` whose endpoints admit no axis-aligned ellipse about its `center`, or a radii-mode `arc` whose chord is longer than its radii can span (§6.3); `stroke` ≤ 0; curvature radius below `stroke/2` (§7.2), naming glyph, path, segment, parameter interval, and instance; a corner whose inner offsets do not cross within its two adjacent segments (§7.4), naming glyph, path, segment, and instance; a self-intersecting filled contour (§8.3) |
+| Geometry | Zero-length path or segment; a centre-mode `arc` whose endpoints admit no axis-aligned ellipse about its `center`, or a radii-mode `arc` whose chord is longer than its radii can span (§6.3); `stroke` ≤ 0; an interior cusp in a stroked segment (§7.3); a corner whose inner offsets do not cross within its two adjacent segments (§7.4), naming glyph, path, segment, and instance; a self-intersecting filled contour (§8.3) |
 | Path structure | Every structural error of §6.3 |
 | Metrics | A missing reserved metric; `baseline.y` ≠ 0; negative `overshoot` |
 | Export | Point or contour count over `maxp` limits; coordinate out of int16 range; `kern` or `group` naming an undefined glyph; duplicate, surrogate, or noncharacter codepoint; duplicate variation sequence, or one with a surrogate or noncharacter base; component cycle or excessive depth; self-intersection introduced by quantization; kerning group overlap (§12.2) |
@@ -1064,7 +1074,7 @@ Named constants. Tolerances scale with the em size.
    - Caps and joins match §6.4: `"butt"` perpendicular to the end tangent; `"square"` extended by `r`; `"round"` a semicircle of radius `r`; `"miter"` falling back to `"bevel"` past `MITER_LIMIT`; `joinAt` overriding `joins` at one vertex only.
    - Each degenerate case of §7.3 produces its named error.
 4. **Differential test against an independent SVG stroker** — same path, `stroke`, caps, and joins. Rasterize both outlines and assert the coverage difference stays within the area of a `2 · OFFSET_TOLERANCE` band along the boundary.
-5. **Curvature validation** — fuzz random paths against random stroke widths and assert that the §7.2 check fires exactly when the exact offset folds back within a segment interior.
+5. **Fold trimming** — fuzz random paths against random stroke widths. Assert that the trimmed outline matches the swept pen: rasterize it and the union of discs of radius `r` densely along the skeleton (plus caps and joins), and require the coverage difference to stay within a `2 · OFFSET_TOLERANCE` band along the boundary. Golden cases: an ellipse arc tighter than `r` at its vertex (the inner edge comes to a point); a fold reaching an open path's round cap; a closed ellipse whose counter closes up entirely.
 6. **Fills and contour roles**
    - A filled closed path produces its skeleton as one contour.
    - A fill nested in a fill produces a hole.
@@ -1083,7 +1093,7 @@ Acceptance test: build a typeface covering uppercase, lowercase, digits, and bas
 
 1. **DSL surface** — grammar, lexer, lossless syntax tree, AST lowering, name resolution, static type checking, stable node identity, formatter. Written against §5. Read first: per-field validation of string-valued enums (§5.5) and element-typed tuples (§5.8).
 2. **Evaluation engine** — dependency graph construction from name references, topological evaluation, cycle detection with full-path reporting, the construction library, failure containment, incremental re-evaluation. (§4, §5.9, §13)
-3. **Geometry kernel** — path segments (lines, quadratic and cubic Béziers, elliptical arcs), constant-width offset generation with caps and joins, the curvature check, filled contours and their self-intersection check, contour roles and winding normalization. (§6, §7, §8)
+3. **Geometry kernel** — path segments (lines, quadratic and cubic Béziers, elliptical arcs), constant-width offset generation with caps and joins, fold trimming, filled contours and their self-intersection check, contour roles and winding normalization. (§6, §7, §8)
 4. **Font compiler** — slant, extrema insertion, curve conversion, zone snapping and quantization, table assembly for TTF/OTF/WOFF2, hinting, metrics, kerning, instances. (§10, §11, §12, §14)
 5. **Editor projection layer** — structured edits per tool, inverse drag, dependency inspection, partial-text tolerance, incremental redraw. (§9)
 

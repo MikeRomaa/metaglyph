@@ -333,7 +333,12 @@ fn cmd_svg(
             &mut contours,
         );
         println!("{}", render_svg(&contours));
-        return if outcome.diagnostics.is_empty() && prepare_diagnostics.is_empty() {
+        let errors = outcome
+            .diagnostics
+            .iter()
+            .chain(&prepare_diagnostics)
+            .any(|d| d.severity == mg_diag::Severity::Error);
+        return if !errors {
             ExitCode::SUCCESS
         } else {
             ExitCode::FAILURE
@@ -363,7 +368,11 @@ fn cmd_svg(
     // Printed regardless (this glyph rendered fine even if some unrelated
     // node elsewhere in the font failed), matching `cmd_dump_graph`'s own
     // "always show what you can, signal failure via exit code" shape.
-    if outcome.diagnostics.is_empty() {
+    if !outcome
+        .diagnostics
+        .iter()
+        .any(|d| d.severity == mg_diag::Severity::Error)
+    {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
@@ -512,7 +521,7 @@ fn cmd_dump_graph(files: &[PathBuf], instance_name: Option<&str>) -> ExitCode {
 
         for diagnostic in &outcome.diagnostics {
             print_diagnostic(&mut stderr, diagnostic, &filename, &source);
-            had_errors = true;
+            had_errors |= diagnostic.severity == mg_diag::Severity::Error;
         }
     }
 

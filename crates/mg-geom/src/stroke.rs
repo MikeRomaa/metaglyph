@@ -1,7 +1,7 @@
 //! Stroking (spec §6.4, §7). Offset generation itself is `kurbo::stroke`
 //! (spec plan M4's stroker decision); what this module adds is everything
 //! kurbo can't do on its own:
-//! - the spec §7.2/§7.3 checks that must run *before* kurbo is called,
+//! - the spec §7.3 checks that must run *before* kurbo is called,
 //! - join splicing, since kurbo takes one join style for the whole path
 //!   and `joinAt` needs a different join at one vertex (spec plan M4:
 //!   "stroking with `Join::Bevel` and rewriting each corner's bevel chord
@@ -14,12 +14,21 @@
 //!   raw chord, which is exactly the self-overlapping "spike" spec §7.4
 //!   now forbids. This cuts both offsets at their own crossing nearest
 //!   the corner instead, so the inner side meets at one point,
+//! - fold trimming (spec §7.2): where the skeleton curves tighter than
+//!   the stroke radius, the concave-side offset doubles back and crosses
+//!   itself, leaving a reversed loop that the nonzero rule would punch
+//!   out of the ink. Each loop is cut at the nearest self-crossing around
+//!   it, so the inner edge meets itself at one point — the ink of a round
+//!   pen swept along the skeleton,
 //! - assigning each output contour its role (spec §8.1), which kurbo's
 //!   subpath emission order does not track.
 
-use kurbo::{BezPath, Line, ParamCurve, PathEl, PathSeg, Point, Vec2};
+use kurbo::{
+    BezPath, Line, ParamCurve, ParamCurveArclen, ParamCurveNearest, PathEl, PathSeg, Point, Shape,
+    Vec2,
+};
 
-use crate::curvature::{self, CurvatureViolation};
+use crate::curvature::{self, CurvatureViolation, Fold};
 use crate::intersect;
 use crate::skeleton::{self, Skeleton, Sweep};
 use crate::tolerance::MITER_LIMIT;
@@ -70,7 +79,9 @@ pub enum StrokeError {
     ZeroLengthPath,
     /// `stroke` is not greater than zero (spec §7.3).
     NonPositiveStroke,
-    Curvature(CurvatureViolation),
+    /// A segment's derivative vanishes at an interior point (spec §7.3):
+    /// its offset has no direction there.
+    Cusp(CurvatureViolation),
     /// A corner's inner offsets don't cross within its two adjacent
     /// segments (spec §7.4): a sharp turn beside a segment too short for
     /// the stroke. `segment_index` is the drawn segment the corner ends.
@@ -81,17 +92,36 @@ pub enum StrokeError {
     },
 }
 
-/// Strokes `skeleton` per `spec` (spec §6.4, §7), returning every output
-/// contour with its role already assigned: one outer contour for an open
-/// path, an (outer, counter) pair for a closed one. No extra contours:
-/// every corner needing a join other than `"bevel"` gets it by rewriting
-/// `Join::Bevel`'s own chord in place (spec plan M4's "join splicing").
+/// A stroke's contours, with roles, and the folds trimmed from them
+/// (spec §7.2), which the caller reports as warnings.
+#[derive(Debug, Clone)]
+pub struct Stroked {
+    pub contours: Vec<(BezPath, ContourRole)>,
+    pub folds: Vec<CurvatureViolation>,
+}
+
+/// [`stroke_path_with_folds`]'s contours alone.
 pub fn stroke_path(
     skeleton: &Skeleton,
     closed: bool,
     spec: &StrokeSpec,
     offset_tolerance: f64,
 ) -> Result<Vec<(BezPath, ContourRole)>, StrokeError> {
+    stroke_path_with_folds(skeleton, closed, spec, offset_tolerance).map(|s| s.contours)
+}
+
+/// Strokes `skeleton` per `spec` (spec §6.4, §7), returning every output
+/// contour with its role already assigned: one outer contour for an open
+/// path, an (outer, counter) pair for a closed one — or the outer alone
+/// when folds fill the counter (spec §7.2). No extra contours: every
+/// corner needing a join other than `"bevel"` gets it by rewriting
+/// `Join::Bevel`'s own chord in place (spec plan M4's "join splicing").
+pub fn stroke_path_with_folds(
+    skeleton: &Skeleton,
+    closed: bool,
+    spec: &StrokeSpec,
+    offset_tolerance: f64,
+) -> Result<Stroked, StrokeError> {
     if spec.width <= 0.0 {
         return Err(StrokeError::NonPositiveStroke);
     }
@@ -100,9 +130,7 @@ pub fn stroke_path(
     }
 
     let r = spec.width / 2.0;
-    if let Some(violation) = curvature::check(skeleton, r) {
-        return Err(StrokeError::Curvature(violation));
-    }
+    let folds = curvature::folds(skeleton, r).map_err(StrokeError::Cusp)?;
 
     let style = kurbo::Stroke::new(spec.width)
         .with_join(kurbo::Join::Bevel)
@@ -116,20 +144,14 @@ pub fn stroke_path(
         offset_tolerance,
     );
 
-    let mut subpaths = split_subpaths(&stroked);
-    let mut result = Vec::with_capacity(subpaths.len());
-    if closed {
-        let b = subpaths.pop().expect("a closed stroke yields two subpaths");
-        let a = subpaths.pop().expect("a closed stroke yields two subpaths");
-        debug_assert!(subpaths.is_empty());
-        let [(role_a, role_b)] = winding::stroke_closed_roles(&a, &b);
-        result.push((a, role_a));
-        result.push((b, role_b));
-    } else {
-        let contour = subpaths.pop().expect("an open stroke yields one subpath");
-        debug_assert!(subpaths.is_empty());
-        result.push((contour, ContourRole::Outer));
-    }
+    // Roles are assigned last: until the folds are trimmed, a counter can
+    // poke out of its outer contour. `Outer` is a placeholder until then.
+    let subpaths = split_subpaths(&stroked);
+    debug_assert_eq!(subpaths.len(), if closed { 2 } else { 1 });
+    let mut result: Vec<(BezPath, ContourRole)> = subpaths
+        .into_iter()
+        .map(|contour| (contour, ContourRole::Outer))
+        .collect();
 
     for corner in corners(skeleton, closed) {
         let join = spec
@@ -139,6 +161,13 @@ pub fn stroke_path(
             .map_or(spec.default_join, |&(_, join)| join);
         splice_join(&mut result, &corner, join, r, offset_tolerance);
         trim_inner_corner(&mut result, &corner, r, offset_tolerance)?;
+    }
+
+    for fold in &folds {
+        trim_fold(&mut result, fold, skeleton, r, offset_tolerance);
+    }
+    if closed {
+        assign_closed_roles(&mut result, skeleton, r, offset_tolerance);
     }
 
     // Every later stage treats a `MoveTo` as the start of a new contour,
@@ -153,7 +182,230 @@ pub fn stroke_path(
         "every stroke contour is a single subpath"
     );
 
-    Ok(result)
+    Ok(Stroked {
+        contours: result,
+        folds: folds.into_iter().map(|f| f.at).collect(),
+    })
+}
+
+/// Gives a closed stroke's contours their roles (spec §8.1): the larger
+/// is the outer, the other its counter. A counter the stroke has filled
+/// (spec §7.2) is dropped: one with no point inside it farther than `r`
+/// from the skeleton — the pen covers all of it — or a sliver thinner
+/// than `tolerance` left by trimming.
+fn assign_closed_roles(
+    contours: &mut Vec<(BezPath, ContourRole)>,
+    skeleton: &Skeleton,
+    r: f64,
+    tolerance: f64,
+) {
+    if contours.len() != 2 {
+        return;
+    }
+    let (a, b) = (contours[0].0.area(), contours[1].0.area());
+    let counter = if a.abs() >= b.abs() { 1 } else { 0 };
+    if counter_is_filled(&contours[counter].0, skeleton, r, tolerance) {
+        contours.remove(counter);
+        contours[0].1 = ContourRole::Outer;
+        return;
+    }
+    let [(role_a, role_b)] = winding::stroke_closed_roles(&contours[0].0, &contours[1].0);
+    contours[0].1 = role_a;
+    contours[1].1 = role_b;
+}
+
+/// Whether the pen of radius `r` swept along `skeleton` covers all of
+/// `counter`'s inside: sampled on a grid over its bounding box.
+fn counter_is_filled(counter: &BezPath, skeleton: &Skeleton, r: f64, tolerance: f64) -> bool {
+    const GRID: usize = 24;
+    let perimeter: f64 = counter.segments().map(|s| s.arclen(tolerance)).sum();
+    if counter.area().abs() <= tolerance * perimeter {
+        return true;
+    }
+    let bbox = counter.bounding_box();
+    // Flattened: kurbo's `BezPath::winding` misjudges some points just
+    // outside a cubic (a point 0.7 units off an offset curve reads as
+    // inside), and a polygon within `tolerance / 10` of it doesn't.
+    let mut polygon = BezPath::new();
+    kurbo::flatten(counter.elements().iter().copied(), tolerance / 10.0, |el| {
+        polygon.push(el)
+    });
+    let pieces: Vec<PathSeg> = skeleton.path.segments().collect();
+    let reach_sq = (r - tolerance).powi(2);
+    for i in 0..GRID {
+        for j in 0..GRID {
+            let p = Point::new(
+                bbox.x0 + bbox.width() * (i as f64 + 0.5) / GRID as f64,
+                bbox.y0 + bbox.height() * (j as f64 + 0.5) / GRID as f64,
+            );
+            if polygon.winding(p) != 0
+                && pieces.iter().all(|seg| seg.nearest(p, 1e-6).distance_sq > reach_sq)
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Trims one fold (spec §7.2): finds the contour piece passing through the
+/// fold's anchor — the concave-side offset at its tightest spot, which
+/// lies on the reversed loop — then searches outward along the contour,
+/// nearest first, for a self-crossing that encloses it, and cuts the loop
+/// out there. The search runs over the whole contour (other segments'
+/// offsets, joins, caps), since a loop can reach past its own segment.
+///
+/// No piece through the anchor means an earlier trim already removed this
+/// loop (overlapping folds are trimmed once). No enclosing crossing means
+/// the offset reversed without crossing itself — a counter that folds
+/// all the way round — which [`assign_closed_roles`] drops.
+fn trim_fold(
+    contours: &mut [(BezPath, ContourRole)],
+    fold: &Fold,
+    skeleton: &Skeleton,
+    r: f64,
+    tolerance: f64,
+) {
+    // The anchor is on the exact offset; kurbo's is within `tolerance` of
+    // it, and the nearest-point solve adds its own slack.
+    let reach = (4.0 * tolerance).max(r * 1e-6);
+    let mut best: Option<(usize, usize, f64, f64)> = None;
+    for (ci, (contour, _)) in contours.iter().enumerate() {
+        for (si, seg) in contour.segments().enumerate() {
+            let hit = seg.nearest(fold.anchor, 1e-9);
+            let distance = hit.distance_sq.sqrt();
+            if distance <= reach && best.is_none_or(|(_, _, _, d)| distance < d) {
+                best = Some((ci, si, hit.t, distance));
+            }
+        }
+    }
+    let Some((ci, center, t_anchor, _)) = best else {
+        return;
+    };
+    let contour = &mut contours[ci].0;
+    let segs: Vec<PathSeg> = contour.segments().collect();
+    let pieces: Vec<PathSeg> = skeleton.path.segments().collect();
+    let inside = |removed: &[PathSeg]| is_inside_pen(removed, &pieces, r, tolerance);
+    if let Some(trimmed) = cut_enclosing_loop(&segs, center, t_anchor, tolerance, inside) {
+        *contour = closed_path_from_segments(&trimmed);
+    }
+}
+
+/// `segs`, one closed contour, with the smallest self-crossing loop that
+/// encloses `segs[center]` at `t_anchor` cut out; `None` when no crossing
+/// encloses it.
+///
+/// Loops are tried by span (how many pieces they cover), smallest first:
+/// a piece against itself, then pairs `center - a` and `center + b` with
+/// `a + b` growing. A crossing between neighbouring pieces near their
+/// shared endpoint is just the contour's own joint, not a loop — judged
+/// by distance, since at a swallowtail's cusps kurbo's pieces meet
+/// tangentially and the intersection solver reports hits a little way
+/// off the joint.
+///
+/// A candidate is cut only if `inside` accepts the pieces it would
+/// remove: a fold's loop lies inside the pen's ink, while a crossing
+/// further out can enclose real outline (when the fold sits at a joint
+/// that the corner trim already resolved, its anchor touches no loop).
+fn cut_enclosing_loop(
+    segs: &[PathSeg],
+    center: usize,
+    t_anchor: f64,
+    tolerance: f64,
+    inside: impl Fn(&[PathSeg]) -> bool,
+) -> Option<Vec<PathSeg>> {
+    const END: f64 = 1e-6;
+    let joint_reach = 4.0 * tolerance;
+    let n = segs.len();
+    let at = |offset: isize| (center as isize + offset).rem_euclid(n as isize) as usize;
+
+    // A piece against itself: its two halves, crossing around the anchor.
+    let seg = segs[center];
+    let (first, second) = (seg.subsegment(0.0..0.5), seg.subsegment(0.5..1.0));
+    for c in intersect::segment_intersections(first, second, tolerance) {
+        let (t0, t1) = (c.t_a * 0.5, 0.5 + c.t_b * 0.5);
+        if seg.eval(t0).distance(seg.eval(0.5)) > joint_reach
+            && t0 <= t_anchor
+            && t_anchor <= t1
+            && inside(&[seg.subsegment(t0..t1)])
+        {
+            let crossing = seg.eval(t0);
+            let mut out = Vec::with_capacity(n + 1);
+            out.push(with_start(seg.subsegment(t1..1.0), crossing));
+            out.extend((1..n as isize).map(|k| segs[at(k)]));
+            out.push(with_end(seg.subsegment(0.0..t0), crossing));
+            return Some(out);
+        }
+    }
+
+    for span in 1..n {
+        for a in 0..=span {
+            let b = span - a;
+            let (i, j) = (at(-(a as isize)), at(b as isize));
+            for c in intersect::segment_intersections(segs[i], segs[j], tolerance) {
+                let (ti, tj) = (c.t_a, c.t_b);
+                if !(-END..=1.0 + END).contains(&ti) || !(-END..=1.0 + END).contains(&tj) {
+                    continue;
+                }
+                // Neighbours meeting at their shared joint: `i` ends where
+                // `j` starts, or (all the way round) `j` ends where `i`
+                // starts.
+                let at_joint = |joint: Point| segs[i].eval(ti.clamp(0.0, 1.0)).distance(joint) <= joint_reach;
+                if (span == 1 && at_joint(segs[i].end()))
+                    || (span == n - 1 && at_joint(segs[i].start()))
+                {
+                    continue;
+                }
+                // The anchor must sit inside the loop: after the cut on
+                // `i`, before the cut on `j`.
+                if (a == 0 && ti > t_anchor) || (b == 0 && tj < t_anchor) {
+                    continue;
+                }
+                let (ti, tj) = (ti.clamp(0.0, 1.0), tj.clamp(0.0, 1.0));
+                let mut removed = vec![segs[i].subsegment(ti..1.0)];
+                removed.extend((1 - a as isize..b as isize).map(|k| segs[at(k)]));
+                removed.push(segs[j].subsegment(0.0..tj));
+                if !inside(&removed) {
+                    continue;
+                }
+                let crossing = segs[i].eval(ti);
+                let mut out = Vec::with_capacity(n - span + 1);
+                out.push(with_start(segs[j].subsegment(tj..1.0), crossing));
+                out.extend((b as isize + 1..n as isize - a as isize).map(|k| segs[at(k)]));
+                out.push(with_end(segs[i].subsegment(0.0..ti), crossing));
+                return Some(out);
+            }
+        }
+    }
+    None
+}
+
+/// Whether outline pieces about to be cut away lie inside the ink of the
+/// pen of radius `r` swept along the skeleton `pieces`, as a fold's loop
+/// does: no sample farther than `r` from the skeleton, and most of them
+/// clearly nearer. Real outline sits at `r` itself.
+fn is_inside_pen(removed: &[PathSeg], pieces: &[PathSeg], r: f64, tolerance: f64) -> bool {
+    const SAMPLES: usize = 8;
+    let mut nearer = 0;
+    let mut total = 0;
+    for seg in removed {
+        for k in 1..SAMPLES {
+            let p = seg.eval(k as f64 / SAMPLES as f64);
+            let d = pieces
+                .iter()
+                .map(|s| s.nearest(p, 1e-6).distance_sq)
+                .fold(f64::INFINITY, f64::min)
+                .sqrt();
+            if d > r + 2.0 * tolerance {
+                return false;
+            }
+            if d < r - 2.0 * tolerance {
+                nearer += 1;
+            }
+            total += 1;
+        }
+    }
+    2 * nearer >= total
 }
 
 /// Splits a `kurbo::stroke` output into its separate closed subpaths (one
@@ -976,9 +1228,10 @@ mod tests {
     }
 
     #[test]
-    fn curvature_violation_is_reported_before_stroking() {
-        // A tiny circle (radius 2) stroked at a much wider width (20):
-        // the curvature check must reject this before kurbo ever runs.
+    fn a_counter_the_stroke_fills_is_dropped() {
+        // A tiny circle (radius 2) stroked at a much wider width (20): the
+        // concave offset turns inside out without crossing itself, so the
+        // stroke fills the counter (spec §7.2) and only the outer remains.
         let start = RawStart {
             at: Point::new(2.0, 0.0),
         };
@@ -996,11 +1249,13 @@ mod tests {
         ];
         let skeleton = skeleton::realize(&start, &segs, true, NO_ARC_TOLERANCE).unwrap();
         let spec = default_spec(20.0);
-        let result = stroke_path(&skeleton, true, &spec, OFFSET_TOLERANCE);
-        assert!(
-            matches!(result, Err(StrokeError::Curvature(_))),
-            "{result:#?}"
-        );
+        let stroked = stroke_path_with_folds(&skeleton, true, &spec, OFFSET_TOLERANCE).unwrap();
+        assert_eq!(stroked.contours.len(), 1, "{stroked:#?}");
+        assert_eq!(stroked.contours[0].1, ContourRole::Outer);
+        assert_eq!(stroked.folds.len(), 2, "one fold per arc");
+        // The outer is the radius-12 circle.
+        let bbox = stroked.contours[0].0.bounding_box();
+        assert!((bbox.width() - 24.0).abs() < 0.1, "{bbox:?}");
     }
 
     /// One `MoveTo`, first, and one `ClosePath`, last: a single closed

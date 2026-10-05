@@ -15,7 +15,7 @@ This plan implements four of the five workstreams in spec §16: **DSL surface (1
 | Decision | Choice | Consequence |
 |---|---|---|
 | Output formats | **TTF only** | `write-fonts` covers every table needed. OTF/CFF (and with it all of spec §11.1–§11.3) and WOFF2 are deferred. TrueType output is unhinted with a `gasp` table (spec §11.4). |
-| Stroker | **`kurbo::stroke`**, bevel joins, then join splicing | kurbo supplies error-bounded offsets and the SVG cap set per end. It takes one join per stroke, so `joinAt` is implemented by stroking with `Join::Bevel` and rewriting each corner's bevel chord in place (M4). Each path stays one seamless outline, with no overlaid join shapes. The spec's curvature check (§7.2) runs first, as a hard error. |
+| Stroker | **`kurbo::stroke`**, bevel joins, then join splicing | kurbo supplies error-bounded offsets and the SVG cap set per end. It takes one join per stroke, so `joinAt` is implemented by stroking with `Join::Bevel` and rewriting each corner's bevel chord in place (M4). Each path stays one seamless outline, with no overlaid join shapes. Folds (spec §7.2) are trimmed after stroking, silently. |
 | Stroker oracle | **`tiny-skia` stroker, test-only** | An independent implementation (a Skia port) for the spec §15.4 differential test. kurbo is never tested against itself. |
 | Syntax tree | **rowan CST → typed AST** | Trivia and formatting survive, and §9.3 needs no front-end rewrite later. |
 | Diagnostics | **rustc-style, designed at M0** | rowan supplies spans and `ERROR` nodes, not messages. Labeled spans, error codes, and structured `help` are threaded through the parser from the first commit. |
@@ -32,7 +32,7 @@ Single cargo workspace at the repo root. Crates are listed in dependency order; 
 | `mg-diag` | `Diagnostic`, error codes, labeled spans, `help`/`note`, near-miss suggestions, `codespan-reporting` rendering | §13 |
 | `mg-syntax` | Lexer, rowan CST, parser, typed AST layer, formatter | §5.1–5.2 |
 | `mg-hir` | CST → HIR lowering, field schemas, enum validation, name resolution, static type checking, structural checks | §5.3–5.8, §5.11 |
-| `mg-geom` | Pure geometry on kurbo types, with no dependency on evaluation: segment realization (quad elevation, arc solve in both modes, arc realization), curvature check, stroking with join patches, filled contours, Bézier clipping, contour roles, winding | §6, §7, §8 |
+| `mg-geom` | Pure geometry on kurbo types, with no dependency on evaluation: segment realization (quad elevation, arc solve in both modes, arc realization), fold detection, stroking with join patches and fold trimming, filled contours, Bézier clipping, contour roles, winding | §6, §7, §8 |
 | `mg-eval` | Dependency graph, topological evaluation, cycle reporting, `Value`, construction library. Calls `mg-geom` to realize paths and compute `.bbox` | §4, §5.9–5.10 |
 | `mg-font` | Slant, extrema, cu2qu, zone snap and quantization, glyf/cmap/metrics assembly, kerning, instances | §10–§12 |
 | `mg-cli` | `build`, `check`, `fmt`, `svg`, `dump-graph` — ships the binary as `mg` (`[[bin]] name = "mg"`) | — |
@@ -172,10 +172,11 @@ Every error in spec §13's "field validation", "name resolution", "type", and "p
   - `arc` radii mode: the centre solve for both `large` values in both sweeps, the diameter chord within `ARC_TOLERANCE`, and the chord-too-long and non-positive-radius errors
   - `arc` realization: `⌈Δ/90°⌉` pieces with `4/3·tan(φ/4)` handles, in both sweeps. Written by hand from the spec formula, not via `kurbo::Arc`, whose piece count follows a tolerance rather than the spec's rule.
 - **`close`** appends a straight line per spec §5.7, omitting it when the final endpoint is already the start point. The path is closed either way.
-- **Curvature check before stroking (spec §7.2):**
-  - Compare `stroke/2` against the curvature radius over each segment's interior, refining curvature extrema by root-finding.
-  - Corners are excluded; interior cusps fail.
-  - The error names glyph, path, segment, parameter interval, and instance.
+- **Fold detection before stroking (spec §7.2):**
+  - Compare `stroke/2` against the curvature radius over each segment's interior, refining curvature extrema by root-finding. Each interval where it falls below is a fold.
+  - Corners are excluded. An interior cusp is still an error (spec §7.3).
+  - Folds produce no diagnostic.
+- **Fold trimming after stroking (spec §7.2).** For each fold, take the outline points `p(t) − r·n̂(t)` at the fold interval's ends as anchors on the concave side, and find the contour elements between them. Walk outward from those elements in both directions, testing each element on one side against each on the other (and an element against itself, split in half) with the M3 curve–curve intersection. Stop at the first crossing that encloses the fold. Split both elements there, drop everything between the two cut points, and splice the halves together. Merge folds whose search windows overlap and trim them once. Run this after join splicing and the inner-corner trim, which may already have removed a fold that reached a corner. A counter contour with no length left is dropped, and the role assignment (spec §8.1) runs on what remains.
 - **Degenerate cases (spec §7.3) error before kurbo is called:** zero total arc length, a zero-length segment, `stroke <= 0`. An open path whose ends coincide is valid.
 - **Stroke via `kurbo::stroke`** with per-end `Cap` mapped from the validated strings, `Join::Bevel` for every corner, and tolerance `OFFSET_TOLERANCE` (spec §14).
 - **Join splicing.** kurbo's `Join::Bevel` emits, on the outer side of each corner, exactly one `LineTo` between the two offset endpoints `vertex ± r·n̂`. Both endpoints are known from the skeleton, so locate that chord in the output (endpoint match within `OFFSET_TOLERANCE`) and replace it in place:
@@ -242,7 +243,7 @@ Per spec §15, ordered by value:
 | Segments | Arc pieces against a densely sampled exact ellipse, within the 90°-piece bound; quad elevation exact; reflection and `close` per spec §15.2. |
 | Stroking | Hausdorff distance against a densely sampled exact offset, at most `OFFSET_TOLERANCE`. Each spliced join against the spec §6.4 definition; every stroke yields exactly one contour (open) or two (closed). Inner corners: the outline has no self-crossing near any corner, for lines and curves at a range of angles; a segment too short for its stroke at a sharp corner produces the spec §7.4 error; a 180° reversal does not. Each degenerate case of spec §7.3 produces its named error. |
 | Stroker differential | The same paths, widths, caps, and joins through `tiny-skia`'s stroker. Rasterize both and compare coverage (spec §15.4). |
-| Curvature check | Fuzz random paths against random widths; assert the check fires exactly when the exact offset folds back within a segment interior (spec §15.5). |
+| Fold trimming | Fuzz random paths against random widths: the trimmed outline's coverage matches a dense union of discs along the skeleton (spec §15.5). Golden: a narrow ellipse vertex, a fold into a round cap, a counter that closes up. |
 | Fills and roles | A filled closed path emits its skeleton as one contour; a fill nested in a fill renders a hole; `stroke` + `fill` on one closed path renders solid, asserted by rasterizing and comparing coverage. Fuzz self-intersecting outlines and assert spec §8.3 fires on each. |
 | Export | `ots-sanitize`, `fonttools ttx` round-trip, FontBakery `opentype` profile in CI. Render a pangram at 8–48 ppem with FreeType and diff golden rasters. `skrifa` for in-process outline assertions. |
 | Determinism | Build twice, assert byte-identical output. |
@@ -261,7 +262,7 @@ M8 grows from M0 (diagnostics corpus) and M3 (evaluator tests) onward.
 ```
 
 M1–M3 gate everything. M4 carries most of the correctness risk. With kurbo doing the offsetting, what remains in M4 is:
-- the curvature check
+- fold detection and trimming
 - join splicing
 - the inner-corner trim
 - contour roles from kurbo's output

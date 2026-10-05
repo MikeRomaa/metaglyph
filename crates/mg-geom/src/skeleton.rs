@@ -560,11 +560,12 @@ pub fn direction_at(seg: &PathSeg, t: f64) -> Vec2 {
 }
 
 /// Signed curvature at `t` (spec §5.9 `curvatureAt`): positive when
-/// turning counter-clockwise, matching kurbo's own convention in a
-/// right-handed (here, y-up) coordinate system.
+/// turning counter-clockwise in this y-up space. Kurbo's own
+/// `ParamCurveCurvature` computes `p″ × p′`, the opposite sign (positive
+/// turning clockwise), so it is negated here.
 pub fn curvature_at(seg: &PathSeg, t: f64) -> f64 {
     use kurbo::ParamCurveCurvature;
-    match seg {
+    -match seg {
         PathSeg::Line(line) => line.curvature(t),
         PathSeg::Quad(quad) => quad.curvature(t),
         PathSeg::Cubic(cubic) => cubic.curvature(t),

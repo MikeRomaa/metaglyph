@@ -1,10 +1,12 @@
-//! The curvature limit check (spec §7.2), run before offset generation:
-//! within the interior of any skeleton segment, the curvature radius must
-//! not be smaller than `r = stroke/2`. Corners between authored segments
-//! are excluded — joins handle them (`crate::stroke`) — but the joints
+//! Tight curvature (spec §7.2), found before offset generation: within
+//! the interior of any skeleton segment, where the curvature radius is
+//! smaller than `r = stroke/2`, the offset on the concave side folds back.
+//! Those intervals are *folds*: `crate::stroke` trims them after stroking
+//! and reports them as warnings. Corners between authored segments are
+//! excluded — joins handle them (`crate::stroke`) — but the joints
 //! between one `arc`'s own cubic pieces are interior to that segment and
-//! are checked here too, and a cusp (vanishing derivative) anywhere
-//! interior always fails.
+//! are checked here too. A cusp (vanishing derivative) anywhere interior
+//! is not a fold but an error (spec §7.3): its offset has no direction.
 //!
 //! Kurbo has no analytic curvature-extremum solver, so this finds each
 //! piece's worst point by dense sampling followed by golden-section
@@ -14,12 +16,11 @@
 
 use std::ops::Range;
 
-use kurbo::PathSeg;
+use kurbo::{ParamCurve, PathSeg, Point, Vec2};
 
 use crate::skeleton::{self, Skeleton};
 
-/// A curvature-limit violation (spec §7.2): the offending authored
-/// segment and the parameter sub-interval, in that segment's own local
+/// An interval of one authored segment, in that segment's own local
 /// `[0, 1]` domain — the same domain `crate::skeleton::authored_param_to_piece`
 /// indexes into for segment `segment_index`, i.e. add `segment_index` to
 /// get the spec §5.9 path-query global parameter.
@@ -29,64 +30,101 @@ pub struct CurvatureViolation {
     pub local_t: Range<f64>,
 }
 
+/// A fold (spec §7.2): where the curvature radius is below `r`, and the
+/// point of the concave-side offset at its tightest spot, `p + r·n̂`
+/// toward the centre of curvature — which lies on the offset's reversed
+/// loop that `crate::stroke` trims.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Fold {
+    pub at: CurvatureViolation,
+    pub anchor: Point,
+}
+
 /// The number of samples used to bracket each piece's curvature maximum
 /// before refining it. Cheap relative to a typical glyph's segment count,
 /// and the refinement step below is what actually delivers precision.
 const SAMPLES: usize = 64;
 
-/// Checks every authored segment of `skeleton` against radius `r`,
-/// stopping at the first violation found in segment order (spec §7.2 asks
-/// for one reported violation, not an exhaustive list).
-pub fn check(skeleton: &Skeleton, r: f64) -> Option<CurvatureViolation> {
+/// Below this speed (`|p′(t)|`), the derivative has vanished: a cusp.
+const CUSP_SPEED: f64 = 1e-9;
+
+/// Every fold of `skeleton` at stroke radius `r`, in segment order, or
+/// the first interior cusp (spec §7.3), which is an error.
+pub fn folds(skeleton: &Skeleton, r: f64) -> Result<Vec<Fold>, CurvatureViolation> {
     let pieces: Vec<PathSeg> = skeleton::segments(&skeleton.path);
     let threshold = 1.0 / r;
 
+    let mut out = Vec::new();
     let mut offset = 0usize;
     for (segment_index, &piece_count) in skeleton.piece_counts.iter().enumerate() {
         let segment_pieces = &pieces[offset..offset + piece_count];
-        if let Some(local_t) = check_segment(segment_pieces, threshold) {
-            return Some(CurvatureViolation {
+        for (local_t, peak) in segment_folds(segment_pieces, threshold) {
+            let at = CurvatureViolation {
                 segment_index,
                 local_t,
+            };
+            let (piece, t) = peak;
+            let seg = &segment_pieces[piece];
+            let direction = skeleton::direction_at(seg, t);
+            if direction.hypot() < CUSP_SPEED {
+                return Err(at);
+            }
+            let left = Vec2::new(-direction.y, direction.x).normalize();
+            let side = skeleton::curvature_at(seg, t).signum();
+            out.push(Fold {
+                at,
+                anchor: seg.eval(t) + left * (r * side),
             });
         }
         offset += piece_count;
     }
-    None
+    Ok(out)
 }
 
-/// Checks one authored segment's own pieces: each piece's open interior,
-/// plus (spec §7.2) the joints between consecutive pieces of the same
-/// `arc`, which are interior to the segment even though they sit at a
-/// piece boundary. The segment's two true endpoints — shared with its
-/// neighbors — are never touched here.
-fn check_segment(pieces: &[PathSeg], threshold: f64) -> Option<Range<f64>> {
+/// One authored segment's folds: each piece's worst interior point, plus
+/// (spec §7.2) the joints between consecutive pieces of the same `arc`,
+/// which are interior to the segment even though they sit at a piece
+/// boundary. The segment's two true endpoints — shared with its
+/// neighbors — are never touched here. Intervals that meet across a
+/// joint (an ellipse vertex where two pieces join) merge into one fold;
+/// each comes with its tightest point as `(piece, t)`.
+fn segment_folds(pieces: &[PathSeg], threshold: f64) -> Vec<(Range<f64>, (usize, f64))> {
     let piece_count = pieces.len();
+    let mut out: Vec<(Range<f64>, (usize, f64), f64)> = Vec::new();
+    let mut push = |range: Range<f64>, peak: (usize, f64), k: f64| {
+        if let Some((last, last_peak, last_k)) = out.last_mut()
+            && range.start <= last.end + 1e-9
+        {
+            last.end = last.end.max(range.end);
+            if k > *last_k {
+                *last_peak = peak;
+                *last_k = k;
+            }
+            return;
+        }
+        out.push((range, peak, k));
+    };
 
     for (k, piece) in pieces.iter().enumerate() {
         let (t_peak, worst) = worst_interior_point(piece);
+        let joint = (k + 1 < piece_count)
+            .then(|| curvature_or_infinite(piece, 1.0))
+            .filter(|&c| c > threshold);
         if worst > threshold {
             let (lo, hi) = violation_bounds(piece, t_peak, threshold);
-            return Some(
+            push(
                 piece_local_to_segment_local(k, piece_count, lo)
                     ..piece_local_to_segment_local(k, piece_count, hi),
+                (k, t_peak),
+                worst,
             );
         }
-    }
-
-    for (k, piece) in pieces
-        .iter()
-        .enumerate()
-        .take(piece_count.saturating_sub(1))
-    {
-        let joint = curvature_or_infinite(piece, 1.0);
-        if joint > threshold {
+        if let Some(c) = joint {
             let t = piece_local_to_segment_local(k, piece_count, 1.0);
-            return Some(t..t);
+            push(t..t, (k, 1.0), c);
         }
     }
-
-    None
+    out.into_iter().map(|(range, peak, _)| (range, peak)).collect()
 }
 
 fn piece_local_to_segment_local(piece_index: usize, piece_count: usize, local_t: f64) -> f64 {
@@ -94,13 +132,12 @@ fn piece_local_to_segment_local(piece_index: usize, piece_count: usize, local_t:
 }
 
 /// The curvature magnitude at `t`, or `f64::INFINITY` where the
-/// derivative vanishes (a cusp, spec §7.2: "A skeleton segment whose
-/// derivative vanishes at an interior point also fails the check") —
-/// guarding this explicitly rather than trusting the curvature formula's
-/// `0/0` to come out as a large-enough finite number.
+/// derivative vanishes (a cusp, spec §7.3) — guarding this explicitly
+/// rather than trusting the curvature formula's `0/0` to come out as a
+/// large-enough finite number.
 fn curvature_or_infinite(seg: &PathSeg, t: f64) -> f64 {
     let speed = skeleton::direction_at(seg, t).hypot();
-    if speed < 1e-9 {
+    if speed < CUSP_SPEED {
         return f64::INFINITY;
     }
     skeleton::curvature_at(seg, t).abs()
@@ -223,8 +260,8 @@ mod tests {
     fn a_wide_circle_passes_a_narrow_stroke() {
         let skeleton = circle_skeleton(50.0);
         // Curvature radius is exactly 50 everywhere; a stroke radius of
-        // 10 (well under 50) must never violate.
-        assert_eq!(check(&skeleton, 10.0), None);
+        // 10 (well under 50) must never fold.
+        assert_eq!(folds(&skeleton, 10.0), Ok(vec![]));
     }
 
     #[test]
@@ -234,8 +271,56 @@ mod tests {
         // (far over 5) must violate, including at the arc's own internal
         // piece joints (a circle's curvature is uniform, so any point
         // works as the witness).
-        let violation = check(&skeleton, 20.0);
-        assert!(violation.is_some(), "expected a curvature violation");
+        let found = folds(&skeleton, 20.0).unwrap();
+        // One fold per arc, each spanning the whole arc (its piece
+        // joints merge), anchored on the concave side: the centre side,
+        // 20 in from a radius-5 circle, so 15 past the centre.
+        assert_eq!(found.len(), 2, "{found:?}");
+        for fold in &found {
+            assert!(fold.at.local_t.start < 0.01 && fold.at.local_t.end > 0.99, "{fold:?}");
+            assert!((fold.anchor.to_vec2().hypot() - 15.0).abs() < 0.1, "{fold:?}");
+        }
+    }
+
+    #[test]
+    fn curvature_is_positive_turning_counter_clockwise() {
+        // spec §5.9 `curvatureAt`: a CCW circle of radius 5 has +1/5,
+        // within the cubic approximation's own error.
+        let skeleton = circle_skeleton(5.0);
+        let piece = skeleton::segments(&skeleton.path)[0];
+        assert!((skeleton::curvature_at(&piece, 0.5) - 0.2).abs() < 0.005);
+    }
+
+    #[test]
+    fn an_ellipse_folds_only_at_its_tight_vertices() {
+        // rx 60, ry 120: the curvature radius is rx²/ry = 30 at the top and
+        // bottom, ry²/rx = 240 at the sides. A stroke radius of 50 folds
+        // the top and bottom only, anchored 50 below the top and 50 above
+        // the bottom.
+        let at = |deg: f64| Point::new(60.0 * deg.to_radians().cos(), 120.0 * deg.to_radians().sin());
+        let start = RawStart { at: at(0.0) };
+        let arc = |to| RawSegment::Arc {
+            to,
+            geometry: skeleton::ArcGeometry::Radii {
+                rx: 60.0,
+                ry: 120.0,
+                large: false,
+            },
+            sweep: Sweep::Ccw,
+        };
+        let skeleton =
+            skeleton::realize(&start, &[arc(at(180.0)), arc(at(0.0))], true, NO_ARC_TOLERANCE)
+                .unwrap();
+        let found = folds(&skeleton, 50.0).unwrap();
+        assert_eq!(found.len(), 2, "{found:?}");
+        let anchors: Vec<Point> = found.iter().map(|f| f.anchor).collect();
+        // Within the arc's cubic approximation, whose tightest point sits
+        // a little off the true vertex.
+        assert!(anchors[0].distance(Point::new(0.0, 70.0)) < 1.5, "{anchors:?}");
+        assert!(anchors[1].distance(Point::new(0.0, -70.0)) < 1.5, "{anchors:?}");
+        // Symmetric about each arc's middle.
+        let t = &found[0].at.local_t;
+        assert!((t.start + t.end - 1.0).abs() < 1e-3, "{t:?}");
     }
 
     #[test]
@@ -248,8 +333,8 @@ mod tests {
         }];
         let skeleton = skeleton::realize(&start, &segs, false, NO_ARC_TOLERANCE).unwrap();
         // A line has zero curvature everywhere: no stroke width, however
-        // large, can violate it.
-        assert_eq!(check(&skeleton, 1e6), None);
+        // large, can fold it.
+        assert_eq!(folds(&skeleton, 1e6), Ok(vec![]));
     }
 
     #[test]
@@ -269,6 +354,6 @@ mod tests {
         let skeleton = skeleton::realize(&start, &segs, false, NO_ARC_TOLERANCE).unwrap();
         // This configuration's derivative vanishes inside (0, 1); any
         // positive stroke width must be rejected.
-        assert!(check(&skeleton, 1.0).is_some());
+        assert!(folds(&skeleton, 1.0).is_err());
     }
 }
