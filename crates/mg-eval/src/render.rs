@@ -24,10 +24,18 @@ use mg_geom::winding::ContourRole;
 pub struct OutlineContour {
     pub path: BezPath,
     pub role: ContourRole,
-    /// Index into the effective glyph's `paths`.
-    pub path_index: usize,
+    /// The declaration that drew it, in the effective glyph.
+    pub source: ContourSource,
     /// `true` for a `fill`'s own contour, `false` for a stroke's.
     pub filled: bool,
+}
+
+/// What drew an [`OutlineContour`]: one of the glyph's paths, or one of
+/// its path components (spec §5.7), by index into `paths` or `components`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContourSource {
+    Path(usize),
+    Component(usize),
 }
 
 /// A component reference with its placement evaluated (spec §10.1).
@@ -96,7 +104,44 @@ pub fn glyph_outline(
             outline.contours.push(OutlineContour {
                 path: contour,
                 role,
-                path_index,
+                source: ContourSource::Path(path_index),
+                filled,
+            });
+        }
+    }
+
+    // Path components (spec §5.7, §10.1) draw this glyph's own contours,
+    // so their fills count in the role nesting below like a path's.
+    for (index, component) in glyph.components.iter().enumerate() {
+        if component.path.is_none()
+            || failed.contains(&NodeId::ComponentBbox(glyph_name.to_string(), index))
+        {
+            continue;
+        }
+        let Ok(component_contours) =
+            eval::render_path_component(hir, instance, glyph_name, index, values, diagnostics)
+        else {
+            continue;
+        };
+        let source_fills = component.fill.unwrap_or_else(|| {
+            component
+                .source_path(glyph_name)
+                .and_then(|(g, p)| {
+                    graph::effective_glyph(hir, instance, &g)?
+                        .path_named(&p)
+                        .map(|path| path.fill)
+                })
+                .unwrap_or(false)
+        });
+        for (i, (contour, role)) in component_contours.into_iter().enumerate() {
+            let filled = source_fills && i == 0;
+            if filled {
+                fill_slots.push(outline.contours.len());
+            }
+            outline.contours.push(OutlineContour {
+                path: contour,
+                role,
+                source: ContourSource::Component(index),
                 filled,
             });
         }
@@ -130,6 +175,7 @@ pub fn glyph_outline(
 
     if !failed.contains(&NodeId::GlyphBbox(glyph_name.to_string())) {
         for component in &glyph.components {
+            // A path component's contours are already the glyph's own.
             let Some(target) = &component.glyph else {
                 continue;
             };

@@ -419,11 +419,23 @@ pub const ANCHOR_FIELDS: &[FieldSchema] = &[field(
 )];
 
 pub const COMPONENT_FIELDS: &[FieldSchema] = &[
-    field(
-        "glyph",
-        true,
-        "glyphref",
-        "The default-set glyph to place; follows the instance's glyph set.",
+    with_mutex(
+        field(
+            "glyph",
+            false,
+            "glyphref",
+            "The default-set glyph to place, whole; follows the instance's glyph set. Or give `path`.",
+        ),
+        &["path"],
+    ),
+    with_mutex(
+        field(
+            "path",
+            false,
+            "path",
+            "A path to place: one in this glyph, `glyphs.<name>.<path>`, or a `subpath`/`reverse`. Its skeleton is transformed, then stroked or filled. Or give `glyph`.",
+        ),
+        &["glyph"],
     ),
     with_mutex(
         field("offset", false, "pair", "Places it by `translate(dx, dy)`."),
@@ -437,6 +449,45 @@ pub const COMPONENT_FIELDS: &[FieldSchema] = &[
             "Places it by any transform.",
         ),
         &["offset"],
+    ),
+    field(
+        "stroke",
+        false,
+        "num",
+        "Path component only: replaces the source path's stroke width; must be > 0.",
+    ),
+    field(
+        "fill",
+        false,
+        "bool",
+        "Path component only: replaces the source path's `fill`; requires a closed path.",
+    ),
+    with_values(
+        field(
+            "caps",
+            false,
+            "string | (string, string)",
+            "Path component only: replaces the source path's caps.",
+        ),
+        CAP_VALUES,
+    ),
+    with_values(
+        field(
+            "joins",
+            false,
+            "string",
+            "Path component only: replaces the source path's joins.",
+        ),
+        JOIN_VALUES,
+    ),
+    with_values(
+        field(
+            "joinAt",
+            false,
+            "map<segmentName, string>",
+            "Path component only: replaces the source path's `joinAt`, keyed by its segment names.",
+        ),
+        JOIN_VALUES,
     ),
 ];
 

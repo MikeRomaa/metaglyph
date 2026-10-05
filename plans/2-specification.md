@@ -20,7 +20,7 @@ This document specifies the language, the geometry model, the compilation pipeli
 | Region operators | None. No `trim`, `union`, `difference`, or `intersection`, and no filled-area value in the language. Ink is produced by stroking and filling; a path's or glyph's extent is readable via `.bbox` only. |
 | Overlaps | Always kept. Overlapping contours of consistent winding are what ships. |
 | Output | Static TTF / OTF / WOFF2, with kerning, CFF hinting, and a TrueType `gasp` table. No OpenType substitutions, no variable fonts. |
-| Script scope | Arbitrary Unicode codepoints, variation sequences (`cmap` format 14), and component reuse. No contextual reordering, cursive attachment, or mark attachment. |
+| Script scope | Arbitrary Unicode codepoints, variation sequences (`cmap` format 14), and component reuse of whole glyphs or single paths. No contextual reordering, cursive attachment, or mark attachment. |
 | Abstraction | None. No user-defined functions, macros, shapes, or glyph inheritance. Every glyph is written in full. |
 | Text ↔ editor | The DSL is canonical. Every editor action is a structured transform on the syntax tree. |
 | Italics | `slant` is a per-instance shear. A true italic is a glyph set selected by instance (§5.6). |
@@ -365,7 +365,14 @@ A path is closed if and only if its body declares `close`.
 
 **`anchor <name> ( at: point )`** — in a glyph body. The name is a glyph-scope value (§5.11) and may not be `advance` or `bbox`.
 
-**`component ( glyph: glyphref, offset: pair?, transform: transform? )`** — `glyph` required and names a default-set glyph; in an instance that selects a glyph set, the reference resolves to that glyph's alternate when one exists. `offset` and `transform` are mutually exclusive; `offset: (dx, dy)` means `transform: translate(dx, dy)`.
+**`component ( glyph: glyphref | path: path, offset: pair?, transform: transform?, stroke: num?, fill: bool?, caps: …?, joins: …?, joinAt: …? )`** — exactly one of `glyph` and `path`. `offset` and `transform` are mutually exclusive; `offset: (dx, dy)` means `transform: translate(dx, dy)`. Call the placement `M`.
+
+- **Glyph component** — `glyph` names a default-set glyph; in an instance that selects a glyph set, the reference resolves to that glyph's alternate when one exists. It draws that glyph's whole outline (§10.1). `stroke`, `fill`, `caps`, `joins`, and `joinAt` are illegal here.
+- **Path component** — `path` is any expression of type `path`: a path name in this glyph (`path: stem`), another glyph's path (`path: glyphs.o.bowl`, §5.10), or a `subpath` / `reverse` result. It draws that path's skeleton transformed by `M`, as a rendering path of this glyph in its own right (§6.2):
+  - It takes the referenced path's `stroke`, `fill`, `caps`, `joins`, and `joinAt`. Each one the component declares replaces the referenced path's own, with the same types and rules as on a `path` (§5.7 path fields).
+  - The skeleton is transformed, then stroked: `stroke` is the width on the page, whatever `M` scales by, and round caps and joins stay round. `fill` requires the referenced path to be closed.
+  - A component that ends up with neither `stroke` nor `fill` draws nothing and is an error. A construction path (§6.1) or a `subpath` result renders only through a component that gives one.
+  - `joinAt` keys name the referenced path's segments.
 
 ### 5.8 Operators and precedence
 
@@ -434,7 +441,7 @@ Every line has an **origin** and a unit **direction**, fixed by its constructor:
 
 `pointAt(path, t)→point` · `directionAt(path, t)→pair` (unit tangent) · `curvatureAt(path, t)→num` (signed, positive when turning counter-clockwise) · `arcLength(path)→num` · `pointAtLength(path, s)→point` (`s ∈ [0, arcLength]`) · `intersect(a, b)→num*` (parameters on `a` where `a` crosses `b`, ascending; empty when none) · `subpath(path, t0, t1)→path` · `reverse(path)→path` · `extrema(path)→num*` (parameters where `x′ = 0` or `y′ = 0`, ascending)
 
-A path returned by `subpath` or `reverse` is a construction value: it can be passed to path queries and read with `.bbox`, and it can never render.
+A path returned by `subpath` or `reverse` is a construction value: it can be passed to path queries and read with `.bbox`. It renders only through a path component (§5.7) that gives it a `stroke` or `fill`.
 
 **Reductions:** `sum(num*)→num` · `minOf(num*)→num` · `maxOf(num*)→num`. `minOf` and `maxOf` of an empty list are domain errors; `sum` of an empty list is `0`.
 
@@ -459,7 +466,7 @@ Extent is not a function. `.bbox` is a member on a `path`, on `glyph`, and on `g
 
 Inside a glyph, everything — paths, `let`s, its own anchors, `glyph.bbox` — is in **authored coordinates**, before the §12.1 shift.
 
-**`glyphs.<name>.*`** — another glyph: exactly `.advance`, `.bbox`, and its declared anchors. It resolves to the glyph the current instance builds under that name (the glyph-set alternate when one is selected). A glyph's `let`s and paths are not externally visible. `.bbox` and anchors read this way are in that glyph's **placed coordinates**: authored coordinates plus its shift, relative to its own origin.
+**`glyphs.<name>.*`** — another glyph: exactly `.advance`, `.bbox`, its declared anchors, and its named paths. It resolves to the glyph the current instance builds under that name (the glyph-set alternate when one is selected). A glyph's `let`s are not externally visible. `.bbox`, anchors, and paths read this way are in that glyph's **placed coordinates**: authored coordinates plus its shift, relative to its own origin. A path read this way is a `path` value like any other: path queries take it, and a path component (§5.7) draws it.
 
 **`instance.*`:** `instance.name` (`string`) · `instance.slant` (`num`)
 
@@ -515,6 +522,7 @@ A path renders if and only if it declares `stroke`, `fill`, or both.
 | Stroked outline of a skeleton | `stroke: <num>` |
 | Filled interior | `fill: true`, with `close` |
 | Filled shape with a stroked border | both, on one path |
+| The same stroke again, moved or mirrored | a path component (§5.7) |
 | Render order | declaration order |
 
 Render order does not affect appearance: overlaps are kept and nonzero winding is order-independent. It fixes contour order in the output only.
@@ -736,7 +744,7 @@ Every contour carries a **role**, assigned by its producer:
 | Stroked closed path | two | outer (the one enclosing the other), counter |
 | Filled path | one | outer, unless nesting makes it a counter (below) |
 
-Among the filled contours of one glyph's own paths, a filled contour enclosed by an odd number of other filled contours takes the counter role. Stroked contours and component contours do not take part in this count.
+Among the filled contours of one glyph's own paths and path components (§5.7), a filled contour enclosed by an odd number of other filled contours takes the counter role. Stroked contours and glyph-component contours do not take part in this count.
 
 Consequence: a closed path with both `stroke` and `fill` yields stroke-outer (outer), the fill (outer), and stroke-counter (counter). Under nonzero winding every point inside stroke-outer has winding number ≥ 1, so the shape renders solid.
 
@@ -782,7 +790,7 @@ Each tool that changes the design maps to a named structured edit on the syntax 
 - join tool (three-way, path-wide plus per-segment)
 - end-direction tool: rewrites the first or last segment's control point adjacent to the end as `polar(endpoint, len, θ)`
 - transform and instance placement
-- component reference
+- component reference: a whole glyph, or a single path (this glyph's or another's)
 
 Every tool sets a property on a single block. Switching a segment's kind removes the fields the new kind does not admit.
 
@@ -842,6 +850,8 @@ Component references must be acyclic, and nesting depth is at most `COMPONENT_DE
 Under an instance `slant` with shear `S`, the component is emitted with transform `S·T·M·S⁻¹`, so that the composite equals the slanted decomposed outline.
 
 A component is emitted as a `glyf` composite when its transform's 2×2 part fits F2Dot14 (each entry in [−2, 2)); its offset is rounded per §10.4. Otherwise it is decomposed. CFF output always decomposes.
+
+**Path components** are not components in the output: `glyf` composites reference whole glyphs. A path component's contours are this glyph's own, exactly as if its transformed skeleton were declared here as a `path` with the effective `stroke`, `fill`, `caps`, and `joins` (§5.7). They take part in the filled-contour role count (§8.1) like any other path's, and slant, extrema, and quantization treat them as the glyph's own outline. A path read from another glyph is in that glyph's placed coordinates (§5.10), so `M` places it relative to that glyph's origin, the same as a glyph component.
 
 ### 10.2 Extrema insertion
 
@@ -1020,7 +1030,7 @@ Every diagnostic names a source location, an entity, and where possible a fix. D
 |---|---|
 | Syntax | Unexpected token; unclosed block; malformed segment declaration; malformed range; hex integer above 2^53; codepoint above `U+10FFFF`; character literal empty, holding more than one scalar value, or with an unknown escape (§5.1) |
 | Type | `pair` where `num` expected; `path` argument to a scalar function; `.bbox` on a value that has no extent; a mixed tuple; non-integral value in an `int` field |
-| Field validation | Unknown field; unknown enum value, with the legal set enumerated; missing required field; mutually exclusive fields both present; a field illegal in its position (§5.7); non-constant expression where one is required; param default or instance override outside `range`; param named after an instance field; alternate glyph with no default glyph, or with `codepoint` or `variation`; a `variation` selector outside VS1–VS256; `codepoint` value outside `0`–`0x10FFFF`; unknown glyph set; a glyph declaring none, or all three, of `advance`, `lsb`, `rsb` |
+| Field validation | Unknown field; unknown enum value, with the legal set enumerated; missing required field; mutually exclusive fields both present; a field illegal in its position (§5.7); non-constant expression where one is required; param default or instance override outside `range`; param named after an instance field; alternate glyph with no default glyph, or with `codepoint` or `variation`; a `variation` selector outside VS1–VS256; `codepoint` value outside `0`–`0x10FFFF`; unknown glyph set; a glyph declaring none, or all three, of `advance`, `lsb`, `rsb`; a `component` with both or neither of `glyph` and `path`; `stroke`, `fill`, `caps`, `joins`, or `joinAt` on a glyph component; a path component with neither `stroke` nor `fill` after its overrides; `fill` on a path component whose path is open |
 | Name resolution | Unresolved identifier with scope and near-miss suggestions; duplicate definition; shadowing a top-level name; reserved word as a declaration name; anchor named `advance` or `bbox` |
 | Cycle | Circular definition, reported as the full cycle path with file and line per hop, plus a suggested edge to break (§4.3) |
 | Domain | `sqrt` of a negative; division by zero; `asin`/`acos` out of range; `meet` on parallel lines; `lineThrough` of two equal points; an `ellipse` or `circle` radius ≤ 0; `cast` with no crossing ahead of the line's origin; path parameter out of domain; `minOf`/`maxOf` of an empty list; `.bbox` of a glyph with no ink |
@@ -1075,12 +1085,13 @@ Named constants. Tolerances scale with the em size.
    - Each degenerate case of §7.3 produces its named error.
 4. **Differential test against an independent SVG stroker** — same path, `stroke`, caps, and joins. Rasterize both outlines and assert the coverage difference stays within the area of a `2 · OFFSET_TOLERANCE` band along the boundary.
 5. **Fold trimming** — fuzz random paths against random stroke widths. Assert that the trimmed outline matches the swept pen: rasterize it and the union of discs of radius `r` densely along the skeleton (plus caps and joins), and require the coverage difference to stay within a `2 · OFFSET_TOLERANCE` band along the boundary. Golden cases: an ellipse arc tighter than `r` at its vertex (the inner edge comes to a point); a fold reaching an open path's round cap; a closed ellipse whose counter closes up entirely.
-6. **Fills and contour roles**
+6. **Path components** — a path component of a path in the same glyph, with `transform: identity`, yields contours identical to the path's own; one with `reflect(vline(x))` yields the mirror image with the same stroke width; one under `scale(2)` keeps the declared `stroke` width rather than doubling it; one overriding `stroke` on a construction path renders it; `glyphs.o.bowl` reads in `o`'s placed coordinates.
+7. **Fills and contour roles**
    - A filled closed path produces its skeleton as one contour.
    - A fill nested in a fill produces a hole.
    - `stroke` and `fill` on one closed path produce a solid shape, asserted by rasterizing it and the stroke-outer contour alone and comparing coverage.
    - Fuzzed self-intersecting filled contours each trigger §8.3's error.
-7. **Export**
+8. **Export**
    - `fonttools ttx` round-trip, `ots-sanitize`, and FontBakery (OpenType profile) in CI.
    - `cmap` format 14: a sequence on a glyph without `codepoint` is a non-default-UVS mapping; a sequence on the glyph its base encodes is a default-UVS range; records sorted by selector and base; HarfBuzz shapes `0030 FE00` to the `variation` glyph and `0030` alone to the `codepoint` one.
    - Render a pangram at 8–48 ppem with FreeType and diff against golden rasters.

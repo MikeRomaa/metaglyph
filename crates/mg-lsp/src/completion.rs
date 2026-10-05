@@ -495,6 +495,15 @@ fn members(ctx: &Ctx, receiver: &ast::Expr) -> Vec<CompletionItem> {
                     Some("anchor: pair".to_string()),
                 )
             }));
+            // Its named paths (spec §5.10), for path components and
+            // path queries.
+            items.extend(
+                ctx.index.glyphs[g]
+                    .paths
+                    .iter()
+                    .filter_map(|p| p.decl.as_ref())
+                    .map(|d| item(&d.name, CompletionItemKind::PROPERTY, Some("path".to_string()))),
+            );
         }
         return items;
     }

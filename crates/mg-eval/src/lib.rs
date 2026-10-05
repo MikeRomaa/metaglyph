@@ -16,4 +16,6 @@ pub use eval::{
     reevaluate,
 };
 pub use graph::{Graph, NodeId};
-pub use render::{GlyphOutline, OutlineContour, PlacedComponent, glyph_outline, render_glyph};
+pub use render::{
+    ContourSource, GlyphOutline, OutlineContour, PlacedComponent, glyph_outline, render_glyph,
+};

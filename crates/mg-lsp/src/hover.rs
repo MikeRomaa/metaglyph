@@ -250,10 +250,16 @@ mod tests {
                 assert!(!field.ty.is_empty(), "{kind:?}.{}", field.name);
                 // A map's values are per entry; an entry left out falls
                 // back elsewhere (`joinAt` to `joins`), so it has no
-                // default of its own.
+                // default of its own. A path component's stroke settings
+                // fall back to its source path's (spec §5.7), likewise.
                 let is_map = field.ty.starts_with("map<");
+                let inherited = kind == SyntaxKind::COMPONENT;
                 assert!(
-                    field.required || field.default.is_some() || field.values.is_empty() || is_map,
+                    field.required
+                        || field.default.is_some()
+                        || field.values.is_empty()
+                        || is_map
+                        || inherited,
                     "{kind:?}.{}: an optional enum needs a default",
                     field.name
                 );

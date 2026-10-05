@@ -694,13 +694,39 @@ fn lower_glyph(
                     );
                     let glyph_ref =
                         expect_ident_field(&comp_fields, "glyph", diagnostics).map(|(n, _)| n);
+                    let path = comp_fields.get("path").and_then(|f| f.value());
                     let offset = comp_fields.get("offset").and_then(|f| f.value());
                     let transform = comp_fields.get("transform").and_then(|f| f.value());
+                    check_component_kind(&comp_fields, comp_node.syntax(), diagnostics);
+                    let stroke = comp_fields.get("stroke").and_then(|f| f.value());
+                    let fill = comp_fields
+                        .get("fill")
+                        .and_then(|f| f.value())
+                        .and_then(|e| const_eval::eval_const_bool(&e));
+                    let caps = comp_fields
+                        .get("caps")
+                        .and_then(|f| f.value())
+                        .map(|expr| lower_caps(&expr, diagnostics));
+                    let joins = comp_fields.contains_key("joins").then(|| {
+                        enum_field(&comp_fields, schema::PATH_FIELDS, "joins", diagnostics)
+                    });
+                    // Keys are checked against the source path once every
+                    // glyph is lowered (`check_component_join_at`).
+                    let join_at = comp_fields
+                        .get("joinAt")
+                        .and_then(|f| f.value())
+                        .map(|expr| lower_join_at(&expr, None, diagnostics));
                     components.push(ComponentDecl {
                         syntax: comp_node.syntax().clone(),
                         glyph: glyph_ref,
+                        path,
                         offset,
                         transform,
+                        stroke,
+                        fill,
+                        caps,
+                        joins,
+                        join_at,
                     });
                 }
                 _ => {}
@@ -920,7 +946,7 @@ fn lower_path(
     };
 
     let join_at = raw_join_at
-        .map(|expr| lower_join_at(&expr, &segments, diagnostics))
+        .map(|expr| lower_join_at(&expr, Some(&segments), diagnostics))
         .unwrap_or_default();
 
     PathDecl {
@@ -998,9 +1024,45 @@ fn lower_cap_value(expr: &ast::Expr, diagnostics: &mut Vec<Diagnostic>) -> Optio
     Some(value)
 }
 
+/// A component (spec §5.7) gives exactly one of `glyph` and `path`; the
+/// field table already reports both. A glyph component takes none of a
+/// path component's stroke settings.
+fn check_component_kind(
+    fields: &IndexMap<String, ast::Field>,
+    syntax: &SyntaxNode,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if !fields.contains_key("glyph") && !fields.contains_key("path") {
+        diagnostics.push(
+            Diagnostic::error(
+                codes::MISSING_REQUIRED_FIELD,
+                "`component` needs `glyph` or `path`",
+                Label::new(schema::trimmed_span(syntax), "nothing to place"),
+            )
+            .with_help("`glyph: e` places a whole glyph; `path: stem` places one path"),
+        );
+    }
+    if fields.contains_key("glyph") {
+        for name in ["stroke", "fill", "caps", "joins", "joinAt"] {
+            if let Some(field) = fields.get(name) {
+                diagnostics.push(
+                    Diagnostic::error(
+                        codes::FIELD_ILLEGAL_HERE,
+                        format!("`{name}` applies to a path component, not a glyph component"),
+                        Label::new(field.syntax().text_range().into(), "illegal here"),
+                    )
+                    .with_help("a glyph component draws that glyph's outline as it is"),
+                );
+            }
+        }
+    }
+}
+
+/// `joinAt` (spec §5.7). Keys are checked against `segments` when given;
+/// a path component's are checked later, against its source path.
 fn lower_join_at(
     expr: &ast::Expr,
-    segments: &[SegmentDecl],
+    segments: Option<&[SegmentDecl]>,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> IndexMap<String, String> {
     let mut result = IndexMap::new();
@@ -1015,7 +1077,8 @@ fn lower_join_at(
         return result;
     };
 
-    let segment_names: Vec<&str> = segments.iter().filter_map(|s| s.name.as_deref()).collect();
+    let segment_names: Option<Vec<&str>> =
+        segments.map(|s| s.iter().filter_map(|s| s.name.as_deref()).collect());
 
     for entry in map.entries() {
         let Some(key_token) = entry.key_token() else {
@@ -1025,18 +1088,10 @@ fn lower_join_at(
         let Some(value_expr) = entry.value() else {
             continue;
         };
-        if !segment_names.contains(&key.as_str()) {
-            let diagnostic = Diagnostic::error(
-                codes::UNRESOLVED_NAME,
-                format!("`{key}` is not a segment of this path"),
-                Label::new(key_token.text_range().into(), "not found"),
-            );
-            let diagnostic =
-                match mg_diag::suggest::nearest_match(&key, segment_names.iter().copied()) {
-                    Some(s) => diagnostic.with_help(format!("did you mean `{s}`?")),
-                    None => diagnostic,
-                };
-            diagnostics.push(diagnostic);
+        if let Some(names) = &segment_names
+            && !names.contains(&key.as_str())
+        {
+            diagnostics.push(unknown_segment(&key, key_token.text_range().into(), names));
             continue;
         }
         let Some(value) = string_literal_value(&value_expr) else {
@@ -1062,6 +1117,18 @@ fn lower_join_at(
     }
 
     result
+}
+
+fn unknown_segment(key: &str, span: Range<usize>, names: &[&str]) -> Diagnostic {
+    let diagnostic = Diagnostic::error(
+        codes::UNRESOLVED_NAME,
+        format!("`{key}` is not a segment of this path"),
+        Label::new(span, "not found"),
+    );
+    match mg_diag::suggest::nearest_match(key, names.iter().copied()) {
+        Some(s) => diagnostic.with_help(format!("did you mean `{s}`?")),
+        None => diagnostic,
+    }
 }
 
 fn lower_path_body(body: ast::Body, diagnostics: &mut Vec<Diagnostic>) -> (Vec<SegmentDecl>, bool) {
@@ -1612,6 +1679,10 @@ fn typecheck_glyph(hir: &mut Hir, key: &GlyphKey, diagnostics: &mut Vec<Diagnost
             offset: c.offset.clone(),
             transform: c.transform.clone(),
             glyph_ref: c.glyph.clone(),
+            path: c.path.clone(),
+            stroke: c.stroke.clone(),
+            join_at: mg_syntax::edit::find_field(&c.syntax, "joinAt").and_then(|f| f.value()),
+            source: c.source_path(&key.0),
             span: c.syntax.text_range().into(),
         })
         .collect();
@@ -1663,6 +1734,36 @@ fn typecheck_glyph(hir: &mut Hir, key: &GlyphKey, diagnostics: &mut Vec<Diagnost
         }
         if let Some(transform) = &comp.transform {
             expect_type(&mut ctx, transform, Type::Transform, "`transform`");
+        }
+        if let Some(path) = &comp.path {
+            expect_type(&mut ctx, path, Type::Path, "a component's `path`");
+        }
+        if let Some(stroke) = &comp.stroke {
+            expect_type(&mut ctx, stroke, Type::Num, "`stroke`");
+            check_min_exclusive(&mut ctx, stroke, 0.0, "`stroke`");
+        }
+        if let (Some(join_at), Some((source_glyph, source_path))) = (&comp.join_at, &comp.source)
+            && let ast::Expr::Map(map) = join_at
+            && let Some(source) = ctx
+                .hir
+                .glyphs
+                .get(&(source_glyph.clone(), None))
+                .and_then(|g| g.path_named(source_path))
+        {
+            let names: Vec<&str> = source
+                .segments
+                .iter()
+                .filter_map(|s| s.name.as_deref())
+                .collect();
+            let mut found = Vec::new();
+            for entry in map.entries() {
+                if let Some(key) = entry.key_token()
+                    && !names.contains(&key.text())
+                {
+                    found.push(unknown_segment(key.text(), key.text_range().into(), &names));
+                }
+            }
+            ctx.diagnostics.extend(found);
         }
         if let Some(name) = &comp.glyph_ref
             && !ctx.hir.glyphs.contains_key(&(name.clone(), None))
@@ -1726,6 +1827,13 @@ struct ComponentExprs {
     offset: Option<ast::Expr>,
     transform: Option<ast::Expr>,
     glyph_ref: Option<String>,
+    path: Option<ast::Expr>,
+    stroke: Option<ast::Expr>,
+    /// The `joinAt` map's syntax, for checking its keys against the
+    /// source path's segments.
+    join_at: Option<ast::Expr>,
+    /// The source path, when the component names one directly.
+    source: Option<(String, String)>,
     span: Range<usize>,
 }
 

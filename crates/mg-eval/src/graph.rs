@@ -25,6 +25,11 @@ pub enum NodeId {
     GlyphBbox(String),
     PathRealized(String, usize),
     PathBbox(String, usize),
+    /// A path component's skeleton, transformed by its placement (spec
+    /// §5.7): `(glyph, index into its components)`.
+    ComponentPath(String, usize),
+    /// A path component's ink bounds.
+    ComponentBbox(String, usize),
     Anchor(String, String),
     Kern(usize),
 }
@@ -39,6 +44,8 @@ impl std::fmt::Display for NodeId {
             NodeId::GlyphBbox(glyph) => write!(f, "{glyph}.bbox"),
             NodeId::PathRealized(glyph, i) => write!(f, "{glyph}.path[{i}]"),
             NodeId::PathBbox(glyph, i) => write!(f, "{glyph}.path[{i}].bbox"),
+            NodeId::ComponentPath(glyph, i) => write!(f, "{glyph}.component[{i}]"),
+            NodeId::ComponentBbox(glyph, i) => write!(f, "{glyph}.component[{i}].bbox"),
             NodeId::Anchor(glyph, name) => write!(f, "{glyph}.anchor({name})"),
             NodeId::Kern(i) => write!(f, "kern[{i}]"),
         }
@@ -257,8 +264,35 @@ fn build_glyph(
         }
     }
 
-    for component in &glyph.components {
-        collect_component_bbox_deps(component, hir, instance, name, &mut bbox_deps);
+    for (i, component) in glyph.components.iter().enumerate() {
+        if let Some(path) = &component.path {
+            // A path component (spec §5.7): its transformed skeleton, then
+            // its ink, which needs the effective `stroke` — the component's
+            // own, in this glyph's scope, or its source path's, in the
+            // source glyph's.
+            let mut deps = Vec::new();
+            collect_refs(path, hir, instance, Some(name), &mut deps);
+            for placement in [&component.offset, &component.transform].into_iter().flatten() {
+                collect_refs(placement, hir, instance, Some(name), &mut deps);
+            }
+            let path_node = NodeId::ComponentPath(name.to_string(), i);
+            graph.insert(path_node.clone(), span_start(&component.syntax), deps);
+
+            let mut ink_deps = vec![path_node];
+            if let Some(stroke) = &component.stroke {
+                collect_refs(stroke, hir, instance, Some(name), &mut ink_deps);
+            } else if let Some((source_glyph, source_path)) = component.source_path(name)
+                && let Some(source) = effective_glyph(hir, instance, &source_glyph)
+                && let Some(stroke) = source.path_named(&source_path).and_then(|p| p.stroke.as_ref())
+            {
+                collect_refs(stroke, hir, instance, Some(&source_glyph), &mut ink_deps);
+            }
+            let ink_node = NodeId::ComponentBbox(name.to_string(), i);
+            graph.insert(ink_node.clone(), span_start(&component.syntax), ink_deps);
+            bbox_deps.push(ink_node);
+        } else {
+            collect_component_bbox_deps(component, hir, instance, name, &mut bbox_deps);
+        }
     }
     graph.insert(
         NodeId::GlyphBbox(name.to_string()),
@@ -442,11 +476,20 @@ fn collect_member_refs(
                 deps.push(NodeId::GlyphBbox(glyph_name.to_string()));
                 deps.push(NodeId::GlyphShift(glyph_name.to_string()));
             }
-            anchor => {
-                if effective_glyph(hir, instance, glyph_name)
-                    .is_some_and(|g| g.anchors.contains_key(anchor))
+            field => {
+                let Some(glyph) = effective_glyph(hir, instance, glyph_name) else {
+                    return;
+                };
+                if glyph.anchors.contains_key(field) {
+                    deps.push(NodeId::Anchor(glyph_name.to_string(), field.to_string()));
+                    deps.push(NodeId::GlyphShift(glyph_name.to_string()));
+                } else if let Some(i) = glyph
+                    .paths
+                    .iter()
+                    .position(|p| p.name.as_deref() == Some(field))
                 {
-                    deps.push(NodeId::Anchor(glyph_name.to_string(), anchor.to_string()));
+                    // A named path, placed (spec §5.10).
+                    deps.push(NodeId::PathRealized(glyph_name.to_string(), i));
                     deps.push(NodeId::GlyphShift(glyph_name.to_string()));
                 }
             }

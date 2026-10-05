@@ -215,9 +215,54 @@ pub struct AnchorDecl {
 #[derive(Debug)]
 pub struct ComponentDecl {
     pub syntax: SyntaxNode,
+    /// A glyph component's target (spec §5.7). Exactly one of `glyph` and
+    /// `path` on a clean HIR.
     pub glyph: Option<String>,
+    /// A path component's source: any `path`-typed expression.
+    pub path: Option<ast::Expr>,
     pub offset: Option<ast::Expr>,
     pub transform: Option<ast::Expr>,
+    /// A path component's overrides of its source path's own (spec
+    /// §5.7); `None` keeps the source's. Always `None` on a glyph
+    /// component.
+    pub stroke: Option<ast::Expr>,
+    pub fill: Option<bool>,
+    pub caps: Option<CapsSpec>,
+    pub joins: Option<String>,
+    pub join_at: Option<IndexMap<String, String>>,
+}
+
+impl ComponentDecl {
+    /// The source path a path component names directly — a path in
+    /// `glyph`'s own body (`path: stem`) or another glyph's
+    /// (`path: glyphs.o.bowl`) — as `(glyph name, path name)`; `None` for
+    /// a glyph component or a computed path (`subpath`, `reverse`, a
+    /// `let`), whose settings come from the component alone.
+    pub fn source_path(&self, glyph: &str) -> Option<(String, String)> {
+        fn walk(expr: &ast::Expr, glyph: &str) -> Option<(String, String)> {
+            match expr {
+                ast::Expr::Paren(paren) => walk(&paren.inner()?, glyph),
+                ast::Expr::Ident(ident) => {
+                    Some((glyph.to_string(), ident.token()?.text().to_string()))
+                }
+                ast::Expr::Member(member) => {
+                    let ast::Expr::Member(inner) = member.receiver()? else {
+                        return None;
+                    };
+                    let ast::Expr::Ident(root) = inner.receiver()? else {
+                        return None;
+                    };
+                    (root.token()?.text() == "glyphs").then_some(())?;
+                    Some((
+                        inner.member_token()?.text().to_string(),
+                        member.member_token()?.text().to_string(),
+                    ))
+                }
+                _ => None,
+            }
+        }
+        walk(self.path.as_ref()?, glyph)
+    }
 }
 
 #[derive(Debug)]

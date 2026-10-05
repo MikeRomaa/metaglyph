@@ -22,6 +22,11 @@ pub enum EvalError {
         exponent: f64,
     },
     MeetOnParallelLines,
+    /// A path component with neither `stroke` nor `fill`, its own or its
+    /// source path's (spec §5.7).
+    ComponentDrawsNothing,
+    /// A path component with `fill` whose path is open (spec §5.7).
+    ComponentFillOnOpenPath,
     /// `lineThrough` of two equal points: no direction (spec §5.9).
     LineThroughOnePoint,
     /// An `ellipse` or `circle` radius ≤ 0 (spec §5.9).
@@ -87,6 +92,12 @@ impl std::fmt::Display for EvalError {
                 )
             }
             EvalError::MeetOnParallelLines => write!(f, "`meet` on parallel lines"),
+            EvalError::ComponentDrawsNothing => {
+                write!(f, "this path component has neither `stroke` nor `fill`")
+            }
+            EvalError::ComponentFillOnOpenPath => {
+                write!(f, "`fill` needs a closed path, and this component's path is open")
+            }
             EvalError::LineThroughOnePoint => {
                 write!(f, "`lineThrough` of two equal points has no direction")
             }

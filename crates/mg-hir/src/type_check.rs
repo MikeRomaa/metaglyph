@@ -553,13 +553,17 @@ fn infer_glyphs_member(
     };
 
     let is_anchor = glyph.anchors.contains_key(field);
+    // Its named paths too (spec §5.10), in its placed coordinates.
+    let is_path = glyph.path_named(field).is_some();
     let mut legal_names: Vec<String> = vec!["advance".to_string(), "bbox".to_string()];
     legal_names.extend(glyph.anchors.keys().cloned());
+    legal_names.extend(glyph.paths.iter().filter_map(|p| p.name.clone()));
 
     match field {
         "advance" => Type::Num,
         "bbox" => Type::Rect,
         _ if is_anchor => Type::Pair,
+        _ if is_path => Type::Path,
         _ => {
             let names_ref: Vec<&str> = legal_names.iter().map(String::as_str).collect();
             no_such_member(

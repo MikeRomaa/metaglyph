@@ -665,3 +665,137 @@ glyph exclam (advance: 500) {{
     let (_, outcome) = mg_eval::evaluate(&hir, regular(&hir));
     assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
 }
+
+// ---------------------------------------------------------------------
+// Path components (spec §5.7, §15.6)
+
+/// `body`'s glyph `A`, evaluated; its rendered contours' bounds.
+fn render_a(body: &str) -> (mg_eval::EvalOutcome, Vec<kurbo::Rect>) {
+    let source = format!("{PREAMBLE}\n{body}\n");
+    let hir = lower(&source);
+    let instance = regular(&hir);
+    let (_, outcome) = mg_eval::evaluate(&hir, instance);
+    let contours = mg_eval::render_glyph(
+        &hir,
+        instance,
+        "A",
+        &outcome.values,
+        &outcome.failed,
+        &mut Vec::new(),
+    )
+    .unwrap();
+    use kurbo::Shape;
+    let boxes = contours.iter().map(|(c, _)| c.bounding_box()).collect();
+    (outcome, boxes)
+}
+
+fn close_rect(a: kurbo::Rect, b: (f64, f64, f64, f64)) -> bool {
+    [(a.x0, b.0), (a.y0, b.1), (a.x1, b.2), (a.y1, b.3)]
+        .iter()
+        .all(|(x, y)| (x - y).abs() < 1e-6)
+}
+
+#[test]
+fn an_identity_path_component_draws_the_path_again() {
+    let (outcome, boxes) = render_a(
+        r#"glyph A (advance: 100) {
+  path bar (stroke: 4) { start (at: (10, 50)) line (to: (60, 50)) }
+  component (path: bar)
+}"#,
+    );
+    assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
+    assert_eq!(boxes.len(), 2);
+    assert_eq!(boxes[0], boxes[1]);
+    assert!(close_rect(boxes[1], (10.0, 48.0, 60.0, 52.0)), "{boxes:?}");
+}
+
+#[test]
+fn a_mirrored_path_component_keeps_its_stroke_width() {
+    let (outcome, boxes) = render_a(
+        r#"glyph A (advance: 100) {
+  path bar (stroke: 4) { start (at: (10, 50)) line (to: (40, 50)) }
+  component (path: bar, transform: reflect(vline(50)))
+}"#,
+    );
+    assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
+    assert!(close_rect(boxes[1], (60.0, 48.0, 90.0, 52.0)), "{boxes:?}");
+}
+
+#[test]
+fn a_scaled_path_component_strokes_at_its_declared_width() {
+    // The skeleton doubles; the stroke stays 4 wide (spec §5.7).
+    let (_, boxes) = render_a(
+        r#"glyph A (advance: 100) {
+  path bar (stroke: 4) { start (at: (10, 50)) line (to: (40, 50)) }
+  component (path: bar, transform: scale(2))
+}"#,
+    );
+    assert!(close_rect(boxes[1], (20.0, 98.0, 80.0, 102.0)), "{boxes:?}");
+}
+
+#[test]
+fn a_component_can_stroke_a_construction_path() {
+    let (outcome, boxes) = render_a(
+        r#"glyph A (advance: 100) {
+  path guide () { start (at: (0, 0)) line (to: (0, 30)) }
+  component (path: guide, offset: (20, 0), stroke: 10, caps: "round")
+}"#,
+    );
+    assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
+    assert_eq!(boxes.len(), 1, "the guide itself draws nothing");
+    assert!(close_rect(boxes[0], (15.0, -5.0, 25.0, 35.0)), "{boxes:?}");
+}
+
+#[test]
+fn a_component_can_draw_a_subpath() {
+    let (outcome, boxes) = render_a(
+        r#"glyph A (advance: 100) {
+  path guide () { start (at: (0, 0)) line (to: (40, 0)) line (to: (40, 40)) }
+  component (path: subpath(guide, 1, 2), stroke: 2)
+}"#,
+    );
+    assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
+    assert!(close_rect(boxes[0], (39.0, 0.0, 41.0, 40.0)), "{boxes:?}");
+}
+
+#[test]
+fn another_glyphs_path_is_placed() {
+    // `o` is shifted right by its `lsb` (its ink starts at 0): its path
+    // arrives in its placed coordinates (spec §5.10).
+    let (outcome, boxes) = render_a(
+        r#"glyph o (lsb: 30, rsb: 30) {
+  path bowl (stroke: 10) { start (at: (5, 0)) line (to: (5, 50)) }
+}
+glyph A (advance: 200) {
+  component (path: glyphs.o.bowl, offset: (100, 0))
+}"#,
+    );
+    assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
+    // `bowl`'s ink is x 0..10; lsb 30 shifts it by 30: x 30..40, then +100.
+    assert!(close_rect(boxes[0], (130.0, 0.0, 140.0, 50.0)), "{boxes:?}");
+    let bbox = outcome.values[&NodeId::GlyphBbox("A".into())].as_rect().unwrap();
+    assert_eq!((bbox.x0, bbox.x1), (130.0, 140.0));
+}
+
+#[test]
+fn a_component_that_draws_nothing_is_an_error() {
+    let (outcome, _) = render_a(
+        r#"glyph A (advance: 100) {
+  path guide () { start (at: (0, 0)) line (to: (0, 30)) }
+  component (path: guide)
+}"#,
+    );
+    assert_eq!(outcome.diagnostics.len(), 1, "{:#?}", outcome.diagnostics);
+    assert_eq!(outcome.diagnostics[0].code, mg_diag::codes::COMPONENT_DRAWS_NOTHING);
+}
+
+#[test]
+fn a_filled_component_of_an_open_path_is_an_error() {
+    let (outcome, _) = render_a(
+        r#"glyph A (advance: 100) {
+  path guide () { start (at: (0, 0)) line (to: (0, 30)) }
+  component (path: guide, fill: true)
+}"#,
+    );
+    assert_eq!(outcome.diagnostics[0].code, mg_diag::codes::FILL_REQUIRES_CLOSED_PATH);
+}

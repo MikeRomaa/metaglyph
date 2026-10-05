@@ -146,6 +146,9 @@ pub const CAST_MISSES_ELLIPSE: Code = Code::new("MG0620");
 /// A stroked segment whose derivative vanishes at an interior point
 /// (spec §7.3).
 pub const INTERIOR_CUSP: Code = Code::new("MG0621");
+/// A path component with neither `stroke` nor `fill` after its overrides
+/// (spec §5.7).
+pub const COMPONENT_DRAWS_NOTHING: Code = Code::new("MG0622");
 
 // -- MG07xx: export (mg-font) ---------------------------------------------
 

@@ -31,14 +31,14 @@ pub struct PreparedComponent {
     pub transform: Affine,
 }
 
-/// A filled contour of `glyph`'s path at `path_index` crosses itself
-/// after quantization (spec §10.4 step 4). `glyph` is where the path is
-/// declared, which differs from the glyph being built when the contour
-/// arrived through a decomposed component.
+/// A filled contour drawn by `source` in `glyph` crosses itself after
+/// quantization (spec §10.4 step 4). `glyph` is where the path or path
+/// component is declared, which differs from the glyph being built when
+/// the contour arrived through a decomposed component.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuantizedCrossing {
     pub glyph: String,
-    pub path_index: usize,
+    pub source: mg_eval::ContourSource,
 }
 
 /// The spatial accuracy of the post-quantization crossing test, in
@@ -100,7 +100,7 @@ fn prepare_contours<'a>(
                     mg_geom::fill::contour_self_intersections(&pieces, INTERSECTION_ACCURACY);
                 let reported = QuantizedCrossing {
                     glyph: glyph.to_string(),
-                    path_index: contour.path_index,
+                    source: contour.source,
                 };
                 if !hits.is_empty() && !crossings.contains(&reported) {
                     crossings.push(reported);
@@ -276,11 +276,14 @@ pub fn prepare_font(
 
         for crossing in crossings {
             let decl = effective_glyph(hir, instance, &crossing.glyph);
-            let path = &decl.paths[crossing.path_index];
+            let (name_of, syntax) = match crossing.source {
+                mg_eval::ContourSource::Path(i) => (decl.paths[i].name.as_deref(), &decl.paths[i].syntax),
+                mg_eval::ContourSource::Component(i) => (None, &decl.components[i].syntax),
+            };
             let mut diagnostic = quantized_crossing_diagnostic(
                 &crossing.glyph,
-                path.name.as_deref(),
-                mg_syntax::trimmed_range(&path.syntax),
+                name_of,
+                mg_syntax::trimmed_range(syntax),
             );
             if crossing.glyph != *name {
                 diagnostic =

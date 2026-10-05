@@ -171,7 +171,51 @@ fn compute_node(
         NodeId::GlyphBbox(glyph_name) => {
             eval_glyph_bbox(hir, instance, glyph_name, values, diagnostics)
         }
+        NodeId::ComponentPath(glyph_name, i) => {
+            eval_component_path(hir, instance, glyph_name, *i, values, diagnostics)
+        }
+        NodeId::ComponentBbox(glyph_name, i) => {
+            let contours =
+                render_path_component(hir, instance, glyph_name, *i, values, diagnostics)?;
+            Ok(contours_bbox(&contours).map_or(Value::NoInk, Value::Rect))
+        }
     }
+}
+
+/// A path component's skeleton (spec §5.7): its `path` expression's value,
+/// transformed by its placement — exact for Béziers, so this is the
+/// skeleton the component strokes, not an approximation of one.
+fn eval_component_path(
+    hir: &Hir,
+    instance: &InstanceDecl,
+    glyph_name: &str,
+    index: usize,
+    values: &IndexMap<NodeId, Value>,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<Value, ()> {
+    let glyph = effective_glyph(hir, instance, glyph_name);
+    let component = &glyph.components[index];
+    let mut ctx = EvalCtx::new(hir, instance, Some(glyph_name), values, diagnostics);
+    let source = eval_expr(&mut ctx, expr_of(&component.path))?;
+    let affine = component_affine(&mut ctx, component)?;
+    let skeleton = source
+        .as_path()
+        .expect("mg-hir already type-checked a component's `path`");
+    let mut path = skeleton.path.clone();
+    path.apply_affine(affine);
+    Ok(Value::Path(mg_geom::skeleton::Skeleton {
+        path,
+        piece_counts: skeleton.piece_counts.clone(),
+    }))
+}
+
+/// The union of `contours`' bounds; `None` when there are none.
+fn contours_bbox(contours: &Contours) -> Option<Rect> {
+    contours
+        .iter()
+        .map(|(contour, _)| contour.bounding_box())
+        .reduce(|a, b| a.union(b))
+        .map(Rect::from)
 }
 
 /// Every HIR field this evaluator reads is `Some` whenever the HIR has no
@@ -672,6 +716,24 @@ fn eval_glyph_member(
         }
         anchor_name => {
             let glyph = effective_glyph(ctx.hir, ctx.instance, glyph_name);
+            if let Some(i) = glyph
+                .paths
+                .iter()
+                .position(|p| p.name.as_deref() == Some(anchor_name))
+            {
+                // A named path, placed (spec §5.10).
+                let skeleton = ctx
+                    .value_of(&NodeId::PathRealized(glyph_name.to_string(), i))
+                    .as_path()
+                    .expect("PathRealized always evaluates to a Value::Path")
+                    .clone();
+                let mut path = skeleton.path;
+                path.apply_affine(Affine::translate((shift(ctx), 0.0)));
+                return Ok(Value::Path(mg_geom::skeleton::Skeleton {
+                    path,
+                    piece_counts: skeleton.piece_counts,
+                }));
+            }
             if glyph.anchors.contains_key(anchor_name) {
                 let at = ctx
                     .value_of(&NodeId::Anchor(
@@ -857,17 +919,64 @@ pub fn render_path(
     else {
         return Err(());
     };
-    let path_span = mg_syntax::trimmed_range(&path.syntax);
+    let width = match &path.stroke {
+        Some(stroke) => {
+            let mut ctx = EvalCtx::new(hir, instance, Some(glyph_name), values, diagnostics);
+            Some(value_num(&mut ctx, stroke)?)
+        }
+        None => None,
+    };
+    let drawing = Drawing {
+        skeleton,
+        closed: path.closed,
+        fill: path.fill,
+        width,
+        caps: path.caps.as_ref(),
+        joins: &path.joins,
+        join_at: &path.join_at,
+        drawn: drawn_segments(path),
+        span: mg_syntax::trimmed_range(&path.syntax),
+    };
+    render_drawing(hir, &drawing, diagnostics)
+}
 
+/// A rendering path's contours, each with its role.
+type Contours = Vec<(kurbo::BezPath, mg_geom::winding::ContourRole)>;
+
+/// One thing to draw (spec §6.2): a skeleton and the settings it draws
+/// with — a path's own, or a path component's effective ones (spec §5.7).
+struct Drawing<'a> {
+    skeleton: &'a mg_geom::skeleton::Skeleton,
+    closed: bool,
+    fill: bool,
+    /// The stroke width, when it strokes.
+    width: Option<f64>,
+    caps: Option<&'a mg_hir::model::CapsSpec>,
+    joins: &'a str,
+    join_at: &'a IndexMap<String, String>,
+    /// The drawn segments `joinAt` keys and stroke errors name; empty when
+    /// the skeleton has no declared segments (a `subpath`).
+    drawn: &'a [SegmentDecl],
+    /// Where an error with no segment of its own points.
+    span: Range<usize>,
+}
+
+fn render_drawing(
+    hir: &Hir,
+    drawing: &Drawing,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<Contours, ()> {
     let mut contours = Vec::new();
 
-    if path.fill {
+    if drawing.fill {
         // spec §8.3: a self-intersecting filled contour is a hard error,
         // checked before it ever reaches a role or a stroke.
         const INTERSECTION_ACCURACY: f64 = 1e-6;
-        if let Err(hit) = mg_geom::fill::check_self_intersection(skeleton, INTERSECTION_ACCURACY) {
+        if let Err(hit) =
+            mg_geom::fill::check_self_intersection(drawing.skeleton, INTERSECTION_ACCURACY)
+        {
             diagnostics.push(diagnostic_for(
-                path_span,
+                drawing.span.clone(),
                 EvalError::SelfIntersectingFill {
                     crossings: hit.crossings,
                 },
@@ -875,21 +984,20 @@ pub fn render_path(
             return Err(());
         }
         contours.push((
-            mg_geom::fill::fill_contour(skeleton),
+            mg_geom::fill::fill_contour(drawing.skeleton),
             mg_geom::winding::ContourRole::Outer,
         ));
     }
 
-    if let Some(stroke_expr) = &path.stroke {
-        let mut ctx = EvalCtx::new(hir, instance, Some(glyph_name), values, diagnostics);
-        let width = value_num(&mut ctx, stroke_expr)?;
-        let drawn = drawn_segments(path);
-        let spec = build_stroke_spec(path, drawn, width);
+    if let Some(width) = drawing.width {
+        let spec = build_stroke_spec(drawing.caps, drawing.joins, drawing.join_at, drawing.drawn, width);
         let offset_tolerance = tolerances(hir).offset;
-        match mg_geom::stroke::stroke_path(skeleton, path.closed, &spec, offset_tolerance) {
+        match mg_geom::stroke::stroke_path(drawing.skeleton, drawing.closed, &spec, offset_tolerance)
+        {
             Ok(mut stroke_contours) => contours.append(&mut stroke_contours),
             Err(err) => {
-                let (span, eval_err) = stroke_error_to_eval(path, drawn, err);
+                let (span, eval_err) =
+                    stroke_error_to_eval(drawing.span.clone(), drawing.drawn, err);
                 diagnostics.push(diagnostic_for(span, eval_err));
                 return Err(());
             }
@@ -897,6 +1005,88 @@ pub fn render_path(
     }
 
     Ok(contours)
+}
+
+/// Every contour a path component draws (spec §5.7): its transformed
+/// skeleton (`ComponentPath`), drawn with the component's own `stroke`,
+/// `fill`, `caps`, `joins`, and `joinAt` over its source path's. A
+/// computed source (`subpath`, `reverse`, a `let`) has no settings of its
+/// own and is open.
+#[allow(clippy::result_unit_err)]
+pub fn render_path_component(
+    hir: &Hir,
+    instance: &InstanceDecl,
+    glyph_name: &str,
+    index: usize,
+    values: &IndexMap<NodeId, Value>,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<Contours, ()> {
+    let glyph = effective_glyph(hir, instance, glyph_name);
+    let component = &glyph.components[index];
+    let Some(skeleton) = values
+        .get(&NodeId::ComponentPath(glyph_name.to_string(), index))
+        .map(|v| {
+            v.as_path()
+                .expect("ComponentPath always evaluates to a Value::Path")
+        })
+    else {
+        return Err(());
+    };
+    let source = component
+        .source_path(glyph_name)
+        .and_then(|(source_glyph, source_path)| {
+            let decl = graph::effective_glyph(hir, instance, &source_glyph)?;
+            decl.path_named(&source_path).map(|path| (source_glyph, path))
+        });
+
+    let width = if let Some(stroke) = &component.stroke {
+        let mut ctx = EvalCtx::new(hir, instance, Some(glyph_name), values, diagnostics);
+        Some(value_num(&mut ctx, stroke)?)
+    } else if let Some((source_glyph, path)) = &source
+        && let Some(stroke) = &path.stroke
+    {
+        let mut ctx = EvalCtx::new(hir, instance, Some(source_glyph), values, diagnostics);
+        Some(value_num(&mut ctx, stroke)?)
+    } else {
+        None
+    };
+    let fill = component
+        .fill
+        .unwrap_or_else(|| source.as_ref().is_some_and(|(_, p)| p.fill));
+    let closed = source.as_ref().is_some_and(|(_, p)| p.closed);
+    let span = mg_syntax::trimmed_range(&component.syntax);
+    if width.is_none() && !fill {
+        diagnostics.push(diagnostic_for(span, EvalError::ComponentDrawsNothing));
+        return Err(());
+    }
+    if fill && !closed {
+        diagnostics.push(diagnostic_for(span, EvalError::ComponentFillOnOpenPath));
+        return Err(());
+    }
+
+    let no_join_at = IndexMap::new();
+    let drawing = Drawing {
+        skeleton,
+        closed,
+        fill,
+        width,
+        caps: component
+            .caps
+            .as_ref()
+            .or_else(|| source.as_ref().and_then(|(_, p)| p.caps.as_ref())),
+        joins: component
+            .joins
+            .as_deref()
+            .unwrap_or_else(|| source.as_ref().map_or("miter", |(_, p)| p.joins.as_str())),
+        join_at: component
+            .join_at
+            .as_ref()
+            .or_else(|| source.as_ref().map(|(_, p)| &p.join_at))
+            .unwrap_or(&no_join_at),
+        drawn: source.as_ref().map_or(&[][..], |(_, p)| drawn_segments(p)),
+        span,
+    };
+    render_drawing(hir, &drawing, diagnostics)
 }
 
 /// The segments a path draws, `start` excluded. `joinAt` keys and stroke
@@ -910,16 +1100,17 @@ fn drawn_segments(path: &mg_hir::model::PathDecl) -> &[SegmentDecl] {
 /// resolved to 0-based drawn-segment indices here, since name lookup is
 /// this crate's business, not the pure-geometry one's.
 fn build_stroke_spec(
-    path: &mg_hir::model::PathDecl,
+    caps: Option<&mg_hir::model::CapsSpec>,
+    joins: &str,
+    join_at: &IndexMap<String, String>,
     drawn: &[SegmentDecl],
     width: f64,
 ) -> mg_geom::stroke::StrokeSpec {
-    let (start_cap, end_cap) = match &path.caps {
+    let (start_cap, end_cap) = match caps {
         Some(caps) => (parse_cap(&caps.start), parse_cap(&caps.end)),
         None => (mg_geom::stroke::Cap::Butt, mg_geom::stroke::Cap::Butt),
     };
-    let join_overrides = path
-        .join_at
+    let join_overrides = join_at
         .iter()
         .filter_map(|(name, kind)| {
             drawn
@@ -932,7 +1123,7 @@ fn build_stroke_spec(
         width,
         start_cap,
         end_cap,
-        default_join: parse_join(&path.joins),
+        default_join: parse_join(joins),
         join_overrides,
     }
 }
@@ -959,26 +1150,22 @@ fn parse_join(s: &str) -> mg_geom::stroke::JoinKind {
 /// violation or an unresolved inner corner names its own segment (spec
 /// §7.2/§7.4), everything else the whole path.
 fn stroke_error_to_eval(
-    path: &mg_hir::model::PathDecl,
+    span: Range<usize>,
     drawn: &[SegmentDecl],
     err: mg_geom::stroke::StrokeError,
 ) -> (Range<usize>, EvalError) {
-    // A drawn segment's own span, or the path's if it has none here.
+    // A drawn segment's own span, or the whole drawing's if it has none.
     let span_of = |index: usize| {
         drawn.get(index).map_or_else(
-            || mg_syntax::trimmed_range(&path.syntax),
+            || span.clone(),
             |segment| mg_syntax::trimmed_range(&segment.syntax),
         )
     };
     match err {
-        mg_geom::stroke::StrokeError::ZeroLengthPath => (
-            mg_syntax::trimmed_range(&path.syntax),
-            EvalError::ZeroLengthPath,
-        ),
-        mg_geom::stroke::StrokeError::NonPositiveStroke => (
-            mg_syntax::trimmed_range(&path.syntax),
-            EvalError::NonPositiveStroke,
-        ),
+        mg_geom::stroke::StrokeError::ZeroLengthPath => (span.clone(), EvalError::ZeroLengthPath),
+        mg_geom::stroke::StrokeError::NonPositiveStroke => {
+            (span.clone(), EvalError::NonPositiveStroke)
+        }
         mg_geom::stroke::StrokeError::Cusp(violation) => (
             span_of(violation.segment_index),
             EvalError::InteriorCusp {
@@ -1033,7 +1220,18 @@ fn eval_glyph_bbox(
     }
 
     let mut ctx = EvalCtx::new(hir, instance, Some(glyph_name), values, diagnostics);
-    for component in &glyph.components {
+    for (i, component) in glyph.components.iter().enumerate() {
+        if component.path.is_some() {
+            // Already in this glyph's authored coordinates (spec §10.1).
+            if let Some(rect) = ctx
+                .values
+                .get(&NodeId::ComponentBbox(glyph_name.to_string(), i))
+                .and_then(Value::as_rect)
+            {
+                union = Some(union.map_or(rect, |u| union_rect(u, rect)));
+            }
+            continue;
+        }
         let Some(target) = &component.glyph else {
             continue;
         };
@@ -1157,6 +1355,8 @@ fn diagnostic_for(span: Range<usize>, err: EvalError) -> Diagnostic {
         EvalError::InverseTrigOutOfRange { .. } => codes::INVERSE_TRIG_OUT_OF_RANGE,
         EvalError::PowerDomainError { .. } => codes::POWER_DOMAIN_ERROR,
         EvalError::MeetOnParallelLines => codes::MEET_ON_PARALLEL_LINES,
+        EvalError::ComponentDrawsNothing => codes::COMPONENT_DRAWS_NOTHING,
+        EvalError::ComponentFillOnOpenPath => codes::FILL_REQUIRES_CLOSED_PATH,
         EvalError::LineThroughOnePoint => codes::LINE_THROUGH_ONE_POINT,
         EvalError::NonPositiveRadius(_) => codes::NON_POSITIVE_RADIUS,
         EvalError::CastMissesEllipse => codes::CAST_MISSES_ELLIPSE,
@@ -1226,6 +1426,9 @@ fn node_span(hir: &Hir, node: &NodeId) -> Range<usize> {
         }
         NodeId::PathRealized(glyph, i) | NodeId::PathBbox(glyph, i) => {
             &hir.glyphs[&(glyph.clone(), None)].paths[*i].syntax
+        }
+        NodeId::ComponentPath(glyph, i) | NodeId::ComponentBbox(glyph, i) => {
+            &hir.glyphs[&(glyph.clone(), None)].components[*i].syntax
         }
         NodeId::Anchor(glyph, name) => &hir.glyphs[&(glyph.clone(), None)].anchors[name].syntax,
         NodeId::Kern(i) => &hir.kerns[*i].syntax,

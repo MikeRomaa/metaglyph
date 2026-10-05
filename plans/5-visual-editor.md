@@ -146,6 +146,8 @@ Coordinates are raw units unless stated. `pN` means a new named `let`.
 | Action | Generates | Removes / changes |
 |---|---|---|
 | Place component | `component (glyph: X, offset: (dx, dy))` | — |
+| Place path component | `component (path: p, offset: (dx, dy))` for a path in this glyph, or `path: glyphs.X.p` for another's; picking a construction path adds `stroke:` from the path most recently edited | — |
+| Mirror path component | `transform: reflect(axis)` on the component, with `axis` a picked line | — |
 | Drag component | local inverse drag of the offset literals (or of `translate` args in a transform) | — |
 | Edit transform (inspector) | `transform: (scale(…), rotate(…deg), translate(dx, dy))` | the `offset` field, whose value moves into `translate` |
 
@@ -224,7 +226,7 @@ All views share one worker-evaluated state for the **active instance**.
 - Double-click opens the glyph editor.
 
 ### 2.4 Glyph editor
-- **Canvas layers** (each can be toggled): metric lines; origin and advance guides; construction points, lines, ellipses and measurements; skeletons with segment endpoints and control handles; the stroked/filled outline; components (dimmed, clickable to open); diagnostics anchored at their geometry (e.g. a curvature-limit interval).
+- **Canvas layers** (each can be toggled): metric lines; origin and advance guides; construction points, lines, ellipses and measurements; skeletons with segment endpoints and control handles; the stroked/filled outline; components (dimmed, clickable to open; a path component is drawn like a path, with its source named in the inspector); diagnostics anchored at their geometry (e.g. a curvature-limit interval).
 - **Tools:** select/drag, path tool, construction point/line/guide/measurement, component place, plus the relationship tools on the current selection.
 - **Inspector:** the selected declaration's fields, as editable expressions (typed text is spliced as-is) and quick controls (stroke, caps, joins, fill, sweep/large, segment kind).
 - **Drag feedback:** the active driver literal (and its value) is shown near the cursor, locked axes are indicated, a single-driver track is drawn, and the key hint for cycling drivers is shown.

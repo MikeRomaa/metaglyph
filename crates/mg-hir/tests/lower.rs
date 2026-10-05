@@ -703,3 +703,73 @@ fn an_alternate_may_not_declare_variation() {
     ));
     assert!(codes(&diagnostics).contains(&"MG0410"), "{diagnostics:#?}");
 }
+
+// ---------------------------------------------------------------------
+// Path components (spec §5.7)
+
+#[test]
+fn a_path_component_lowers_with_its_overrides() {
+    let (hir, diagnostics) = lower(&format!(
+        r#"{METRICS}
+        glyph o (advance: 1) {{
+            path bowl (stroke: 2) {{ start (at: (0, 0)) line (to: (0, 1)) }}
+        }}
+        glyph A (advance: 1) {{
+            path bar (stroke: 2) {{ start (at: (0, 0)) line named (to: (1, 0)) line (to: (1, 1)) }}
+            component (path: bar, stroke: 3, caps: "round", joinAt: {{ named: "bevel" }})
+            component (path: glyphs.o.bowl, offset: (10, 0))
+        }}
+    "#
+    ));
+    assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+    let a = &hir.glyphs[&("A".to_string(), None)];
+    assert_eq!(a.components[0].source_path("A"), Some(("A".into(), "bar".into())));
+    assert_eq!(a.components[0].joins, None);
+    assert_eq!(a.components[0].caps.as_ref().map(|c| c.start.as_str()), Some("round"));
+    assert_eq!(a.components[1].source_path("A"), Some(("o".into(), "bowl".into())));
+}
+
+#[test]
+fn a_component_needs_exactly_one_of_glyph_and_path() {
+    let (_, diagnostics) = lower(&format!(
+        r#"{METRICS}
+        glyph b (advance: 1) {{}}
+        glyph A (advance: 1) {{
+            path bar (stroke: 2) {{ start (at: (0, 0)) line (to: (1, 0)) }}
+            component (offset: (1, 0))
+            component (glyph: b, path: bar)
+        }}
+    "#
+    ));
+    let found = codes(&diagnostics);
+    assert!(found.contains(&"MG0403"), "{diagnostics:#?}");
+    assert!(found.contains(&"MG0404"), "{diagnostics:#?}");
+}
+
+#[test]
+fn stroke_settings_are_illegal_on_a_glyph_component() {
+    let (_, diagnostics) = lower(&format!(
+        r#"{METRICS}
+        glyph b (advance: 1) {{}}
+        glyph A (advance: 1) {{ component (glyph: b, stroke: 3) }}
+    "#
+    ));
+    assert_eq!(codes(&diagnostics), ["MG0405"], "{diagnostics:#?}");
+}
+
+#[test]
+fn a_component_path_must_be_a_path_and_its_join_keys_its_segments() {
+    let (_, diagnostics) = lower(&format!(
+        r#"{METRICS}
+        glyph A (advance: 1) {{
+            let p = (1, 2);
+            path bar (stroke: 2) {{ start (at: (0, 0)) line (to: (1, 0)) }}
+            component (path: p)
+            component (path: bar, joinAt: {{ nope: "round" }})
+        }}
+    "#
+    ));
+    let found = codes(&diagnostics);
+    assert!(found.contains(&"MG0301"), "{diagnostics:#?}");
+    assert!(found.contains(&"MG0201"), "{diagnostics:#?}");
+}

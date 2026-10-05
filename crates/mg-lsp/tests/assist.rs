@@ -281,7 +281,7 @@ fn members_follow_the_receiver() {
     );
     assert_eq!(
         labels(&complete(&with_glyphs("let x = glyphs.A.|"))),
-        ["advance", "bbox", "top"]
+        ["advance", "bbox", "top", "spine"]
     );
     assert_eq!(
         labels(&complete(&with_glyphs("let x = font.|"))),
