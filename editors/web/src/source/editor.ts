@@ -2,6 +2,7 @@
 // text: canvas edits, and undo/redo from the canvas.
 
 import { redo, undo } from "@codemirror/commands";
+import { closeLintPanel, openLintPanel } from "@codemirror/lint";
 import type { ChangeSpec } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import type { Change } from "../engine/types.ts";
@@ -24,6 +25,14 @@ export function applyChanges(steps: Change[][], label: string) {
         ...editSpec(set, label),
         effects: flashEffect(view, set),
     });
+}
+
+/** Opens the problems list under the editor, or closes it. */
+export function toggleProblems() {
+    const view = current;
+    if (!view) return;
+    if (view.dom.querySelector(".cm-panel-lint")) closeLintPanel(view);
+    else openLintPanel(view);
 }
 
 /** Applies the formatter's changes as one undo step, `mg.format`. Not

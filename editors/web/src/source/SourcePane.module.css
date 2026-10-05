@@ -70,7 +70,13 @@
     align-items: center;
     padding: 0 0.625rem;
     border-right: 1px solid var(--rule);
+    font: inherit;
     text-transform: uppercase;
+    cursor: pointer;
+}
+
+.problems:hover {
+    background: var(--hi);
 }
 
 .undo {

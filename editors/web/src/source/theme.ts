@@ -13,6 +13,8 @@ export const mgTheme = EditorView.theme({
     ".cm-scroller": {
         fontFamily: "var(--font-mono)",
         lineHeight: "1.0625rem",
+        // Room for the quick-navigation strip (`nav.ts`).
+        marginRight: "1.25rem",
     },
     ".cm-content": { padding: "0.25rem 0", caretColor: "var(--acc)" },
     ".cm-cursor": { borderLeftColor: "var(--acc)", borderLeftWidth: "2px" },
@@ -128,6 +130,56 @@ export const mgTheme = EditorView.theme({
         color: "var(--onacc)",
     },
     ".cm-selectionMatch": { background: "var(--wash)" },
+    // Quick navigation beside the scrollbar (`nav.ts`).
+    ".cm-mg-nav": {
+        position: "absolute",
+        top: "0",
+        right: "0",
+        bottom: "0",
+        width: "1.25rem",
+        background: "var(--panel)",
+        borderLeft: "1px solid var(--rule)",
+    },
+    // Each tick is clickable across the strip; its mark is the 5px bar at
+    // its left edge, centred on the line it points to.
+    ".cm-mg-nav-tick": {
+        position: "absolute",
+        left: "0",
+        right: "0",
+        height: "9px",
+        marginTop: "-4px",
+        padding: "0",
+        border: "none",
+        cursor: "pointer",
+        background:
+            "linear-gradient(var(--tick), var(--tick)) 1px 3px / 5px 3px no-repeat",
+    },
+    ".cm-mg-nav-glyph": { "--tick": "var(--con)" },
+    ".cm-mg-nav-warning": { "--tick": "var(--acc)" },
+    ".cm-mg-nav-error": { "--tick": "var(--err)" },
+    ".cm-mg-nav-tick:hover": { backgroundColor: "var(--hi)" },
+    // A glyph's character, beside its mark.
+    ".cm-mg-nav-label": {
+        position: "absolute",
+        left: "7px",
+        top: "-1px",
+        font: "600 9px/11px var(--font-sample)",
+        color: "var(--ink)",
+        whiteSpace: "nowrap",
+        pointerEvents: "none",
+    },
+    ".cm-mg-nav-tick:hover .cm-mg-nav-label": { color: "var(--acc)" },
+    // The problems list (Ctrl+Shift+M).
+    ".cm-panel.cm-panel-lint": {
+        fontFamily: "var(--font-mono)",
+        fontSize: "0.6875rem",
+        maxHeight: "11rem",
+    },
+    ".cm-panel.cm-panel-lint ul [aria-selected]": {
+        background: "var(--inv)",
+        color: "var(--oninv)",
+    },
+    ".cm-panel.cm-panel-lint button[name=close]": { color: "var(--mid)" },
     ".cm-diagnostic": {
         fontFamily: "var(--font-mono)",
         fontSize: "0.6875rem",

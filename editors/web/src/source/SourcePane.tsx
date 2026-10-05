@@ -7,7 +7,7 @@ import {
 } from "@codemirror/commands";
 import { bracketMatching, indentUnit } from "@codemirror/language";
 import type { Diagnostic } from "@codemirror/lint";
-import { lintGutter, setDiagnostics } from "@codemirror/lint";
+import { lintGutter, lintKeymap, setDiagnostics } from "@codemirror/lint";
 import {
     highlightSelectionMatches,
     search,
@@ -29,11 +29,13 @@ import type { Sheet } from "../state/store.ts";
 import { useStore } from "../state/store.ts";
 import { Resizer, usePanelWidth } from "../ui/Resizer.tsx";
 import { mgCompletion } from "./complete.ts";
-import { setEditorView } from "./editor.ts";
+import { setEditorView, toggleProblems } from "./editor.ts";
 import { flashExtension } from "./flash.ts";
 import { formatSource } from "./format.ts";
 import { mgHighlight, mgLanguage } from "./mgLanguage.ts";
+import { navStrip } from "./nav.ts";
 import styles from "./SourcePane.module.css";
+import { selectNextMatch } from "./select.ts";
 import { highlightExtension, selectionAt, setHighlight } from "./sync.ts";
 import { mgTheme } from "./theme.ts";
 
@@ -56,11 +58,14 @@ function extensions(): Extension[] {
         mgCompletion,
         mgTheme,
         lintGutter(),
+        navStrip,
         highlightExtension(),
         flashExtension(),
         // Ctrl+F find/replace, F3 next, Ctrl+D next occurrence, Ctrl+Shift+L
         // every occurrence, Ctrl+Alt+G go to line.
         keymap.of([
+            // Ctrl+D: plain text, ahead of `searchKeymap`'s whole-word one.
+            { key: "Mod-d", run: selectNextMatch, preventDefault: true },
             {
                 key: "Shift-Alt-f",
                 run: () => {
@@ -69,6 +74,8 @@ function extensions(): Extension[] {
                 },
             },
             ...searchKeymap,
+            // Ctrl+Shift+M problems panel, F8 / Shift+F8 next / previous.
+            ...lintKeymap,
             ...defaultKeymap,
             ...historyKeymap,
             indentWithTab,
@@ -248,8 +255,11 @@ export function SourcePane() {
             </header>
             <div ref={host} className={styles.editor} />
             <footer className={styles.foot}>
-                <span
+                <button
+                    type="button"
                     className={styles.problems}
+                    title="Show or hide the problems list (Ctrl+Shift+M); F8 jumps to the next"
+                    onClick={toggleProblems}
                     style={{
                         color:
                             problems === 0
@@ -262,7 +272,7 @@ export function SourcePane() {
                     {problems === 0
                         ? "✓ 0 problems"
                         : `▲ ${problems} problem${problems === 1 ? "" : "s"}`}
-                </span>
+                </button>
                 <span className={styles.undo}>
                     undo ·{" "}
                     {lastOp === null
