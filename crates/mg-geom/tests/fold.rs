@@ -225,3 +225,43 @@ fn a_wide_curve_is_untouched() {
     assert!(stroked.folds.is_empty());
     assert_pen_coverage(&skeleton, &stroked, 20.0);
 }
+
+#[test]
+fn a_closed_path_the_pen_fills_has_no_counter() {
+    // `dsk`'s arrowhead in samples/a22x-mono.mg: a triangle with inradius
+    // about 41.7, stroked at r = 50. No corner's inner offsets cross within
+    // their segments (spec §7.4), and the pen covers the whole inside.
+    let pts = [
+        Point::new(350.0, 377.8),
+        Point::new(500.0, 377.8),
+        Point::new(450.0, 500.0),
+    ];
+    let skeleton = skeleton::realize(
+        &RawStart { at: pts[0] },
+        &[RawSegment::Line { to: pts[1] }, RawSegment::Line { to: pts[2] }],
+        true,
+        1e-9,
+    )
+    .unwrap();
+    let stroked = stroke_path_with_folds(&skeleton, true, &spec(100.0), TOLERANCE).unwrap();
+    assert_eq!(stroked.contours.len(), 1, "the counter is dropped");
+    assert_pen_coverage(&skeleton, &stroked, 50.0);
+}
+
+#[test]
+fn a_sharp_turn_beside_a_short_segment_draws_the_pen() {
+    // The second segment (about 19 long) is shorter than r = 20 at a
+    // sharp turn: its inner offset can't reach the first's (spec §7.4).
+    let skeleton = skeleton::realize(
+        &RawStart { at: Point::new(0.0, 0.0) },
+        &[
+            RawSegment::Line { to: Point::new(100.0, 0.0) },
+            RawSegment::Line { to: Point::new(85.0, 12.0) },
+        ],
+        false,
+        1e-9,
+    )
+    .unwrap();
+    let stroked = stroke_path_with_folds(&skeleton, false, &spec(40.0), TOLERANCE).unwrap();
+    assert_pen_coverage(&skeleton, &stroked, 20.0);
+}

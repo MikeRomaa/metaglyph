@@ -66,14 +66,6 @@ pub enum EvalError {
     SelfIntersectingFill {
         crossings: Vec<(f64, f64)>,
     },
-    /// A corner's inner offsets don't cross within its two adjacent
-    /// segments (spec §7.4): a sharp turn beside a segment too short for
-    /// the stroke. `segment_index` is the drawn segment the corner ends.
-    /// A 180° reversal also has no crossing, but is a legitimate shape,
-    /// not this error.
-    InnerCornerNoCrossing {
-        segment_index: usize,
-    },
 }
 
 impl std::fmt::Display for EvalError {
@@ -150,14 +142,6 @@ impl std::fmt::Display for EvalError {
                     write!(f, "({t_a:.4}, {t_b:.4})")?;
                 }
                 Ok(())
-            }
-            EvalError::InnerCornerNoCrossing { segment_index } => {
-                write!(
-                    f,
-                    "the inner offsets on either side of segment {segment_index}'s corner \
-                     don't cross within it — the turn is sharp and the adjacent segment is \
-                     too short for the stroke"
-                )
             }
         }
     }

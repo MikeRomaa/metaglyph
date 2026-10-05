@@ -1149,10 +1149,6 @@ fn stroke_error_to_eval(
                 local_t: violation.local_t,
             },
         ),
-        mg_geom::stroke::StrokeError::InnerCornerNoCrossing { segment_index } => (
-            span_of(segment_index),
-            EvalError::InnerCornerNoCrossing { segment_index },
-        ),
     }
 }
 
@@ -1342,7 +1338,6 @@ fn diagnostic_for(span: Range<usize>, err: EvalError) -> Diagnostic {
         EvalError::NonPositiveStroke => codes::NON_POSITIVE_STROKE,
         EvalError::InteriorCusp { .. } => codes::INTERIOR_CUSP,
         EvalError::SelfIntersectingFill { .. } => codes::SELF_INTERSECTING_FILL,
-        EvalError::InnerCornerNoCrossing { .. } => codes::INNER_CORNER_NO_CROSSING,
     };
     let diagnostic = Diagnostic::error(code, err.to_string(), Label::new(span, "here"));
     match err {

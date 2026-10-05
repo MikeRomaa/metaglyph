@@ -82,14 +82,6 @@ pub enum StrokeError {
     /// A segment's derivative vanishes at an interior point (spec §7.3):
     /// its offset has no direction there.
     Cusp(CurvatureViolation),
-    /// A corner's inner offsets don't cross within its two adjacent
-    /// segments (spec §7.4): a sharp turn beside a segment too short for
-    /// the stroke. `segment_index` is the drawn segment the corner ends.
-    /// A 180° reversal also has no crossing, but is a legitimate shape,
-    /// not this error.
-    InnerCornerNoCrossing {
-        segment_index: usize,
-    },
 }
 
 /// A stroke's contours, with roles, and the folds trimmed from them
@@ -160,7 +152,7 @@ pub fn stroke_path_with_folds(
             .find(|&&(index, _)| index == corner.segment_index)
             .map_or(spec.default_join, |&(_, join)| join);
         splice_join(&mut result, &corner, join, r, offset_tolerance);
-        trim_inner_corner(&mut result, &corner, r, offset_tolerance)?;
+        trim_inner_corner(&mut result, &corner, r, offset_tolerance);
     }
 
     for fold in &folds {
@@ -239,7 +231,9 @@ fn counter_is_filled(counter: &BezPath, skeleton: &Skeleton, r: f64, tolerance: 
                 bbox.y0 + bbox.height() * (j as f64 + 0.5) / GRID as f64,
             );
             if polygon.winding(p) != 0
-                && pieces.iter().all(|seg| seg.nearest(p, 1e-6).distance_sq > reach_sq)
+                && pieces
+                    .iter()
+                    .all(|seg| seg.nearest(p, 1e-6).distance_sq > reach_sq)
             {
                 return false;
             }
@@ -350,7 +344,8 @@ fn cut_enclosing_loop(
                 // Neighbours meeting at their shared joint: `i` ends where
                 // `j` starts, or (all the way round) `j` ends where `i`
                 // starts.
-                let at_joint = |joint: Point| segs[i].eval(ti.clamp(0.0, 1.0)).distance(joint) <= joint_reach;
+                let at_joint =
+                    |joint: Point| segs[i].eval(ti.clamp(0.0, 1.0)).distance(joint) <= joint_reach;
                 if (span == 1 && at_joint(segs[i].end()))
                     || (span == n - 1 && at_joint(segs[i].start()))
                 {
@@ -652,20 +647,24 @@ fn splice_chord(
 /// way `corner`'s own cross product can be zero here, since `corners()`
 /// already excludes the same-direction, non-corner case) leave the two
 /// inner offsets exactly parallel: a stroke doubling straight back on
-/// itself is a legitimate shape, not an error, so that's left as-is too,
-/// checked before ever searching for a crossing. It *is* an error — spec
-/// §7.4's — when a crossing exists but falls outside one of the two
-/// adjacent segments' own span: a sharp (non-reversing) turn beside a
-/// segment too short for the stroke to fit inside.
+/// itself is a legitimate shape, so that's left as-is too, checked before
+/// ever searching for a crossing.
+///
+/// A sharp turn beside a segment too short for the stroke has no crossing
+/// within the two adjacent pieces either: the pen covers the whole inner
+/// side there (spec §7.4). That corner is left as kurbo drew it, which is
+/// still exactly the pen's ink under the nonzero rule; when it is a
+/// closed path whose counter the pen fills, `assign_closed_roles` drops
+/// the counter.
 fn trim_inner_corner(
     contours: &mut [(BezPath, ContourRole)],
     corner: &Corner,
     r: f64,
     tolerance: f64,
-) -> Result<(), StrokeError> {
+) {
     let turn = corner.incoming.cross(corner.outgoing);
     if turn.abs() < 1e-9 {
-        return Ok(());
+        return;
     }
     let p_a = corner.vertex + inner_offset(corner.incoming, turn) * r;
     let p_b = corner.vertex + inner_offset(corner.outgoing, turn) * r;
@@ -673,15 +672,9 @@ fn trim_inner_corner(
     for (contour, _) in contours.iter_mut() {
         match try_trim_inner_chord(contour, p_a, p_b, corner.vertex, tolerance) {
             InnerTrim::NotFound => continue,
-            InnerTrim::Trimmed => return Ok(()),
-            InnerTrim::NoCrossing => {
-                return Err(StrokeError::InnerCornerNoCrossing {
-                    segment_index: corner.segment_index,
-                });
-            }
+            InnerTrim::Trimmed | InnerTrim::NoCrossing => return,
         }
     }
-    Ok(())
 }
 
 enum InnerTrim {
@@ -691,7 +684,7 @@ enum InnerTrim {
     /// own span — trimmed and spliced in.
     Trimmed,
     /// Found the chord, but the two adjacent pieces never cross within
-    /// their own span (spec §7.4 error).
+    /// their own span: left untrimmed (spec §7.4).
     NoCrossing,
 }
 
@@ -1059,7 +1052,7 @@ mod tests {
     }
 
     #[test]
-    fn inner_corner_with_no_crossing_is_an_error() {
+    fn inner_corner_with_no_crossing_is_left_as_drawn() {
         // A very sharp corner where the second segment is far too short
         // for the stroke: its inner offset can't possibly reach back to
         // cross the first segment's inner offset within its own span.
@@ -1080,11 +1073,9 @@ mod tests {
         ];
         let skeleton = skeleton::realize(&start, &segs, false, NO_ARC_TOLERANCE).unwrap();
         let spec = default_spec(20.0); // r = 10, well over the second segment's length
-        let result = stroke_path(&skeleton, false, &spec, OFFSET_TOLERANCE);
-        assert_eq!(
-            result,
-            Err(StrokeError::InnerCornerNoCrossing { segment_index: 0 })
-        );
+        // The pen covers the whole inner side: not an error (spec §7.4).
+        let contours = stroke_path(&skeleton, false, &spec, OFFSET_TOLERANCE).unwrap();
+        assert_eq!(contours.len(), 1);
     }
 
     #[test]
@@ -1105,7 +1096,7 @@ mod tests {
         ];
         let skeleton = skeleton::realize(&start, &segs, false, NO_ARC_TOLERANCE).unwrap();
         let spec = default_spec(2.0);
-        // Must succeed, not return `InnerCornerNoCrossing`.
+        // Must succeed.
         stroke_path(&skeleton, false, &spec, OFFSET_TOLERANCE).unwrap();
     }
 

@@ -111,7 +111,7 @@ pub const INVALID_REFLECTION: Code = Code::new("MG0508");
 //
 // Includes cycles, arithmetic/geometric domain errors, and the geometry
 // kernel's own errors (spec §7–§8): degenerate stroke/fill input, interior
-// cusps, unresolvable inner corners, and self-intersecting fills.
+// cusps, and self-intersecting fills.
 
 pub const CYCLE: Code = Code::new("MG0601");
 pub const DIVISION_BY_ZERO: Code = Code::new("MG0602");
@@ -134,23 +134,18 @@ pub const ZERO_LENGTH_PATH: Code = Code::new("MG0614");
 pub const NON_POSITIVE_STROKE: Code = Code::new("MG0615");
 /// A filled contour crosses itself (spec §8.3).
 pub const SELF_INTERSECTING_FILL: Code = Code::new("MG0616");
-/// A corner's inner offsets don't cross within its two adjacent segments
-/// (spec §7.4): a sharp turn beside a segment too short for the stroke. A
-/// 180° reversal also has no crossing, but is a legitimate shape, not this
-/// error.
-pub const INNER_CORNER_NO_CROSSING: Code = Code::new("MG0617");
 /// `lineThrough` of two equal points (spec §5.9).
-pub const LINE_THROUGH_ONE_POINT: Code = Code::new("MG0618");
+pub const LINE_THROUGH_ONE_POINT: Code = Code::new("MG0617");
 /// An `ellipse` or `circle` radius ≤ 0 (spec §5.9).
-pub const NON_POSITIVE_RADIUS: Code = Code::new("MG0619");
+pub const NON_POSITIVE_RADIUS: Code = Code::new("MG0618");
 /// `cast` with no crossing ahead of the line's origin (spec §5.9).
-pub const CAST_MISSES_ELLIPSE: Code = Code::new("MG0620");
+pub const CAST_MISSES_ELLIPSE: Code = Code::new("MG0619");
 /// A stroked segment whose derivative vanishes at an interior point
 /// (spec §7.3).
-pub const INTERIOR_CUSP: Code = Code::new("MG0621");
+pub const INTERIOR_CUSP: Code = Code::new("MG0620");
 /// A path component with neither `stroke` nor `fill` after its overrides
 /// (spec §5.7).
-pub const COMPONENT_DRAWS_NOTHING: Code = Code::new("MG0622");
+pub const COMPONENT_DRAWS_NOTHING: Code = Code::new("MG0621");
 
 // -- MG07xx: export (mg-font) ---------------------------------------------
 
