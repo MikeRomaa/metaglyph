@@ -15,16 +15,17 @@ use lsp_types::notification::{
     Notification as NotificationTrait, PublishDiagnostics,
 };
 use lsp_types::request::{
-    Completion, DocumentSymbolRequest, Formatting, GotoDefinition, HoverRequest, References,
-    Request as RequestTrait,
+    Completion, DocumentSymbolRequest, Formatting, GotoDefinition, HoverRequest,
+    PrepareRenameRequest, References, Rename, Request as RequestTrait,
 };
 use lsp_types::{
     CompletionOptions, CompletionParams, CompletionResponse, DocumentFormattingParams,
     DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
     Hover, HoverContents, HoverParams, HoverProviderCapability, InitializeParams, InitializeResult,
     Location, MarkupContent, MarkupKind, MessageType, OneOf, Position, PositionEncodingKind,
-    PublishDiagnosticsParams, ReferenceParams, ServerCapabilities, ServerInfo, ShowMessageParams,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri,
+    PrepareRenameResponse, PublishDiagnosticsParams, ReferenceParams, RenameOptions, RenameParams,
+    ServerCapabilities, ServerInfo, ShowMessageParams, TextDocumentPositionParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Uri, WorkspaceEdit,
 };
 use mg_syntax::ast::AstNode;
 use mg_syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
@@ -218,6 +219,10 @@ pub fn main_loop(connection: Connection) -> Result<(), Error> {
             document_symbol_provider: Some(OneOf::Left(true)),
             definition_provider: Some(OneOf::Left(true)),
             references_provider: Some(OneOf::Left(true)),
+            rename_provider: Some(OneOf::Right(RenameOptions {
+                prepare_provider: Some(true),
+                work_done_progress_options: Default::default(),
+            })),
             hover_provider: Some(HoverProviderCapability::Simple(true)),
             document_formatting_provider: Some(OneOf::Left(true)),
             completion_provider: Some(CompletionOptions {
@@ -311,6 +316,31 @@ impl Server {
     /// is fatal.
     fn handle_request(&self, request: Request) -> Result<(), Error> {
         let Request { id, method, params } = request;
+        // Rename can refuse with a reason the editor shows ("`x` is
+        // already declared"), as a failed request rather than a result.
+        if method == PrepareRenameRequest::METHOD || method == Rename::METHOD {
+            let outcome = if method == Rename::METHOD {
+                serde_json::from_value(params).map(|p: RenameParams| {
+                    let at = p.text_document_position;
+                    self.rename(&at.text_document.uri, at.position, &p.new_name)
+                })
+            } else {
+                serde_json::from_value(params).map(|p: TextDocumentPositionParams| {
+                    self.prepare_rename(&p.text_document.uri, p.position)
+                })
+            };
+            let response = match outcome {
+                Ok(Ok(value)) => Response::new_ok(id, value),
+                Ok(Err(reason)) => Response::new_err(id, ErrorCode::RequestFailed as i32, reason),
+                Err(err) => Response::new_err(
+                    id,
+                    ErrorCode::InvalidParams as i32,
+                    format!("invalid params for {method}: {err}"),
+                ),
+            };
+            self.connection.sender.send(response.into())?;
+            return Ok(());
+        }
         let result = match method.as_str() {
             DocumentSymbolRequest::METHOD => serde_json::from_value(params)
                 .map(|p: DocumentSymbolParams| json(self.document_symbols(&p.text_document.uri))),
@@ -462,6 +492,50 @@ impl Server {
             uri.clone(),
             document.range(&target, self.encoding),
         )))
+    }
+
+    /// The name at `position` and its range, if it can be renamed; `null`
+    /// where there is no name at all.
+    fn prepare_rename(&self, uri: &Uri, position: Position) -> Result<serde_json::Value, String> {
+        let Some(document) = self.documents.get(uri.as_str()) else {
+            return Ok(serde_json::Value::Null);
+        };
+        let Some(token) = document.ident_at(document.offset(position, self.encoding)) else {
+            return Ok(serde_json::Value::Null);
+        };
+        mg_syntax::edit::renameable(&document.index, &token)?;
+        let span: std::ops::Range<usize> = token.text_range().into();
+        Ok(json(PrepareRenameResponse::RangeWithPlaceholder {
+            range: document.range(&span, self.encoding),
+            placeholder: token.text().to_string(),
+        }))
+    }
+
+    /// The symbol at `position` renamed to `new_name`, with every
+    /// reference, as one edit to this document — or why it can't be
+    /// (spec §5.4, §5.11), via the same check the web editor uses.
+    fn rename(
+        &self,
+        uri: &Uri,
+        position: Position,
+        new_name: &str,
+    ) -> Result<serde_json::Value, String> {
+        let document = self
+            .documents
+            .get(uri.as_str())
+            .ok_or("This document isn't open.")?;
+        let token = document
+            .ident_at(document.offset(position, self.encoding))
+            .ok_or("There is no name here to rename.")?;
+        let edits = mg_syntax::edit::rename_symbol(&document.root, &document.index, &token, new_name)?;
+        let edits = edits
+            .into_iter()
+            .map(|edit| TextEdit::new(document.range(&edit.range, self.encoding), edit.text))
+            .collect();
+        Ok(json(WorkspaceEdit {
+            changes: Some([(uri.clone(), edits)].into_iter().collect()),
+            ..Default::default()
+        }))
     }
 
     fn references(

@@ -1643,62 +1643,9 @@ fn rename(root: &SyntaxNode, node: &SyntaxNode, name: &str) -> OpResult<Vec<Text
     if token.text() == name {
         return Ok(Vec::new());
     }
-    if let Some(why) = edit::invalid_name(name) {
-        return Err(format!("`{name}` is {why}."));
-    }
     let file = ast::SourceFile::cast(root.clone()).expect("the root is a SOURCE_FILE");
     let index = Index::new(&file);
-    let def = index
-        .resolve(&token)
-        .ok_or("This declaration can't be renamed.")?;
-    let taken = |d: Def| index.decl(&d).is_some();
-    let glyph_name = |g: usize| index.glyphs[g].decl.name.clone();
-
-    let conflict = match &def {
-        Def::TopLevel(_) => {
-            if taken(Def::TopLevel(name.to_string())) {
-                Some(format!("`{name}` is already declared at the top level."))
-            } else {
-                (0..index.glyphs.len())
-                    .find(|&g| {
-                        taken(Def::GlyphLocal {
-                            glyph: g,
-                            name: name.to_string(),
-                        })
-                    })
-                    .map(|g| format!("glyph {} already declares a local `{name}`.", glyph_name(g)))
-            }
-        }
-        Def::GlyphLocal { glyph, .. } => {
-            if taken(Def::GlyphLocal {
-                glyph: *glyph,
-                name: name.to_string(),
-            }) {
-                Some(format!(
-                    "glyph {} already declares `{name}`.",
-                    glyph_name(*glyph)
-                ))
-            } else if taken(Def::TopLevel(name.to_string())) {
-                Some(format!("`{name}` would shadow a top-level declaration."))
-            } else {
-                None
-            }
-        }
-        Def::Glyph(_) | Def::Group(_) => (taken(Def::Glyph(name.to_string()))
-            || taken(Def::Group(name.to_string())))
-        .then(|| format!("A glyph or group named `{name}` already exists.")),
-        Def::Segment { glyph, path, .. } => taken(Def::Segment {
-            glyph: *glyph,
-            path: *path,
-            name: name.to_string(),
-        })
-        .then(|| format!("This path already has a segment named `{name}`.")),
-        Def::GlyphSet(_) => Some("Glyph sets can't be renamed here.".to_string()),
-    };
-    if let Some(message) = conflict {
-        return Err(message);
-    }
-    Ok(edit::rename(root, &index, &def, name))
+    edit::rename_symbol(root, &index, &token, name)
 }
 
 #[cfg(test)]

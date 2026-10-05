@@ -666,6 +666,84 @@ pub fn invalid_name(name: &str) -> Option<&'static str> {
     None
 }
 
+/// The symbol `token` names — its declaration or any reference to it —
+/// renamed to `name` with every reference, or why it can't be: the name
+/// must be a valid identifier and must not duplicate or shadow another
+/// declaration (spec §5.4, §5.11). Shared by the web editor's rename and
+/// the language server's.
+pub fn rename_symbol(
+    root: &SyntaxNode,
+    index: &Index,
+    token: &SyntaxToken,
+    name: &str,
+) -> Result<Vec<TextEdit>, String> {
+    let def = renameable(index, token)?;
+    if token.text() == name {
+        return Ok(Vec::new());
+    }
+    if let Some(why) = invalid_name(name) {
+        return Err(format!("`{name}` is {why}."));
+    }
+    let taken = |d: Def| index.decl(&d).is_some();
+    let glyph_name = |g: usize| index.glyphs[g].decl.name.clone();
+
+    let conflict = match &def {
+        Def::TopLevel(_) => {
+            if taken(Def::TopLevel(name.to_string())) {
+                Some(format!("`{name}` is already declared at the top level."))
+            } else {
+                (0..index.glyphs.len())
+                    .find(|&g| {
+                        taken(Def::GlyphLocal {
+                            glyph: g,
+                            name: name.to_string(),
+                        })
+                    })
+                    .map(|g| format!("glyph {} already declares a local `{name}`.", glyph_name(g)))
+            }
+        }
+        Def::GlyphLocal { glyph, .. } => {
+            if taken(Def::GlyphLocal {
+                glyph: *glyph,
+                name: name.to_string(),
+            }) {
+                Some(format!(
+                    "glyph {} already declares `{name}`.",
+                    glyph_name(*glyph)
+                ))
+            } else if taken(Def::TopLevel(name.to_string())) {
+                Some(format!("`{name}` would shadow a top-level declaration."))
+            } else {
+                None
+            }
+        }
+        Def::Glyph(_) | Def::Group(_) => (taken(Def::Glyph(name.to_string()))
+            || taken(Def::Group(name.to_string())))
+        .then(|| format!("A glyph or group named `{name}` already exists.")),
+        Def::Segment { glyph, path, .. } => taken(Def::Segment {
+            glyph: *glyph,
+            path: *path,
+            name: name.to_string(),
+        })
+        .then(|| format!("This path already has a segment named `{name}`.")),
+        Def::GlyphSet(_) => unreachable!("`renameable` refuses glyph sets"),
+    };
+    match conflict {
+        Some(message) => Err(message),
+        None => Ok(rename(root, index, &def, name)),
+    }
+}
+
+/// What `token` names, if it can be renamed: any declaration but a glyph
+/// set, which has no single declaration to rename.
+pub fn renameable(index: &Index, token: &SyntaxToken) -> Result<Def, String> {
+    match index.resolve(token) {
+        None => Err("This isn't a name that can be renamed.".to_string()),
+        Some(Def::GlyphSet(_)) => Err("Glyph sets can't be renamed.".to_string()),
+        Some(def) => Ok(def),
+    }
+}
+
 /// Rename `def` and every reference to it (plan 5, §1.2).
 pub fn rename(root: &SyntaxNode, index: &Index, def: &Def, new_name: &str) -> Vec<TextEdit> {
     index

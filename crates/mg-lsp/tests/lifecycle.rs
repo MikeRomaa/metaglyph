@@ -145,7 +145,7 @@ fn closing_a_document_clears_its_diagnostics() {
 #[test]
 fn an_unsupported_request_gets_method_not_found() {
     let (mut client, _) = Client::start(None);
-    let response = client.request("textDocument/rename", serde_json::json!({}));
+    let response = client.request("textDocument/codeAction", serde_json::json!({}));
     let error = response.response_result.unwrap_err();
     assert_eq!(error.code, lsp_server::ErrorCode::MethodNotFound as i32);
     client.stop();
