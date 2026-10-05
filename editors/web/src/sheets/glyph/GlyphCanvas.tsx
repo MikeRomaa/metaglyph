@@ -492,6 +492,33 @@ export function GlyphCanvas({
             />,
         );
     }
+    // The sidebearings (spec §12.1), a row above the advance: origin to
+    // the ink's left edge, and its right edge to the advance.
+    if (glyph.ink && glyph.advance !== undefined) {
+        const [inkX0, , inkX1] = glyph.ink;
+        const bearing = (field: "lsb" | "rsb", value: number) => {
+            const expr = glyph.fields[field];
+            return `${field} ${expr ? `${expr} = ` : ""}${fmt(value)}`;
+        };
+        dims.push(
+            <Dim
+                key="lsb"
+                a={[originX, 0]}
+                b={[inkX0, 0]}
+                at={Y(descender) + 30 * k}
+                k={k}
+                label={bearing("lsb", inkX0 - originX)}
+            />,
+            <Dim
+                key="rsb"
+                a={[inkX1, 0]}
+                b={[advanceX, 0]}
+                at={Y(descender) + 30 * k}
+                k={k}
+                label={bearing("rsb", advanceX - inkX1)}
+            />,
+        );
+    }
     const cap = font.metrics.find((m) => m.name === "capHeight");
     if (cap?.y !== undefined) {
         dims.push(

@@ -8,7 +8,7 @@ import type {
     SegmentKind,
 } from "../../engine/types.ts";
 import { lockText } from "../../engine/types.ts";
-import { fmt, hex, pathKey } from "../../font/lookup.ts";
+import { fmt, hex, pathKey, spacing } from "../../font/lookup.ts";
 import {
     removePathField,
     renameSelection,
@@ -156,6 +156,8 @@ function Toolbar({
 
 function TitleBlock({ font, glyph }: { font: FontData; glyph: GlyphInfo }) {
     const info = useStore((s) => s.lastGood?.font);
+    // Placed sidebearings (spec §12.1); "—" for a glyph with no ink.
+    const bearings = spacing(glyph);
     return (
         <div className={styles.titleBlock}>
             <div className={styles.titleHead}>
@@ -174,6 +176,16 @@ function TitleBlock({ font, glyph }: { font: FontData; glyph: GlyphInfo }) {
                 <span>ADV</span>{" "}
                 {glyph.fields.advance ? `${glyph.fields.advance} · ` : ""}
                 {fmt(glyph.advance)}
+            </div>
+            <div>
+                <span>LSB</span>{" "}
+                {glyph.fields.lsb ? `${glyph.fields.lsb} · ` : ""}
+                {fmt(bearings.lsb)}
+            </div>
+            <div>
+                <span>RSB</span>{" "}
+                {glyph.fields.rsb ? `${glyph.fields.rsb} · ` : ""}
+                {fmt(bearings.rsb)}
             </div>
             <div>
                 <span>REV</span> {info?.version ?? "—"}
