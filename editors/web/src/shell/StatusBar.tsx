@@ -8,6 +8,7 @@ const HINTS: Record<Sheet, string> = {
     2: "Tab next driver · Esc cancel",
     3: "⌘Z undo",
     4: "⌘Z undo",
+    5: "type in Text to set it · hover a glyph for its name",
 };
 
 /** `"Name <mail>"` → `"Name"`, as the design's title block shows it. */

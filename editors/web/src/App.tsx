@@ -3,6 +3,7 @@ import styles from "./App.module.css";
 import { GlyphSheet } from "./sheets/glyph/GlyphSheet.tsx";
 import { GlyphsSheet } from "./sheets/glyphs/GlyphsSheet.tsx";
 import { KerningSheet } from "./sheets/kerning/KerningSheet.tsx";
+import { PreviewSheet } from "./sheets/preview/PreviewSheet.tsx";
 import { SpacingSheet } from "./sheets/spacing/SpacingSheet.tsx";
 import { Frame } from "./shell/Frame.tsx";
 import { Header } from "./shell/Header.tsx";
@@ -45,6 +46,7 @@ export default function App() {
                 {sheet === 2 && <GlyphSheet />}
                 {sheet === 3 && <SpacingSheet />}
                 {sheet === 4 && <KerningSheet />}
+                {sheet === 5 && <PreviewSheet />}
                 <SourcePane />
             </div>
             <StatusBar />

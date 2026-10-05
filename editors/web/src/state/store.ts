@@ -12,7 +12,7 @@ import type {
 } from "../engine/types.ts";
 import { locate } from "../font/lookup.ts";
 
-export type Sheet = 1 | 2 | 3 | 4;
+export type Sheet = 1 | 2 | 3 | 4 | 5;
 export type Theme = "light" | "dark";
 
 export const SHEETS: { n: Sheet; label: string }[] = [
@@ -20,6 +20,7 @@ export const SHEETS: { n: Sheet; label: string }[] = [
     { n: 2, label: "Glyph" },
     { n: 3, label: "Spacing" },
     { n: 4, label: "Kerning" },
+    { n: 5, label: "Preview" },
 ];
 
 export type Layer =
@@ -143,6 +144,12 @@ interface Store {
     added: string[];
     // Spacing sheet.
     spacingText: string;
+    // Preview sheet.
+    previewText: string;
+    /** Pixels per em. */
+    previewSize: number;
+    previewKern: boolean;
+    previewMetrics: boolean;
     // Kerning sheet.
     kernContext: string;
     kern: number | null;
@@ -176,6 +183,10 @@ interface Store {
     /** Shows search results; picks made in earlier results are kept. */
     setSearch(search: string, found: number[]): void;
     markAdded(names: string[]): void;
+    setPreviewText(previewText: string): void;
+    setPreviewSize(previewSize: number): void;
+    setPreviewKern(previewKern: boolean): void;
+    setPreviewMetrics(previewMetrics: boolean): void;
     setSpacingText(text: string): void;
     setKernContext(text: string): void;
     setKern(kern: number | null): void;
@@ -238,6 +249,10 @@ export const useStore = create<Store>()((set) => ({
     found: [],
     added: [],
     spacingText: "",
+    previewText: "THE QUICK BROWN FOX\nJUMPS OVER THE LAZY DOG\n0123456789",
+    previewSize: 72,
+    previewKern: true,
+    previewMetrics: false,
     kernContext: "nn<pair>nn · HH<pair>HH",
     kern: null,
 
@@ -362,6 +377,10 @@ export const useStore = create<Store>()((set) => ({
         })),
     markAdded: (names) => set((s) => ({ added: [...s.added, ...names] })),
     setSpacingText: (spacingText) => set({ spacingText }),
+    setPreviewText: (previewText) => set({ previewText }),
+    setPreviewSize: (previewSize) => set({ previewSize }),
+    setPreviewKern: (previewKern) => set({ previewKern }),
+    setPreviewMetrics: (previewMetrics) => set({ previewMetrics }),
     setKernContext: (kernContext) => set({ kernContext }),
     setKern: (kern) => set({ kern }),
 }));
