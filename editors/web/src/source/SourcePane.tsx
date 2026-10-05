@@ -34,6 +34,7 @@ import { flashExtension } from "./flash.ts";
 import { formatSource } from "./format.ts";
 import { mgHighlight, mgLanguage } from "./mgLanguage.ts";
 import { navStrip } from "./nav.ts";
+import { parseAhead } from "./parseAhead.ts";
 import styles from "./SourcePane.module.css";
 import { selectNextMatch } from "./select.ts";
 import { highlightExtension, selectionAt, setHighlight } from "./sync.ts";
@@ -55,6 +56,7 @@ function extensions(): Extension[] {
         EditorState.tabSize.of(4),
         mgLanguage,
         mgHighlight,
+        parseAhead,
         mgCompletion,
         mgTheme,
         lintGutter(),
