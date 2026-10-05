@@ -1,14 +1,10 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import nameText from "../data/unicode-names.txt?raw";
+import sequenceText from "../data/variation-sequences.txt?raw";
 import { sequenceId } from "./chars.ts";
 import { describe as describeChar, parseNames, search } from "./unicode.ts";
 
-const data = (file: string) =>
-    readFileSync(new URL(`../data/${file}`, import.meta.url), "utf8");
-const names = parseNames(
-    data("unicode-names.txt"),
-    data("variation-sequences.txt"),
-);
+const names = parseNames(nameText, sequenceText);
 
 describe("search", () => {
     it("finds a codepoint in any notation", () => {

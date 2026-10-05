@@ -8,6 +8,11 @@ import {
 import { bracketMatching, indentUnit } from "@codemirror/language";
 import type { Diagnostic } from "@codemirror/lint";
 import { lintGutter, setDiagnostics } from "@codemirror/lint";
+import {
+    highlightSelectionMatches,
+    search,
+    searchKeymap,
+} from "@codemirror/search";
 import type { Extension } from "@codemirror/state";
 import { EditorState, Transaction } from "@codemirror/state";
 import {
@@ -37,6 +42,10 @@ function extensions(): Extension[] {
         highlightActiveLineGutter(),
         highlightActiveLine(),
         drawSelection(),
+        // Ctrl+D adds the next occurrence as another cursor.
+        EditorState.allowMultipleSelections.of(true),
+        search({ top: true }),
+        highlightSelectionMatches(),
         history(),
         bracketMatching(),
         indentUnit.of("    "),
@@ -48,7 +57,14 @@ function extensions(): Extension[] {
         lintGutter(),
         highlightExtension(),
         flashExtension(),
-        keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
+        // Ctrl+F find/replace, F3 next, Ctrl+D next occurrence, Ctrl+Shift+L
+        // every occurrence, Ctrl+Alt+G go to line.
+        keymap.of([
+            ...searchKeymap,
+            ...defaultKeymap,
+            ...historyKeymap,
+            indentWithTab,
+        ]),
         EditorView.updateListener.of((update) => {
             const store = useStore.getState();
             if (update.docChanged) {

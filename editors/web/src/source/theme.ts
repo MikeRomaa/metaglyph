@@ -90,6 +90,44 @@ export const mgTheme = EditorView.theme({
         padding: "0.25rem 0.5rem",
         maxWidth: "24rem",
     },
+    // Search: the find/replace panel and its matches.
+    ".cm-panels": {
+        background: "var(--panel)",
+        color: "var(--ink)",
+        borderColor: "var(--ink)",
+    },
+    ".cm-panels.cm-panels-top": { borderBottom: "1px solid var(--ink)" },
+    ".cm-search": {
+        fontFamily: "var(--font-mono)",
+        fontSize: "0.6875rem",
+        padding: "0.25rem 0.5rem",
+    },
+    ".cm-search input, .cm-search button, .cm-search label": {
+        fontFamily: "inherit",
+        fontSize: "inherit",
+    },
+    ".cm-search .cm-textfield": {
+        background: "var(--panel2)",
+        color: "var(--ink)",
+        border: "1px solid var(--rule)",
+        borderRadius: "0",
+    },
+    ".cm-search .cm-button": {
+        backgroundImage: "none",
+        background: "var(--panel2)",
+        color: "var(--ink)",
+        border: "1px solid var(--ink)",
+        borderRadius: "0",
+    },
+    ".cm-searchMatch": {
+        background: "var(--tok)",
+        outline: "1px solid var(--acc)",
+    },
+    ".cm-searchMatch.cm-searchMatch-selected": {
+        background: "var(--acc)",
+        color: "var(--onacc)",
+    },
+    ".cm-selectionMatch": { background: "var(--wash)" },
     ".cm-diagnostic": {
         fontFamily: "var(--font-mono)",
         fontSize: "0.6875rem",
