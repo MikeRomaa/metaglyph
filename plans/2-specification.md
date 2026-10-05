@@ -320,7 +320,7 @@ When the source declares no instance, the build uses one implicit instance, `ins
 |---|---|---|
 | `stroke` | `num` | optional. Constant along the path; must be > 0 |
 | `fill` | `bool` | optional, default `false`. Requires the path to be closed. Combines freely with `stroke` |
-| `caps` | `string` or `(string, string)` | optional, default `"butt"`. A string sets both ends; a 2-tuple sets `(start, end)`. Requires `stroke` and an open path |
+| `caps` | `string` or `(string, string)` | optional, default `"butt"`. A string sets both ends; a 2-tuple sets `(start, end)`. Requires `stroke`. A closed path has no ends, so on one `caps` is ignored, with a warning |
 | `joins` | `string` | optional, default `"miter"`. Requires `stroke` |
 | `joinAt` | `map<segmentName, string>` | optional. Requires `stroke` |
 
@@ -1038,7 +1038,7 @@ Every diagnostic names a source location, an entity, and where possible a fix. D
 | Path structure | Every structural error of §6.3 |
 | Metrics | A missing reserved metric; `baseline.y` ≠ 0; negative `overshoot` |
 | Export | Point or contour count over `maxp` limits; coordinate out of int16 range; `kern` or `group` naming an undefined glyph; duplicate, surrogate, or noncharacter codepoint; duplicate variation sequence, or one with a surrogate or noncharacter base; component cycle or excessive depth; self-intersection introduced by quantization; kerning group overlap (§12.2) |
-| **Warnings** | Alignment zones dropped (§11.1); codepoint unassigned in Unicode 16.0; a VS1–VS16 sequence that Unicode 16.0 does not standardize; a sequence whose base no glyph encodes (§10.6) |
+| **Warnings** | `caps` on a closed path (§5.7); alignment zones dropped (§11.1); codepoint unassigned in Unicode 16.0; a VS1–VS16 sequence that Unicode 16.0 does not standardize; a sequence whose base no glyph encodes (§10.6) |
 
 ---
 

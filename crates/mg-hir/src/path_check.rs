@@ -7,6 +7,7 @@ use mg_diag::{Diagnostic, Label};
 
 use crate::model::{PathDecl, SegmentKind};
 use mg_diag::codes;
+use mg_syntax::ast::AstNode;
 
 pub fn check_path(path: &PathDecl, diagnostics: &mut Vec<Diagnostic>) {
     let has_body = !path.segments.is_empty() || path_has_close_only(path);
@@ -32,12 +33,22 @@ pub fn check_path(path: &PathDecl, diagnostics: &mut Vec<Diagnostic>) {
         ));
     }
 
+    // A closed path has no ends, so its caps never draw: harmless, but
+    // worth knowing (spec §5.7).
     if path.caps.is_some() && path.closed {
-        diagnostics.push(Diagnostic::error(
-            codes::FIELD_ILLEGAL_HERE,
-            "`caps` requires an open path",
-            Label::new(crate::schema::trimmed_span(&path.syntax), "path is closed"),
-        ));
+        // On the `caps` field itself; the whole path if it can't be found.
+        let span = mg_syntax::edit::find_field(&path.syntax, "caps").map_or_else(
+            || crate::schema::trimmed_span(&path.syntax),
+            |field| mg_syntax::trimmed_range(field.syntax()),
+        );
+        diagnostics.push(
+            Diagnostic::warning(
+                codes::CAPS_ON_CLOSED_PATH,
+                "`caps` has no effect on a closed path",
+                Label::new(span, "the path is closed"),
+            )
+            .with_help("a closed path has no ends to cap; remove `caps`, or drop `close`"),
+        );
     }
 }
 

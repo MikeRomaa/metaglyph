@@ -91,6 +91,8 @@ pub const UNEXPECTED_DECLARATION_NAME: Code = Code::new("MG0421");
 pub const MALFORMED_VERSION: Code = Code::new("MG0422");
 /// A `variation` selector outside VS1–VS256 (spec §5.6).
 pub const INVALID_VARIATION_SELECTOR: Code = Code::new("MG0423");
+/// Warning: `caps` on a closed path, which has no ends to cap (spec §5.7).
+pub const CAPS_ON_CLOSED_PATH: Code = Code::new("MG0424");
 
 // -- MG05xx: path structure (mg-hir) --------------------------------------
 

@@ -773,3 +773,24 @@ fn a_component_path_must_be_a_path_and_its_join_keys_its_segments() {
     assert!(found.contains(&"MG0301"), "{diagnostics:#?}");
     assert!(found.contains(&"MG0201"), "{diagnostics:#?}");
 }
+
+#[test]
+fn caps_on_a_closed_path_is_a_warning_on_the_caps_field() {
+    let source = format!(
+        r#"{METRICS}
+        glyph O (advance: 1) {{
+            path ring (stroke: 2, caps: "round") {{
+                start (at: (0, 0))
+                line (to: (1, 0))
+                line (to: (1, 1))
+                close
+            }}
+        }}
+    "#
+    );
+    let (_, diagnostics) = lower(&source);
+    assert_eq!(codes(&diagnostics), ["MG0424"], "{diagnostics:#?}");
+    assert_eq!(diagnostics[0].severity, mg_diag::Severity::Warning);
+    let span = diagnostics[0].primary.span.clone();
+    assert_eq!(&source[span], r#"caps: "round""#);
+}

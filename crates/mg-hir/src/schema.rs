@@ -287,7 +287,7 @@ pub const PATH_FIELDS: &[FieldSchema] = &[
                     "caps",
                     false,
                     "string | (string, string)",
-                    "One cap for both ends, or `(start, end)`. Requires `stroke` and an open path.",
+                    "One cap for both ends, or `(start, end)`. Requires `stroke`; ignored, with a warning, on a closed path.",
                 ),
                 &["stroke"],
             ),
