@@ -502,7 +502,13 @@ fn members(ctx: &Ctx, receiver: &ast::Expr) -> Vec<CompletionItem> {
                     .paths
                     .iter()
                     .filter_map(|p| p.decl.as_ref())
-                    .map(|d| item(&d.name, CompletionItemKind::PROPERTY, Some("path".to_string()))),
+                    .map(|d| {
+                        item(
+                            &d.name,
+                            CompletionItemKind::PROPERTY,
+                            Some("path".to_string()),
+                        )
+                    }),
             );
         }
         return items;

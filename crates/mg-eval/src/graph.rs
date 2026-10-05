@@ -272,7 +272,10 @@ fn build_glyph(
             // source glyph's.
             let mut deps = Vec::new();
             collect_refs(path, hir, instance, Some(name), &mut deps);
-            for placement in [&component.offset, &component.transform].into_iter().flatten() {
+            for placement in [&component.offset, &component.transform]
+                .into_iter()
+                .flatten()
+            {
                 collect_refs(placement, hir, instance, Some(name), &mut deps);
             }
             let path_node = NodeId::ComponentPath(name.to_string(), i);
@@ -283,7 +286,9 @@ fn build_glyph(
                 collect_refs(stroke, hir, instance, Some(name), &mut ink_deps);
             } else if let Some((source_glyph, source_path)) = component.source_path(name)
                 && let Some(source) = effective_glyph(hir, instance, &source_glyph)
-                && let Some(stroke) = source.path_named(&source_path).and_then(|p| p.stroke.as_ref())
+                && let Some(stroke) = source
+                    .path_named(&source_path)
+                    .and_then(|p| p.stroke.as_ref())
             {
                 collect_refs(stroke, hir, instance, Some(&source_glyph), &mut ink_deps);
             }

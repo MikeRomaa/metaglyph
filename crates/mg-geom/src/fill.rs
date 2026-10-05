@@ -95,12 +95,14 @@ pub fn contour_self_intersections(pieces: &[PathSeg], tolerance: f64) -> Vec<Pie
             if i == 0 && j == n - 1 {
                 shared_joints.push(pieces[i].start());
             }
-            let reach = (JOINT_FRACTION * piece_size(pieces[i]).min(piece_size(pieces[j])))
-                .max(tolerance);
+            let reach =
+                (JOINT_FRACTION * piece_size(pieces[i]).min(piece_size(pieces[j]))).max(tolerance);
 
             for hit in intersect::segment_intersections(pieces[i], pieces[j], tolerance) {
                 let at = pieces[i].eval(hit.t_a.clamp(0.0, 1.0));
-                let at_joint = shared_joints.iter().any(|joint| joint.distance(at) <= reach);
+                let at_joint = shared_joints
+                    .iter()
+                    .any(|joint| joint.distance(at) <= reach);
                 if !at_joint {
                     crossings.push(PieceCrossing {
                         a: i,

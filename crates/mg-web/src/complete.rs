@@ -32,8 +32,8 @@ pub struct Completion {
 pub fn complete(source: &str, offset: usize, types: &mut Option<NameTypes>) -> Vec<Completion> {
     let parsed = mg_syntax::parse(source);
     let root = parsed.syntax();
-    let file = SourceFile::cast(root.clone())
-        .expect("SOURCE_FILE always casts from a parse's root node");
+    let file =
+        SourceFile::cast(root.clone()).expect("SOURCE_FILE always casts from a parse's root node");
     if !parsed
         .diagnostics
         .iter()
@@ -51,7 +51,10 @@ pub fn complete(source: &str, offset: usize, types: &mut Option<NameTypes>) -> V
         offset: Utf16Index::new(source).to_byte(offset),
         snippets: true,
     };
-    completion::complete(&ctx).into_iter().map(convert).collect()
+    completion::complete(&ctx)
+        .into_iter()
+        .map(convert)
+        .collect()
 }
 
 fn convert(item: CompletionItem) -> Completion {

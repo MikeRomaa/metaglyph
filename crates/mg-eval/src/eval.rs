@@ -966,10 +966,20 @@ fn render_drawing(
     }
 
     if let Some(width) = drawing.width {
-        let spec = build_stroke_spec(drawing.caps, drawing.joins, drawing.join_at, drawing.drawn, width);
+        let spec = build_stroke_spec(
+            drawing.caps,
+            drawing.joins,
+            drawing.join_at,
+            drawing.drawn,
+            width,
+        );
         let offset_tolerance = tolerances(hir).offset;
-        match mg_geom::stroke::stroke_path(drawing.skeleton, drawing.closed, &spec, offset_tolerance)
-        {
+        match mg_geom::stroke::stroke_path(
+            drawing.skeleton,
+            drawing.closed,
+            &spec,
+            offset_tolerance,
+        ) {
             Ok(mut stroke_contours) => contours.append(&mut stroke_contours),
             Err(err) => {
                 let (span, eval_err) =
@@ -1012,7 +1022,8 @@ pub fn render_path_component(
         .source_path(glyph_name)
         .and_then(|(source_glyph, source_path)| {
             let decl = graph::effective_glyph(hir, instance, &source_glyph)?;
-            decl.path_named(&source_path).map(|path| (source_glyph, path))
+            decl.path_named(&source_path)
+                .map(|path| (source_glyph, path))
         });
 
     let width = if let Some(stroke) = &component.stroke {
@@ -1341,9 +1352,8 @@ fn diagnostic_for(span: Range<usize>, err: EvalError) -> Diagnostic {
     };
     let diagnostic = Diagnostic::error(code, err.to_string(), Label::new(span, "here"));
     match err {
-        EvalError::CastMissesEllipse => diagnostic.with_help(
-            "`crossings(l, e)` lists every crossing, including those behind the origin",
-        ),
+        EvalError::CastMissesEllipse => diagnostic
+            .with_help("`crossings(l, e)` lists every crossing, including those behind the origin"),
         EvalError::NoAxisAlignedEllipse => diagnostic.with_help(
             "or switch to radii mode: a half-oval from the top of an oval to its bottom is \
              `arc (to: b, rx: w/2, ry: h/2, sweep: \"cw\")`",

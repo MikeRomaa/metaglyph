@@ -660,7 +660,11 @@ pub fn format_14(glyphs: &[GlyphRecord]) -> Option<Vec<u8>> {
     let tables_start = 10 + 11 * records.len();
     for (default, non_default) in records.values() {
         let offset = |table: &Vec<u8>, present: bool| {
-            if present { (tables_start + table.len()) as u32 } else { 0 }
+            if present {
+                (tables_start + table.len()) as u32
+            } else {
+                0
+            }
         };
         let default_offset = offset(&tables, !default.is_empty());
         if !default.is_empty() {
@@ -712,13 +716,17 @@ fn with_format_14(cmap: &[u8], format_14: &[u8]) -> Vec<u8> {
     let records: Vec<(u16, u16, u32)> = (0..count)
         .map(|i| {
             let at = 4 + 8 * i;
-            let offset = u32::from_be_bytes([cmap[at + 4], cmap[at + 5], cmap[at + 6], cmap[at + 7]]);
+            let offset =
+                u32::from_be_bytes([cmap[at + 4], cmap[at + 5], cmap[at + 6], cmap[at + 7]]);
             (be16(at), be16(at + 2), offset)
         })
         .collect();
     let body = &cmap[4 + 8 * count..];
     let new_header = 4 + 8 * (count + 1);
-    let at = records.iter().position(|&(p, e, _)| (p, e) > (0, 5)).unwrap_or(count);
+    let at = records
+        .iter()
+        .position(|&(p, e, _)| (p, e) > (0, 5))
+        .unwrap_or(count);
 
     let mut out = Vec::with_capacity(cmap.len() + 8 + format_14.len());
     out.extend_from_slice(&be16(0).to_be_bytes());

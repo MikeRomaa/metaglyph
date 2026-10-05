@@ -312,7 +312,10 @@ pub fn function_doc(name: &str) -> Option<FnDoc> {
             &["l", "e"],
             "Distances along l from its origin where it crosses e, ascending.",
         ),
-        "along" => (&["l", "s"], "The point at distance s along l from its origin."),
+        "along" => (
+            &["l", "s"],
+            "The point at distance s along l from its origin.",
+        ),
         "cast" => (
             &["l", "e"],
             "Where the ray from l's origin along its direction first meets e.",

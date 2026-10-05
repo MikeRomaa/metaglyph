@@ -527,7 +527,8 @@ impl Server {
         let token = document
             .ident_at(document.offset(position, self.encoding))
             .ok_or("There is no name here to rename.")?;
-        let edits = mg_syntax::edit::rename_symbol(&document.root, &document.index, &token, new_name)?;
+        let edits =
+            mg_syntax::edit::rename_symbol(&document.root, &document.index, &token, new_name)?;
         let edits = edits
             .into_iter()
             .map(|edit| TextEdit::new(document.range(&edit.range, self.encoding), edit.text))

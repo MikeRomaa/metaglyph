@@ -676,7 +676,10 @@ fn variation_lowers_one_pair_or_a_list() {
     assert!(diagnostics.is_empty(), "{diagnostics:#?}");
     let variations = |name: &str| hir.glyphs[&(name.to_string(), None)].variations.clone();
     assert_eq!(variations("zero_vs1"), vec![(0x30, 0xFE00)]);
-    assert_eq!(variations("more"), vec![(0x2229, 0xFE00), (0x4E00, 0xE0100)]);
+    assert_eq!(
+        variations("more"),
+        vec![(0x2229, 0xFE00), (0x4E00, 0xE0100)]
+    );
 }
 
 #[test]
@@ -690,7 +693,11 @@ fn variation_rejects_non_pairs_and_non_selectors() {
     ));
     let found = codes(&diagnostics);
     assert!(found.contains(&"MG0423"), "{diagnostics:#?}");
-    assert_eq!(found.iter().filter(|c| **c == "MG0301").count(), 2, "{diagnostics:#?}");
+    assert_eq!(
+        found.iter().filter(|c| **c == "MG0301").count(),
+        2,
+        "{diagnostics:#?}"
+    );
 }
 
 #[test]
@@ -723,10 +730,19 @@ fn a_path_component_lowers_with_its_overrides() {
     ));
     assert!(diagnostics.is_empty(), "{diagnostics:#?}");
     let a = &hir.glyphs[&("A".to_string(), None)];
-    assert_eq!(a.components[0].source_path("A"), Some(("A".into(), "bar".into())));
+    assert_eq!(
+        a.components[0].source_path("A"),
+        Some(("A".into(), "bar".into()))
+    );
     assert_eq!(a.components[0].joins, None);
-    assert_eq!(a.components[0].caps.as_ref().map(|c| c.start.as_str()), Some("round"));
-    assert_eq!(a.components[1].source_path("A"), Some(("o".into(), "bowl".into())));
+    assert_eq!(
+        a.components[0].caps.as_ref().map(|c| c.start.as_str()),
+        Some("round")
+    );
+    assert_eq!(
+        a.components[1].source_path("A"),
+        Some(("o".into(), "bowl".into()))
+    );
 }
 
 #[test]

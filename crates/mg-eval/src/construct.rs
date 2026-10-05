@@ -691,7 +691,11 @@ mod tests {
         // Within tolerance either side, too.
         for y in [2.0 + TOL / 2.0, 2.0 - TOL / 2.0] {
             let l = call("hline", &[Value::Num(y)]).unwrap();
-            assert_eq!(nums(call("crossings", &[l, oval()]).unwrap()).len(), 1, "y = {y}");
+            assert_eq!(
+                nums(call("crossings", &[l, oval()]).unwrap()).len(),
+                1,
+                "y = {y}"
+            );
         }
     }
 

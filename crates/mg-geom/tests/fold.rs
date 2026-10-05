@@ -99,7 +99,9 @@ fn a_narrow_ellipse_vertex_comes_to_a_point() {
     // at the top, stroked at 100 (r = 50).
     let (rx, ry) = (60.0, 120.0);
     let skeleton = skeleton::realize(
-        &RawStart { at: on(rx, ry, 185.0) },
+        &RawStart {
+            at: on(rx, ry, 185.0),
+        },
         &[arc(on(rx, ry, -5.0), rx, ry, true, Sweep::Cw)],
         false,
         1e-9,
@@ -136,7 +138,12 @@ fn self_crossings(contour: &BezPath) -> usize {
             if i == 0 && j == n - 1 {
                 continue;
             }
-            let ends = [segs[i].start(), segs[i].end(), segs[j].start(), segs[j].end()];
+            let ends = [
+                segs[i].start(),
+                segs[i].end(),
+                segs[j].start(),
+                segs[j].end(),
+            ];
             count += mg_geom::intersect::segment_intersections(segs[i], segs[j], 1e-6)
                 .iter()
                 .filter(|c| {
@@ -154,7 +161,9 @@ fn a_closed_ellipse_keeps_its_counter_between_two_folds() {
     // Folds at the top and bottom; the counter survives as a lens.
     let (rx, ry) = (60.0, 120.0);
     let skeleton = skeleton::realize(
-        &RawStart { at: on(rx, ry, 0.0) },
+        &RawStart {
+            at: on(rx, ry, 0.0),
+        },
         &[
             arc(on(rx, ry, 180.0), rx, ry, false, Sweep::Ccw),
             arc(on(rx, ry, 0.0), rx, ry, false, Sweep::Ccw),
@@ -180,7 +189,9 @@ fn a_closed_ellipse_whose_counter_closes_up() {
     // is farther than r from the skeleton, so there is no counter.
     let (rx, ry) = (60.0, 120.0);
     let skeleton = skeleton::realize(
-        &RawStart { at: on(rx, ry, 0.0) },
+        &RawStart {
+            at: on(rx, ry, 0.0),
+        },
         &[
             arc(on(rx, ry, 180.0), rx, ry, false, Sweep::Ccw),
             arc(on(rx, ry, 0.0), rx, ry, false, Sweep::Ccw),
@@ -200,7 +211,9 @@ fn a_fold_running_into_a_round_cap() {
     // A short, tight arc: the fold's loop reaches past the arc's end,
     // into the round caps.
     let skeleton = skeleton::realize(
-        &RawStart { at: on(20.0, 40.0, 120.0) },
+        &RawStart {
+            at: on(20.0, 40.0, 120.0),
+        },
         &[arc(on(20.0, 40.0, 60.0), 20.0, 40.0, false, Sweep::Cw)],
         false,
         1e-9,
@@ -215,7 +228,9 @@ fn a_fold_running_into_a_round_cap() {
 #[test]
 fn a_wide_curve_is_untouched() {
     let skeleton = skeleton::realize(
-        &RawStart { at: on(60.0, 120.0, 185.0) },
+        &RawStart {
+            at: on(60.0, 120.0, 185.0),
+        },
         &[arc(on(60.0, 120.0, -5.0), 60.0, 120.0, true, Sweep::Cw)],
         false,
         1e-9,
@@ -238,7 +253,10 @@ fn a_closed_path_the_pen_fills_has_no_counter() {
     ];
     let skeleton = skeleton::realize(
         &RawStart { at: pts[0] },
-        &[RawSegment::Line { to: pts[1] }, RawSegment::Line { to: pts[2] }],
+        &[
+            RawSegment::Line { to: pts[1] },
+            RawSegment::Line { to: pts[2] },
+        ],
         true,
         1e-9,
     )
@@ -253,10 +271,16 @@ fn a_sharp_turn_beside_a_short_segment_draws_the_pen() {
     // The second segment (about 19 long) is shorter than r = 20 at a
     // sharp turn: its inner offset can't reach the first's (spec §7.4).
     let skeleton = skeleton::realize(
-        &RawStart { at: Point::new(0.0, 0.0) },
+        &RawStart {
+            at: Point::new(0.0, 0.0),
+        },
         &[
-            RawSegment::Line { to: Point::new(100.0, 0.0) },
-            RawSegment::Line { to: Point::new(85.0, 12.0) },
+            RawSegment::Line {
+                to: Point::new(100.0, 0.0),
+            },
+            RawSegment::Line {
+                to: Point::new(85.0, 12.0),
+            },
         ],
         false,
         1e-9,

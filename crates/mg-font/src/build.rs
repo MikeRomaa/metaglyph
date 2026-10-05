@@ -249,7 +249,11 @@ fn glyph_span(
     records: &[GlyphRecord],
     index: usize,
 ) -> Range<usize> {
-    let name = if index == 0 { NOTDEF } else { records[index].name.as_str() };
+    let name = if index == 0 {
+        NOTDEF
+    } else {
+        records[index].name.as_str()
+    };
     let Some(decl) = mg_eval::graph::effective_glyph(hir, instance, name) else {
         // A generated `.notdef`; the font declaration is the nearest thing
         // to blame.
@@ -395,7 +399,9 @@ fn check_variations(hir: &Hir) -> Vec<Diagnostic> {
                 diagnostics.push(
                     Diagnostic::warning(
                         codes::UNSTANDARDIZED_VARIATION_SEQUENCE,
-                        format!("{sequence} is not a standardized variation sequence in Unicode 16.0"),
+                        format!(
+                            "{sequence} is not a standardized variation sequence in Unicode 16.0"
+                        ),
                         Label::new(span.clone(), "not standardized"),
                     )
                     .with_help("text using it may not reach this glyph in other fonts or tools"),

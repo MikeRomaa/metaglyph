@@ -277,7 +277,9 @@ pub fn prepare_font(
         for crossing in crossings {
             let decl = effective_glyph(hir, instance, &crossing.glyph);
             let (name_of, syntax) = match crossing.source {
-                mg_eval::ContourSource::Path(i) => (decl.paths[i].name.as_deref(), &decl.paths[i].syntax),
+                mg_eval::ContourSource::Path(i) => {
+                    (decl.paths[i].name.as_deref(), &decl.paths[i].syntax)
+                }
                 mg_eval::ContourSource::Component(i) => (None, &decl.components[i].syntax),
             };
             let mut diagnostic = quantized_crossing_diagnostic(

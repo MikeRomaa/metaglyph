@@ -597,7 +597,10 @@ fn lower_glyph(
     // The `notdef` glyph stands in for characters the font lacks (spec
     // §10.6), so it maps none.
     if name == NOTDEF {
-        for (field, expr) in [("codepoint", &codepoint_expr), ("variation", &variation_expr)] {
+        for (field, expr) in [
+            ("codepoint", &codepoint_expr),
+            ("variation", &variation_expr),
+        ] {
             if let Some(expr) = expr {
                 diagnostics.push(
                     Diagnostic::error(
@@ -605,7 +608,9 @@ fn lower_glyph(
                         format!("the `notdef` glyph can't declare `{field}`"),
                         Label::new(expr.syntax().text_range().into(), "illegal here"),
                     )
-                    .with_help("`notdef` is drawn for characters the font lacks; it maps none of its own"),
+                    .with_help(
+                        "`notdef` is drawn for characters the font lacks; it maps none of its own",
+                    ),
                 );
             }
         }
@@ -911,7 +916,9 @@ fn lower_variations(
                     "`variation` takes `(base, selector)` pairs",
                     Label::new(span, "not a pair"),
                 )
-                .with_help("for DIGIT ZERO's short diagonal stroke form: `variation: ('0', U+FE00)`"),
+                .with_help(
+                    "for DIGIT ZERO's short diagonal stroke form: `variation: ('0', U+FE00)`",
+                ),
             );
             continue;
         };

@@ -88,7 +88,10 @@ impl std::fmt::Display for EvalError {
                 write!(f, "this path component has neither `stroke` nor `fill`")
             }
             EvalError::ComponentFillOnOpenPath => {
-                write!(f, "`fill` needs a closed path, and this component's path is open")
+                write!(
+                    f,
+                    "`fill` needs a closed path, and this component's path is open"
+                )
             }
             EvalError::LineThroughOnePoint => {
                 write!(f, "`lineThrough` of two equal points has no direction")

@@ -27,7 +27,10 @@ fn apply(text: &str, mut edits: Vec<TextEdit>) -> String {
     edits.sort_by_key(|e| std::cmp::Reverse(offset(e.range.start)));
     let mut out = text.to_string();
     for edit in edits {
-        out.replace_range(offset(edit.range.start)..offset(edit.range.end), &edit.new_text);
+        out.replace_range(
+            offset(edit.range.start)..offset(edit.range.end),
+            &edit.new_text,
+        );
     }
     out
 }
@@ -120,7 +123,9 @@ fn renaming_a_glyph_renames_its_references() {
     .unwrap();
     assert_eq!(
         renamed,
-        valid("glyph oh (advance: 10) {}\nglyph A (advance: glyphs.oh.advance) { component (glyph: oh) }")
+        valid(
+            "glyph oh (advance: 10) {}\nglyph A (advance: glyphs.oh.advance) { component (glyph: oh) }"
+        )
     );
 }
 

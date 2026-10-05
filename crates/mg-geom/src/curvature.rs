@@ -124,7 +124,9 @@ fn segment_folds(pieces: &[PathSeg], threshold: f64) -> Vec<(Range<f64>, (usize,
             push(t..t, (k, 1.0), c);
         }
     }
-    out.into_iter().map(|(range, peak, _)| (range, peak)).collect()
+    out.into_iter()
+        .map(|(range, peak, _)| (range, peak))
+        .collect()
 }
 
 fn piece_local_to_segment_local(piece_index: usize, piece_count: usize, local_t: f64) -> f64 {
@@ -277,8 +279,14 @@ mod tests {
         // 20 in from a radius-5 circle, so 15 past the centre.
         assert_eq!(found.len(), 2, "{found:?}");
         for fold in &found {
-            assert!(fold.at.local_t.start < 0.01 && fold.at.local_t.end > 0.99, "{fold:?}");
-            assert!((fold.anchor.to_vec2().hypot() - 15.0).abs() < 0.1, "{fold:?}");
+            assert!(
+                fold.at.local_t.start < 0.01 && fold.at.local_t.end > 0.99,
+                "{fold:?}"
+            );
+            assert!(
+                (fold.anchor.to_vec2().hypot() - 15.0).abs() < 0.1,
+                "{fold:?}"
+            );
         }
     }
 
@@ -297,7 +305,12 @@ mod tests {
         // bottom, ry²/rx = 240 at the sides. A stroke radius of 50 folds
         // the top and bottom only, anchored 50 below the top and 50 above
         // the bottom.
-        let at = |deg: f64| Point::new(60.0 * deg.to_radians().cos(), 120.0 * deg.to_radians().sin());
+        let at = |deg: f64| {
+            Point::new(
+                60.0 * deg.to_radians().cos(),
+                120.0 * deg.to_radians().sin(),
+            )
+        };
         let start = RawStart { at: at(0.0) };
         let arc = |to| RawSegment::Arc {
             to,
@@ -308,16 +321,26 @@ mod tests {
             },
             sweep: Sweep::Ccw,
         };
-        let skeleton =
-            skeleton::realize(&start, &[arc(at(180.0)), arc(at(0.0))], true, NO_ARC_TOLERANCE)
-                .unwrap();
+        let skeleton = skeleton::realize(
+            &start,
+            &[arc(at(180.0)), arc(at(0.0))],
+            true,
+            NO_ARC_TOLERANCE,
+        )
+        .unwrap();
         let found = folds(&skeleton, 50.0).unwrap();
         assert_eq!(found.len(), 2, "{found:?}");
         let anchors: Vec<Point> = found.iter().map(|f| f.anchor).collect();
         // Within the arc's cubic approximation, whose tightest point sits
         // a little off the true vertex.
-        assert!(anchors[0].distance(Point::new(0.0, 70.0)) < 1.5, "{anchors:?}");
-        assert!(anchors[1].distance(Point::new(0.0, -70.0)) < 1.5, "{anchors:?}");
+        assert!(
+            anchors[0].distance(Point::new(0.0, 70.0)) < 1.5,
+            "{anchors:?}"
+        );
+        assert!(
+            anchors[1].distance(Point::new(0.0, -70.0)) < 1.5,
+            "{anchors:?}"
+        );
         // Symmetric about each arc's middle.
         let t = &found[0].at.local_t;
         assert!((t.start + t.end - 1.0).abs() < 1e-3, "{t:?}");

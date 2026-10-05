@@ -592,7 +592,10 @@ glyph C (rsb: 0) {{
         .map(|(c, _)| c.bounding_box())
         .reduce(|a, b| a.union(b))
         .unwrap();
-    assert!((ink.x0 - 10.0).abs() < 1e-9 && (ink.x1 - 110.0).abs() < 1e-9, "{ink:?}");
+    assert!(
+        (ink.x0 - 10.0).abs() < 1e-9 && (ink.x1 - 110.0).abs() < 1e-9,
+        "{ink:?}"
+    );
 }
 
 #[test]
@@ -651,9 +654,15 @@ glyph O (advance: 600) {{
     let local = |name: &str| NodeId::GlyphLocal("O".into(), name.into());
     let pair = |name: &str| outcome.values[&local(name)].as_pair().unwrap();
     let top = pair("top");
-    assert!((top.x - 300.0).abs() < 1e-9 && (top.y - 650.0).abs() < 1e-9, "{top:?}");
+    assert!(
+        (top.x - 300.0).abs() < 1e-9 && (top.y - 650.0).abs() < 1e-9,
+        "{top:?}"
+    );
     let east = pair("east");
-    assert!((east.x - 550.0).abs() < 1e-9 && (east.y - 350.0).abs() < 1e-9, "{east:?}");
+    assert!(
+        (east.x - 550.0).abs() < 1e-9 && (east.y - 350.0).abs() < 1e-9,
+        "{east:?}"
+    );
     assert_eq!(num(&outcome.values, local("rx")), 250.0);
 }
 
@@ -793,7 +802,9 @@ glyph A (advance: 200) {
     assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
     // `bowl`'s ink is x 0..10, then the offset: 100..110.
     assert!(close_rect(boxes[0], (100.0, 0.0, 110.0, 50.0)), "{boxes:?}");
-    let bbox = outcome.values[&NodeId::GlyphBbox("A".into())].as_rect().unwrap();
+    let bbox = outcome.values[&NodeId::GlyphBbox("A".into())]
+        .as_rect()
+        .unwrap();
     assert_eq!((bbox.x0, bbox.x1), (100.0, 110.0));
 }
 
@@ -806,7 +817,10 @@ fn a_component_that_draws_nothing_is_an_error() {
 }"#,
     );
     assert_eq!(outcome.diagnostics.len(), 1, "{:#?}", outcome.diagnostics);
-    assert_eq!(outcome.diagnostics[0].code, mg_diag::codes::COMPONENT_DRAWS_NOTHING);
+    assert_eq!(
+        outcome.diagnostics[0].code,
+        mg_diag::codes::COMPONENT_DRAWS_NOTHING
+    );
 }
 
 #[test]
@@ -817,5 +831,8 @@ fn a_filled_component_of_an_open_path_is_an_error() {
   component (path: guide, fill: true)
 }"#,
     );
-    assert_eq!(outcome.diagnostics[0].code, mg_diag::codes::FILL_REQUIRES_CLOSED_PATH);
+    assert_eq!(
+        outcome.diagnostics[0].code,
+        mg_diag::codes::FILL_REQUIRES_CLOSED_PATH
+    );
 }

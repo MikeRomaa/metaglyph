@@ -465,19 +465,41 @@ glyph I_text (codepoint: U+2139, variation: (U+2139, U+FE0E), advance: 200) {{}}
     ));
     let font = font_named(&fonts, "Regular");
     let gid = |name: &str| {
-        let order = ["I", "O", "Iacute", "Irot", "zero", "zero_vs1", "zero_text", "I_text"];
+        let order = [
+            "I",
+            "O",
+            "Iacute",
+            "Irot",
+            "zero",
+            "zero_vs1",
+            "zero_text",
+            "I_text",
+        ];
         GlyphId::new(1 + order.iter().position(|n| *n == name).unwrap() as u32)
     };
 
     let (record, cmap14) = format_14(&font);
     assert_eq!(record, (PlatformId::Unicode, 5));
-    assert_eq!(cmap14.map_variant(0x30u32, 0xFE00u32), Some(MapVariant::Variant(gid("zero_vs1"))));
-    assert_eq!(cmap14.map_variant(0x30u32, 0xFE0Eu32), Some(MapVariant::Variant(gid("zero_text"))));
+    assert_eq!(
+        cmap14.map_variant(0x30u32, 0xFE00u32),
+        Some(MapVariant::Variant(gid("zero_vs1")))
+    );
+    assert_eq!(
+        cmap14.map_variant(0x30u32, 0xFE0Eu32),
+        Some(MapVariant::Variant(gid("zero_text")))
+    );
     // A sequence on the glyph its base encodes is a default-UVS mapping.
-    assert_eq!(cmap14.map_variant(0x2139u32, 0xFE0Eu32), Some(MapVariant::UseDefault));
+    assert_eq!(
+        cmap14.map_variant(0x2139u32, 0xFE0Eu32),
+        Some(MapVariant::UseDefault)
+    );
     assert_eq!(cmap14.map_variant(0x31u32, 0xFE00u32), None);
     // Selector records are sorted.
-    let selectors: Vec<u32> = cmap14.var_selector().iter().map(|r| r.var_selector().to_u32()).collect();
+    let selectors: Vec<u32> = cmap14
+        .var_selector()
+        .iter()
+        .map(|r| r.var_selector().to_u32())
+        .collect();
     assert_eq!(selectors, vec![0xFE00, 0xFE0E]);
 
     // The splice left the other subtables intact.
@@ -496,7 +518,11 @@ glyph I_text (codepoint: U+2139, variation: (U+2139, U+FE0E), advance: 200) {{}}
 fn no_variation_sequences_means_no_format_14() {
     let fonts = build_ok(&format!("{PREAMBLE}{GLYPHS}"));
     let cmap = font_named(&fonts, "Regular").cmap().unwrap();
-    assert!(cmap.encoding_records().iter().all(|r| r.encoding_id() != 5 || r.platform_id() as u16 != 0));
+    assert!(
+        cmap.encoding_records()
+            .iter()
+            .all(|r| r.encoding_id() != 5 || r.platform_id() as u16 != 0)
+    );
 }
 
 #[test]
@@ -524,8 +550,14 @@ glyph lone (variation: ('Q', U+E0100), advance: 600) {{}}
     assert_eq!(
         codes_found,
         vec![
-            (codes::UNSTANDARDIZED_VARIATION_SEQUENCE, mg_diag::Severity::Warning),
-            (codes::VARIATION_BASE_NOT_ENCODED, mg_diag::Severity::Warning),
+            (
+                codes::UNSTANDARDIZED_VARIATION_SEQUENCE,
+                mg_diag::Severity::Warning
+            ),
+            (
+                codes::VARIATION_BASE_NOT_ENCODED,
+                mg_diag::Severity::Warning
+            ),
         ]
     );
 }
@@ -561,7 +593,10 @@ glyph boxed (advance: 450) {{ component (glyph: notdef) }}
         .collect();
     assert_eq!(names, [".notdef", "I", "boxed"]);
     assert_eq!(font.hmtx().unwrap().advance(GlyphId::new(0)), Some(450));
-    assert!(matches!(glyph(&font, 0), Some(Glyph::Simple(_))), "it has the box's outline");
+    assert!(
+        matches!(glyph(&font, 0), Some(Glyph::Simple(_))),
+        "it has the box's outline"
+    );
     // The component of `notdef` points at glyph 0.
     let Some(Glyph::Composite(boxed)) = glyph(&font, 2) else {
         panic!("`boxed` is a composite");
