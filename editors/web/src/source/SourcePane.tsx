@@ -165,14 +165,21 @@ export function SourcePane() {
                 s.selection === prev.selection &&
                 s.glyph === prev.glyph &&
                 s.font === prev.font &&
-                s.sheet === prev.sheet
+                s.sheet === prev.sheet &&
+                s.reveal === prev.reveal
             ) {
                 return;
             }
-            const scroll =
-                s.selection &&
-                s.selection !== prev.selection &&
-                s.selection.origin === "canvas";
+            // A canvas selection, or an explicit reveal (a glyph opened
+            // from 01), scrolls the text to it.
+            const target =
+                s.reveal !== prev.reveal && s.reveal
+                    ? s.reveal.span
+                    : s.selection &&
+                        s.selection !== prev.selection &&
+                        s.selection.origin === "canvas"
+                      ? s.selection.span
+                      : null;
             queueMicrotask(() => {
                 const length = v.state.doc.length;
                 v.dispatch({
@@ -181,13 +188,11 @@ export function SourcePane() {
                             selected: s.selection?.span ?? null,
                             context: contextSpan(s.sheet, s),
                         }),
-                        ...(scroll && s.selection
+                        ...(target
                             ? [
                                   EditorView.scrollIntoView(
-                                      Math.min(s.selection.span[0], length),
-                                      {
-                                          y: "center",
-                                      },
+                                      Math.min(target[0], length),
+                                      { y: "center" },
                                   ),
                               ]
                             : []),

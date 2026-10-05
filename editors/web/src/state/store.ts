@@ -96,6 +96,10 @@ interface Store {
     instance: string | null;
     glyph: string | null;
     selection: Selection | null;
+    /** A request for the source pane to scroll to a span, without
+     * selecting anything; a new object each time, so repeats still
+     * scroll. */
+    reveal: { span: Span } | null;
     theme: Theme;
     cursorLine: number;
     undoDepth: number;
@@ -151,6 +155,7 @@ interface Store {
     setInstance(instance: string): void;
     setGlyph(glyph: string, sheet?: Sheet): void;
     select(selection: Selection | null): void;
+    revealInSource(span: Span): void;
     setTheme(theme: Theme): void;
     setCursor(line: number, undoDepth: number): void;
     setPointer(pointer: Pt | null): void;
@@ -199,10 +204,11 @@ export const useStore = create<Store>()((set) => ({
     lastGood: null,
     font: null,
     scene: null,
-    sheet: 2,
+    sheet: 1,
     instance: null,
     glyph: null,
     selection: null,
+    reveal: null,
     theme: "light",
     cursorLine: 1,
     undoDepth: 0,
@@ -322,6 +328,7 @@ export const useStore = create<Store>()((set) => ({
                   },
         ),
     select: (selection) => set({ selection }),
+    revealInSource: (span) => set({ reveal: { span } }),
     setTheme: (theme) => set({ theme }),
     setCursor: (cursorLine, undoDepth) => set({ cursorLine, undoDepth }),
     setPointer: (pointer) => set({ pointer }),

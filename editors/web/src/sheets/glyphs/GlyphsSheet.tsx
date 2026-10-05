@@ -50,6 +50,7 @@ export function GlyphsSheet() {
     const picked = useStore((s) => s.picked);
     const setPicked = useStore((s) => s.setPicked);
     const setGlyph = useStore((s) => s.setGlyph);
+    const revealInSource = useStore((s) => s.revealInSource);
     const added = useStore((s) => s.added);
     const markAdded = useStore((s) => s.markAdded);
     const [adding, setAdding] = useState(false);
@@ -150,7 +151,9 @@ export function GlyphsSheet() {
 
     const toggle = (cell: Cell, range: boolean) => {
         if (cell.glyph) {
+            // Open it on 02, and bring its declaration into view.
             setGlyph(cell.glyph.name, 2);
+            revealInSource(cell.glyph.span);
             return;
         }
         const cp = cell.cp;
