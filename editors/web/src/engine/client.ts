@@ -1,6 +1,13 @@
 import * as Comlink from "comlink";
 import { useStore } from "../state/store.ts";
-import type { DragStep, EditResult, EngineResult, Op, Pt } from "./types.ts";
+import type {
+    DragStep,
+    EditResult,
+    EngineResult,
+    FormatResult,
+    Op,
+    Pt,
+} from "./types.ts";
 import type { EngineApi } from "./worker.ts";
 
 function start() {
@@ -137,6 +144,11 @@ export function dragEnd(glyph: string) {
 /** Builds every instance as TTF, `timestamp` seconds since the epoch. */
 export function buildTtf(timestamp: number) {
     return call((e) => e.buildTtf(timestamp), null);
+}
+
+/** `source` formatted as `mg fmt` does; null if the engine failed. */
+export function format(source: string) {
+    return call<FormatResult | null>((e) => e.format(source), null);
 }
 
 async function drain() {

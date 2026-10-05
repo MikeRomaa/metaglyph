@@ -2,6 +2,7 @@
 // text: canvas edits, and undo/redo from the canvas.
 
 import { redo, undo } from "@codemirror/commands";
+import type { ChangeSpec } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import type { Change } from "../engine/types.ts";
 import { flashEffect } from "./flash.ts";
@@ -23,6 +24,12 @@ export function applyChanges(steps: Change[][], label: string) {
         ...editSpec(set, label),
         effects: flashEffect(view, set),
     });
+}
+
+/** Applies the formatter's changes as one undo step, `mg.format`. Not
+ * flashed: formatting touches whitespace all over. */
+export function formatText(changes: ChangeSpec) {
+    current?.dispatch(editSpec(changes, "format"));
 }
 
 /** A gesture on the editor: steps are applied out of history as they come,

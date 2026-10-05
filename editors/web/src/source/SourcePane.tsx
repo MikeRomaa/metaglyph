@@ -31,6 +31,7 @@ import { Resizer, usePanelWidth } from "../ui/Resizer.tsx";
 import { mgCompletion } from "./complete.ts";
 import { setEditorView } from "./editor.ts";
 import { flashExtension } from "./flash.ts";
+import { formatSource } from "./format.ts";
 import { mgHighlight, mgLanguage } from "./mgLanguage.ts";
 import styles from "./SourcePane.module.css";
 import { highlightExtension, selectionAt, setHighlight } from "./sync.ts";
@@ -60,6 +61,13 @@ function extensions(): Extension[] {
         // Ctrl+F find/replace, F3 next, Ctrl+D next occurrence, Ctrl+Shift+L
         // every occurrence, Ctrl+Alt+G go to line.
         keymap.of([
+            {
+                key: "Shift-Alt-f",
+                run: () => {
+                    void formatSource();
+                    return true;
+                },
+            },
             ...searchKeymap,
             ...defaultKeymap,
             ...historyKeymap,
@@ -224,6 +232,14 @@ export function SourcePane() {
                 <span className={styles.status}>
                     {fileName} · ln {cursorLine} · {saved ? "saved" : "unsaved"}
                 </span>
+                <button
+                    type="button"
+                    className={styles.format}
+                    title="Format the source as `mg fmt` does (Shift+Alt+F)"
+                    onClick={() => void formatSource()}
+                >
+                    Format
+                </button>
             </header>
             <div ref={host} className={styles.editor} />
             <footer className={styles.foot}>

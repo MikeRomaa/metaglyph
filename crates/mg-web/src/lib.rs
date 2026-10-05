@@ -164,6 +164,26 @@ impl Engine {
         Ok(serde_wasm_bindgen::to_value(&result)?)
     }
 
+    /// `source` formatted the way `mg fmt` formats it: `{ status: "ok",
+    /// text }`, or `{ status: "syntaxErrors" }` / `{ status: "wouldLoseText" }`
+    /// when the formatter refuses (see `mg_syntax::fmt::format_checked`).
+    pub fn format(&self, source: &str) -> Result<JsValue, JsError> {
+        #[derive(serde::Serialize)]
+        #[serde(tag = "status", rename_all = "camelCase")]
+        enum Formatted {
+            Ok { text: String },
+            SyntaxErrors,
+            WouldLoseText,
+        }
+        use mg_syntax::fmt::FormatError;
+        let result = match mg_syntax::fmt::format_checked(source) {
+            Ok(text) => Formatted::Ok { text },
+            Err(FormatError::SyntaxErrors) => Formatted::SyntaxErrors,
+            Err(FormatError::WouldLoseText) => Formatted::WouldLoseText,
+        };
+        Ok(serde_wasm_bindgen::to_value(&result)?)
+    }
+
     /// Pins document `version` for an edit gesture (a guide or metric
     /// drag): [`Engine::edit`] keeps accepting `version` until
     /// [`Engine::unpin`]. False if `version` isn't the current text.

@@ -24,6 +24,12 @@ export interface CompletionInfo {
     snippet: boolean;
 }
 
+/** `Engine.format`'s result (crates/mg-web/src/lib.rs). */
+export type FormatResult =
+    | { status: "ok"; text: string }
+    | { status: "syntaxErrors" }
+    | { status: "wouldLoseText" };
+
 export interface FontInfo {
     name?: string;
     version: string;

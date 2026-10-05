@@ -9,6 +9,7 @@ import type {
     EditResult,
     EngineResult,
     FontData,
+    FormatResult,
     GlyphScene,
     Op,
     View,
@@ -112,6 +113,11 @@ const api = {
 
     async dragEnd(glyph: string): Promise<void> {
         (await ready).dragEnd(glyph);
+    },
+
+    /** `source` formatted as `mg fmt` does. */
+    async format(source: string): Promise<FormatResult> {
+        return (await ready).format(source) as FormatResult;
     },
 
     /** Builds every instance as TTF; null if the text has errors. The
