@@ -186,9 +186,15 @@ pub fn glyph_outline(
             let Ok(transform) = component_affine(&mut ctx, component) else {
                 continue;
             };
+            // The target is drawn as authored (spec §10.1), but its own
+            // outline is stored placed: undo its shift before `M`.
+            let target_shift = values
+                .get(&NodeId::GlyphShift(target.clone()))
+                .and_then(Value::as_num)
+                .unwrap_or(0.0);
             outline.components.push(PlacedComponent {
                 glyph: target.clone(),
-                transform: shift * transform,
+                transform: shift * transform * Affine::translate((-target_shift, 0.0)),
             });
         }
     }

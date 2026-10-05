@@ -311,9 +311,9 @@ fn collect_component_bbox_deps(
     if let Some(target) = &component.glyph
         && effective_glyph(hir, instance, target).is_some()
     {
-        // The target is drawn placed (spec §10.1), so its shift counts too.
+        // The target is drawn as authored (spec §10.1): its shift doesn't
+        // count.
         deps.push(NodeId::GlyphBbox(target.clone()));
-        deps.push(NodeId::GlyphShift(target.clone()));
     }
     if let Some(offset) = &component.offset {
         collect_refs(offset, hir, instance, Some(current_glyph), deps);
@@ -467,30 +467,25 @@ fn collect_member_refs(
         && let Some(glyph_name_token) = inner.member_token()
         && let Some(field_token) = member.member_token()
     {
-        // `bbox` and anchors read from outside are placed (spec §5.10),
-        // so they also depend on that glyph's shift.
+        // Read in that glyph's authored coordinates (spec §5.10): none of
+        // these depends on its shift.
         let glyph_name = glyph_name_token.text();
         match field_token.text() {
             "advance" => deps.push(NodeId::GlyphAdvance(glyph_name.to_string())),
-            "bbox" => {
-                deps.push(NodeId::GlyphBbox(glyph_name.to_string()));
-                deps.push(NodeId::GlyphShift(glyph_name.to_string()));
-            }
+            "bbox" => deps.push(NodeId::GlyphBbox(glyph_name.to_string())),
             field => {
                 let Some(glyph) = effective_glyph(hir, instance, glyph_name) else {
                     return;
                 };
                 if glyph.anchors.contains_key(field) {
                     deps.push(NodeId::Anchor(glyph_name.to_string(), field.to_string()));
-                    deps.push(NodeId::GlyphShift(glyph_name.to_string()));
                 } else if let Some(i) = glyph
                     .paths
                     .iter()
                     .position(|p| p.name.as_deref() == Some(field))
                 {
-                    // A named path, placed (spec §5.10).
+                    // A named path (spec §5.10).
                     deps.push(NodeId::PathRealized(glyph_name.to_string(), i));
-                    deps.push(NodeId::GlyphShift(glyph_name.to_string()));
                 }
             }
         }

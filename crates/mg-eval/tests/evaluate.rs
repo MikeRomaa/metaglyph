@@ -535,7 +535,7 @@ fn a_bearing_on_an_inkless_glyph_is_a_domain_error() {
 }
 
 #[test]
-fn other_glyphs_are_read_placed_and_the_own_glyph_authored() {
+fn every_glyph_is_read_as_authored() {
     let source = format!(
         r#"{PREAMBLE}
 glyph A (lsb: 20) {{{SQUARE}
@@ -560,19 +560,39 @@ glyph C (rsb: 0) {{
             .unwrap();
         (p.x, p.y)
     };
-    // `A` is shifted by 10: inside it nothing moves; from `B` everything has.
+    // `A` is shifted by 10 in its own advance, but read from anywhere it
+    // is as authored (spec §5.10).
     assert_eq!(pair("A", "own"), (10.0, 60.0));
-    assert_eq!(pair("B", "a"), (20.0, 70.0));
+    assert_eq!(pair("B", "a"), (10.0, 60.0));
 
-    // `C` draws `A` placed, so its own ink starts at 20.
+    // `C` draws `A` without `A`'s shift (spec §10.1): its ink is 10..110.
     let c = outcome.values[&NodeId::GlyphBbox("C".into())]
         .as_rect()
         .unwrap();
-    assert_eq!((c.x0, c.x1), (20.0, 120.0));
+    assert_eq!((c.x0, c.x1), (10.0, 110.0));
     assert_eq!(
         num(&outcome.values, NodeId::GlyphAdvance("C".into())),
-        120.0
+        110.0
     );
+
+    // Rendered (the placed component's transform undoes `A`'s stored
+    // shift), `C`'s outline sits there too.
+    use kurbo::Shape;
+    let contours = mg_eval::render_glyph(
+        &hir,
+        regular(&hir),
+        "C",
+        &outcome.values,
+        &outcome.failed,
+        &mut Vec::new(),
+    )
+    .unwrap();
+    let ink = contours
+        .iter()
+        .map(|(c, _)| c.bounding_box())
+        .reduce(|a, b| a.union(b))
+        .unwrap();
+    assert!((ink.x0 - 10.0).abs() < 1e-9 && (ink.x1 - 110.0).abs() < 1e-9, "{ink:?}");
 }
 
 #[test]
@@ -759,9 +779,9 @@ fn a_component_can_draw_a_subpath() {
 }
 
 #[test]
-fn another_glyphs_path_is_placed() {
-    // `o` is shifted right by its `lsb` (its ink starts at 0): its path
-    // arrives in its placed coordinates (spec §5.10).
+fn another_glyphs_path_is_read_as_authored() {
+    // `o` is shifted right by its `lsb` in its own advance, but its path
+    // arrives as authored (spec §5.10).
     let (outcome, boxes) = render_a(
         r#"glyph o (lsb: 30, rsb: 30) {
   path bowl (stroke: 10) { start (at: (5, 0)) line (to: (5, 50)) }
@@ -771,10 +791,10 @@ glyph A (advance: 200) {
 }"#,
     );
     assert!(outcome.diagnostics.is_empty(), "{:#?}", outcome.diagnostics);
-    // `bowl`'s ink is x 0..10; lsb 30 shifts it by 30: x 30..40, then +100.
-    assert!(close_rect(boxes[0], (130.0, 0.0, 140.0, 50.0)), "{boxes:?}");
+    // `bowl`'s ink is x 0..10, then the offset: 100..110.
+    assert!(close_rect(boxes[0], (100.0, 0.0, 110.0, 50.0)), "{boxes:?}");
     let bbox = outcome.values[&NodeId::GlyphBbox("A".into())].as_rect().unwrap();
-    assert_eq!((bbox.x0, bbox.x1), (130.0, 140.0));
+    assert_eq!((bbox.x0, bbox.x1), (100.0, 110.0));
 }
 
 #[test]

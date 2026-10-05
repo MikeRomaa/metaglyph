@@ -582,7 +582,7 @@ fn eval_member(ctx: &mut EvalCtx, member: &ast::MemberExpr) -> Result<Value, ()>
                     .current_glyph
                     .expect("mg-hir only allows `glyph.*` inside a glyph body")
                     .to_string();
-                return eval_glyph_member(ctx, &glyph_name, field, member, false);
+                return eval_glyph_member(ctx, &glyph_name, field, member);
             }
             _ => {}
         }
@@ -593,7 +593,7 @@ fn eval_member(ctx: &mut EvalCtx, member: &ast::MemberExpr) -> Result<Value, ()>
         && root.token().as_ref().map(|t| t.text()) == Some("glyphs")
         && let Some(glyph_name_token) = inner.member_token()
     {
-        return eval_glyph_member(ctx, glyph_name_token.text(), field, member, true);
+        return eval_glyph_member(ctx, glyph_name_token.text(), field, member);
     }
 
     let receiver_value = eval_expr(ctx, &receiver)?;
@@ -675,29 +675,19 @@ fn eval_instance_member(ctx: &EvalCtx, field: &str) -> Value {
     }
 }
 
-/// `glyph.<field>` or, with `placed`, `glyphs.<name>.<field>`. A glyph
-/// reads its own `bbox` and anchors in authored coordinates; another
-/// glyph's are placed, its shift added (spec §5.10).
+/// `glyph.<field>` or `glyphs.<name>.<field>`, in that glyph's authored
+/// coordinates either way: its shift places it in its own advance only
+/// (spec §5.10).
 fn eval_glyph_member(
     ctx: &mut EvalCtx,
     glyph_name: &str,
     field: &str,
     member: &ast::MemberExpr,
-    placed: bool,
 ) -> Result<Value, ()> {
-    let shift = |ctx: &EvalCtx| {
-        if placed {
-            ctx.value_of(&NodeId::GlyphShift(glyph_name.to_string()))
-                .as_num()
-                .expect("GlyphShift always evaluates to a Value::Num")
-        } else {
-            0.0
-        }
-    };
     match field {
         "advance" => Ok(ctx.value_of(&NodeId::GlyphAdvance(glyph_name.to_string()))),
         "bbox" => match ctx.value_of(&NodeId::GlyphBbox(glyph_name.to_string())) {
-            Value::Rect(rect) => Ok(Value::Rect(rect.translate_x(shift(ctx)))),
+            Value::Rect(rect) => Ok(Value::Rect(rect)),
             _ => ctx.fail(
                 mg_syntax::trimmed_range(member.syntax()),
                 EvalError::GlyphHasNoInk,
@@ -721,28 +711,14 @@ fn eval_glyph_member(
                 .iter()
                 .position(|p| p.name.as_deref() == Some(anchor_name))
             {
-                // A named path, placed (spec §5.10).
-                let skeleton = ctx
-                    .value_of(&NodeId::PathRealized(glyph_name.to_string(), i))
-                    .as_path()
-                    .expect("PathRealized always evaluates to a Value::Path")
-                    .clone();
-                let mut path = skeleton.path;
-                path.apply_affine(Affine::translate((shift(ctx), 0.0)));
-                return Ok(Value::Path(mg_geom::skeleton::Skeleton {
-                    path,
-                    piece_counts: skeleton.piece_counts,
-                }));
+                // A named path, as authored (spec §5.10).
+                return Ok(ctx.value_of(&NodeId::PathRealized(glyph_name.to_string(), i)));
             }
             if glyph.anchors.contains_key(anchor_name) {
-                let at = ctx
-                    .value_of(&NodeId::Anchor(
-                        glyph_name.to_string(),
-                        anchor_name.to_string(),
-                    ))
-                    .as_pair()
-                    .expect("mg-hir already type-checked an anchor's `at` as a pair");
-                Ok(Value::Pair(Point::new(at.x + shift(ctx), at.y)))
+                Ok(ctx.value_of(&NodeId::Anchor(
+                    glyph_name.to_string(),
+                    anchor_name.to_string(),
+                )))
             } else {
                 unreachable!("mg-hir already type-checked this member access")
             }
@@ -1243,13 +1219,8 @@ fn eval_glyph_bbox(
         let Some(target_rect) = target_bbox.as_rect() else {
             continue;
         };
-        // The target is drawn placed (spec §10.1).
-        let target_shift = ctx
-            .values
-            .get(&NodeId::GlyphShift(target.clone()))
-            .and_then(Value::as_num)
-            .expect("a component's target glyph shift is a dependency");
-        let target_rect = target_rect.translate_x(target_shift);
+        // The target is drawn as authored, without its own shift (spec
+        // §10.1).
 
         let affine = component_affine(&mut ctx, component)?;
 

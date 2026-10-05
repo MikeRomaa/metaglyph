@@ -466,7 +466,7 @@ Extent is not a function. `.bbox` is a member on a `path`, on `glyph`, and on `g
 
 Inside a glyph, everything — paths, `let`s, its own anchors, `glyph.bbox` — is in **authored coordinates**, before the §12.1 shift.
 
-**`glyphs.<name>.*`** — another glyph: exactly `.advance`, `.bbox`, its declared anchors, and its named paths. It resolves to the glyph the current instance builds under that name (the glyph-set alternate when one is selected). A glyph's `let`s are not externally visible. `.bbox`, anchors, and paths read this way are in that glyph's **placed coordinates**: authored coordinates plus its shift, relative to its own origin. A path read this way is a `path` value like any other: path queries take it, and a path component (§5.7) draws it.
+**`glyphs.<name>.*`** — another glyph: exactly `.advance`, `.bbox`, its declared anchors, and its named paths. It resolves to the glyph the current instance builds under that name (the glyph-set alternate when one is selected). A glyph's `let`s are not externally visible. `.bbox`, anchors, and paths read this way are in that glyph's **authored coordinates**: as written in its body, without its shift (§12.1). Its `lsb` or `rsb` places it in its own advance only; reading it from another glyph, or drawing it as a component, does not carry that placement along. A path read this way is a `path` value like any other: path queries take it, and a path component (§5.7) draws it.
 
 **`instance.*`:** `instance.name` (`string`) · `instance.slant` (`num`)
 
@@ -843,15 +843,15 @@ glyph eacute (codepoint: U+00E9, advance: glyphs.e.advance) {
 
 Placement may be an expression over the referenced glyph's `advance`, `bbox`, and declared anchors, so accents re-centre when weight changes.
 
-A component draws the referenced glyph's placed outline (§5.10), with its shift already applied, transformed by `M`. Its ink counts towards the host's `glyph.bbox` in the host's authored coordinates. The host's own shift `h` then applies to it as to any other ink, so the component is emitted with transform `T·M`, where `T` = `translate(h, 0)`.
+A component draws the referenced glyph's authored outline (§5.10), without that glyph's own shift `hₜ`, transformed by `M`. Its ink counts towards the host's `glyph.bbox` in the host's authored coordinates. The host's own shift `h` then applies to it as to any other ink. The referenced glyph's outline is stored placed (with `hₜ` applied), so the component is emitted with transform `T·M·Tₜ⁻¹`, where `T` = `translate(h, 0)` and `Tₜ` = `translate(hₜ, 0)`.
 
 Component references must be acyclic, and nesting depth is at most `COMPONENT_DEPTH` = 5. Violations are export errors.
 
-Under an instance `slant` with shear `S`, the component is emitted with transform `S·T·M·S⁻¹`, so that the composite equals the slanted decomposed outline.
+Under an instance `slant` with shear `S`, the component is emitted with transform `S·T·M·Tₜ⁻¹·S⁻¹`, so that the composite equals the slanted decomposed outline.
 
 A component is emitted as a `glyf` composite when its transform's 2×2 part fits F2Dot14 (each entry in [−2, 2)); its offset is rounded per §10.4. Otherwise it is decomposed. CFF output always decomposes.
 
-**Path components** are not components in the output: `glyf` composites reference whole glyphs. A path component's contours are this glyph's own, exactly as if its transformed skeleton were declared here as a `path` with the effective `stroke`, `fill`, `caps`, and `joins` (§5.7). They take part in the filled-contour role count (§8.1) like any other path's, and slant, extrema, and quantization treat them as the glyph's own outline. A path read from another glyph is in that glyph's placed coordinates (§5.10), so `M` places it relative to that glyph's origin, the same as a glyph component.
+**Path components** are not components in the output: `glyf` composites reference whole glyphs. A path component's contours are this glyph's own, exactly as if its transformed skeleton were declared here as a `path` with the effective `stroke`, `fill`, `caps`, and `joins` (§5.7). They take part in the filled-contour role count (§8.1) like any other path's, and slant, extrema, and quantization treat them as the glyph's own outline. A path read from another glyph is in that glyph's authored coordinates (§5.10), the same as a glyph component's outline.
 
 ### 10.2 Extrema insertion
 
@@ -1085,7 +1085,7 @@ Named constants. Tolerances scale with the em size.
    - Each degenerate case of §7.3 produces its named error.
 4. **Differential test against an independent SVG stroker** — same path, `stroke`, caps, and joins. Rasterize both outlines and assert the coverage difference stays within the area of a `2 · OFFSET_TOLERANCE` band along the boundary.
 5. **Fold trimming** — fuzz random paths against random stroke widths. Assert that the trimmed outline matches the swept pen: rasterize it and the union of discs of radius `r` densely along the skeleton (plus caps and joins), and require the coverage difference to stay within a `2 · OFFSET_TOLERANCE` band along the boundary. Golden cases: an ellipse arc tighter than `r` at its vertex (the inner edge comes to a point); a fold reaching an open path's round cap; a closed ellipse whose counter closes up entirely.
-6. **Path components** — a path component of a path in the same glyph, with `transform: identity`, yields contours identical to the path's own; one with `reflect(vline(x))` yields the mirror image with the same stroke width; one under `scale(2)` keeps the declared `stroke` width rather than doubling it; one overriding `stroke` on a construction path renders it; `glyphs.o.bowl` reads in `o`'s placed coordinates.
+6. **Path components** — a path component of a path in the same glyph, with `transform: identity`, yields contours identical to the path's own; one with `reflect(vline(x))` yields the mirror image with the same stroke width; one under `scale(2)` keeps the declared `stroke` width rather than doubling it; one overriding `stroke` on a construction path renders it; `glyphs.o.bowl` reads in `o`'s authored coordinates, unaffected by `o`'s `lsb`; a glyph component of a glyph with an `lsb` is drawn without that glyph's shift, both decomposed and as a `glyf` composite.
 7. **Fills and contour roles**
    - A filled closed path produces its skeleton as one contour.
    - A fill nested in a fill produces a hole.
