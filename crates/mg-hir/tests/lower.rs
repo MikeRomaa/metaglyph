@@ -794,3 +794,13 @@ fn caps_on_a_closed_path_is_a_warning_on_the_caps_field() {
     let span = diagnostics[0].primary.span.clone();
     assert_eq!(&source[span], r#"caps: "round""#);
 }
+
+#[test]
+fn the_notdef_glyph_maps_no_character() {
+    let (_, diagnostics) = lower(&format!(
+        r#"{METRICS}
+        glyph notdef (advance: 1, codepoint: U+FFFD) {{}}
+    "#
+    ));
+    assert_eq!(codes(&diagnostics), ["MG0405"], "{diagnostics:#?}");
+}

@@ -190,42 +190,58 @@ fn has_errors(diagnostics: &[Diagnostic]) -> bool {
     diagnostics.iter().any(|d| d.severity == Severity::Error)
 }
 
-/// `.notdef` (no contours, advance `round(font.em / 2)`, spec §10.6),
-/// then every default-set glyph in declaration order.
+/// `.notdef`, then every other default-set glyph in declaration order
+/// (spec §10.6). `.notdef` is the declared `notdef` glyph when there is
+/// one, else generated: no contours, advance `round(font.em / 2)`.
 fn glyph_records(
     hir: &Hir,
     outcome: &mg_eval::EvalOutcome,
     em: i64,
     mut prepared: IndexMap<String, PreparedGlyph>,
 ) -> Vec<GlyphRecord> {
+    let advance_of = |name: &str| {
+        outcome
+            .values
+            .get(&NodeId::GlyphAdvance(name.to_string()))
+            .and_then(|v| v.as_num())
+            .expect("an error-free evaluation has every advance")
+            .round() as i64
+    };
+    let notdef = hir.glyphs.contains_key(&(NOTDEF.to_string(), None));
     let mut records = vec![GlyphRecord {
         name: ".notdef".to_string(),
         codepoints: Vec::new(),
         variations: Vec::new(),
-        advance: (em as f64 / 2.0).round() as i64,
-        glyph: PreparedGlyph::default(),
+        advance: if notdef {
+            advance_of(NOTDEF)
+        } else {
+            (em as f64 / 2.0).round() as i64
+        },
+        glyph: if notdef {
+            prepared.swap_remove(NOTDEF).unwrap_or_default()
+        } else {
+            PreparedGlyph::default()
+        },
     }];
     for ((name, glyphset), decl) in &hir.glyphs {
-        if glyphset.is_some() {
+        if glyphset.is_some() || name == NOTDEF {
             continue;
         }
-        let advance = outcome
-            .values
-            .get(&NodeId::GlyphAdvance(name.clone()))
-            .and_then(|v| v.as_num())
-            .expect("an error-free evaluation has every advance");
         let mut codepoints = decl.codepoints.clone();
         codepoints.dedup();
         records.push(GlyphRecord {
             name: name.clone(),
             codepoints,
             variations: decl.variations.clone(),
-            advance: advance.round() as i64,
+            advance: advance_of(name),
             glyph: prepared.swap_remove(name).unwrap_or_default(),
         });
     }
     records
 }
+
+/// The glyph declared to stand in for missing characters (spec §10.6).
+const NOTDEF: &str = "notdef";
 
 fn glyph_span(
     hir: &Hir,
@@ -233,13 +249,12 @@ fn glyph_span(
     records: &[GlyphRecord],
     index: usize,
 ) -> Range<usize> {
-    if index == 0 {
-        // `.notdef` is generated; the font declaration is the nearest
-        // thing to blame.
+    let name = if index == 0 { NOTDEF } else { records[index].name.as_str() };
+    let Some(decl) = mg_eval::graph::effective_glyph(hir, instance, name) else {
+        // A generated `.notdef`; the font declaration is the nearest thing
+        // to blame.
         return mg_syntax::trimmed_range(&hir.font.syntax);
-    }
-    let decl = mg_eval::graph::effective_glyph(hir, instance, &records[index].name)
-        .expect("every record past .notdef is a declared glyph");
+    };
     mg_syntax::trimmed_range(&decl.syntax)
 }
 

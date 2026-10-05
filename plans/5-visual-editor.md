@@ -246,7 +246,7 @@ All views share one worker-evaluated state for the **active instance**.
 - Per-pair raw/em toggle.
 
 ### 2.7 Text preview
-- Type sample text and see it set with evaluated outlines on a canvas. Kerning is applied from the evaluated kern table (pair lookup, with glyph-over-group precedence), components are decomposed, and instance `slant` is applied as a shear.
+- Type sample text and see it set with evaluated outlines on a canvas; a character the font lacks shows its `notdef` glyph when it declares one (spec §10.6), else a box. Kerning is applied from the evaluated kern table (pair lookup, with glyph-over-group precedence), components are decomposed, and instance `slant` is applied as a shear.
 - Instance comparison: the same text in every instance, stacked.
 - Size and line-height controls.
 - It is not guaranteed to match the compiled font's rasterization. "Build TTF" is the check for that.

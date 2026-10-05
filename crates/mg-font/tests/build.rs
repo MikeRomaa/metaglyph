@@ -529,3 +529,42 @@ glyph lone (variation: ('Q', U+E0100), advance: 600) {{}}
         ]
     );
 }
+
+#[test]
+fn a_declared_notdef_glyph_is_glyph_zero() {
+    let fonts = build_ok(&format!(
+        "{PREAMBLE}
+glyph notdef (advance: 450) {{
+  path box (stroke: 40) {{
+    start (at: (50, 0))
+    line (to: (400, 0))
+    line (to: (400, 700))
+    line (to: (50, 700))
+    close
+  }}
+}}
+glyph I (codepoint: 'I', advance: 200) {{
+  path stem (stroke: 80) {{ start (at: (100, 0)) line (to: (100, 700)) }}
+}}
+glyph boxed (advance: 450) {{ component (glyph: notdef) }}
+"
+    ));
+    let font = font_named(&fonts, "Regular");
+    let names: Vec<String> = (0..font.maxp().unwrap().num_glyphs())
+        .map(|i| {
+            font.post()
+                .unwrap()
+                .glyph_name(GlyphId16::new(i))
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    assert_eq!(names, [".notdef", "I", "boxed"]);
+    assert_eq!(font.hmtx().unwrap().advance(GlyphId::new(0)), Some(450));
+    assert!(matches!(glyph(&font, 0), Some(Glyph::Simple(_))), "it has the box's outline");
+    // The component of `notdef` points at glyph 0.
+    let Some(Glyph::Composite(boxed)) = glyph(&font, 2) else {
+        panic!("`boxed` is a composite");
+    };
+    assert_eq!(boxed.components().next().unwrap().glyph, GlyphId16::new(0));
+}

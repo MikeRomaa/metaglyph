@@ -594,6 +594,22 @@ fn lower_glyph(
         .map(|expr| lower_codepoints(expr, font_em, diagnostics))
         .unwrap_or_default();
     let variation_expr = fields.get("variation").and_then(|f| f.value());
+    // The `notdef` glyph stands in for characters the font lacks (spec
+    // §10.6), so it maps none.
+    if name == NOTDEF {
+        for (field, expr) in [("codepoint", &codepoint_expr), ("variation", &variation_expr)] {
+            if let Some(expr) = expr {
+                diagnostics.push(
+                    Diagnostic::error(
+                        codes::FIELD_ILLEGAL_HERE,
+                        format!("the `notdef` glyph can't declare `{field}`"),
+                        Label::new(expr.syntax().text_range().into(), "illegal here"),
+                    )
+                    .with_help("`notdef` is drawn for characters the font lacks; it maps none of its own"),
+                );
+            }
+        }
+    }
     let variations = variation_expr
         .as_ref()
         .map(|expr| lower_variations(expr, font_em, diagnostics))
@@ -843,6 +859,9 @@ fn lower_codepoints(
     }
     codepoints
 }
+
+/// The glyph shown for a missing character, at glyph ID 0 (spec §10.6).
+pub const NOTDEF: &str = "notdef";
 
 /// `variation` (spec §5.6): a `pair` or `pair*` field of constant
 /// `(base, selector)` integers, the base in `0`..=`0x10FFFF` and the

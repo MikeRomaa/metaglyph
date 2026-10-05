@@ -15,7 +15,11 @@ export interface Placed {
     text: string;
     /** Where that text starts in the whole text. */
     index: number;
+    /** Its glyph; for a character the font lacks, its `notdef` glyph
+     * (spec §10.6), or none, drawn as a box. */
     glyph: GlyphInfo | null;
+    /** The font has no glyph for it. */
+    missing: boolean;
     /** Its origin, in font units from the line's start. */
     x: number;
     /** How far it moves the pen, kerning before it excluded. */
@@ -43,6 +47,7 @@ const MISSING = 0.5;
  * `offset` is where `text` starts in the whole text. */
 export function shape(font: FontData, text: string, offset = 0): Shaped[] {
     const map = glyphsByCodepoint(font);
+    const notdef = font.glyphs.find((g) => g.name === "notdef") ?? null;
     const chars = [...text];
     const out: Shaped[] = [];
     let index = offset;
@@ -57,6 +62,7 @@ export function shape(font: FontData, text: string, offset = 0): Shaped[] {
                     text,
                     index,
                     glyph: seq,
+                    missing: false,
                     advance: seq.advance ?? 0,
                 });
                 index += text.length;
@@ -66,11 +72,14 @@ export function shape(font: FontData, text: string, offset = 0): Shaped[] {
         }
         // A selector the font doesn't map falls back to the base alone.
         if (vsNumber(cp) === null) {
-            const glyph = map.get(cp) ?? null;
+            const found = map.get(cp) ?? null;
+            // An absent space stays blank; anything else shows `notdef`.
+            const glyph = found ?? (chars[i].trim() ? notdef : null);
             out.push({
                 text: chars[i],
                 index,
                 glyph,
+                missing: !found,
                 advance: glyph ? (glyph.advance ?? 0) : font.em * MISSING,
             });
         }

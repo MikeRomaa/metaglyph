@@ -116,4 +116,21 @@ describe("preview layout", () => {
         expect(indexAt(lines[0], 500)).toBe(1);
         expect(indexAt(lines[1], 5000)).toBe(5);
     });
+
+    it("draws a missing character with the font's notdef glyph", () => {
+        const withNotdef = {
+            ...font,
+            glyphs: [
+                ...font.glyphs,
+                glyph("notdef", 0, 450, { codepoints: [] }),
+            ],
+        } as FontData;
+        const [x, space] = shape(withNotdef, "x ");
+        expect(x.glyph?.name).toBe("notdef");
+        expect(x.missing).toBe(true);
+        expect(x.advance).toBe(450);
+        // An absent space stays blank.
+        expect(space.glyph).toBeNull();
+        expect(shape(withNotdef, "A")[0].missing).toBe(false);
+    });
 });

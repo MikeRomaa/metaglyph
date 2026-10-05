@@ -216,11 +216,14 @@ pub fn assemble(
         }]);
     }
 
-    let ids: indexmap::IndexMap<&str, usize> = glyphs
+    let mut ids: indexmap::IndexMap<&str, usize> = glyphs
         .iter()
         .enumerate()
         .map(|(i, g)| (g.name.as_str(), i))
         .collect();
+    // A declared `notdef` glyph is record 0, `.notdef` in the font, but
+    // components and kerns still name it `notdef` (spec §10.6).
+    ids.entry("notdef").or_insert(0);
 
     // -- measure, and check spec §10.5's limits ---------------------------
 

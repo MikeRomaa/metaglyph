@@ -90,7 +90,9 @@ export function PreviewSheet() {
 
     const missing = new Set(
         layout(font, text, Number.POSITIVE_INFINITY, false).flatMap((l) =>
-            l.items.filter((i) => !i.glyph && i.text.trim()).map((i) => i.text),
+            l.items
+                .filter((i) => i.missing && i.text.trim())
+                .map((i) => i.text),
         ),
     );
 
