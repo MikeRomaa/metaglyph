@@ -84,6 +84,12 @@ interface Store {
     text: string;
     version: number;
     saved: boolean;
+    /** The text as last exported as `.mg` or opened from a file; null when
+     * it never was. Differing from `text` means unexported work. */
+    exportedText: string | null;
+    /** A document waiting to replace this one until the user confirms
+     * losing unexported work. */
+    replacing: { fileName: string; text: string } | null;
     /** The newest check result; its spans match the text only when its
      * version equals `version`. */
     doc: DocState | null;
@@ -154,7 +160,9 @@ interface Store {
     kernContext: string;
     kern: number | null;
 
-    openDoc(fileName: string, text: string): void;
+    openDoc(fileName: string, text: string, exportedText?: string | null): void;
+    markExported(): void;
+    setReplacing(replacing: Store["replacing"]): void;
     setText(text: string, version: number): void;
     applyResult(result: EngineResult): void;
     setSaved(saved: boolean): void;
@@ -211,6 +219,8 @@ export const useStore = create<Store>()((set) => ({
     text: "",
     version: 0,
     saved: true,
+    exportedText: "",
+    replacing: null,
     doc: null,
     lastGood: null,
     font: null,
@@ -256,10 +266,12 @@ export const useStore = create<Store>()((set) => ({
     kernContext: "nn<pair>nn · HH<pair>HH",
     kern: null,
 
-    openDoc: (fileName, text) =>
+    openDoc: (fileName, text, exportedText = text) =>
         set((s) => ({
             fileName,
             initialText: text,
+            exportedText,
+            replacing: null,
             epoch: s.epoch + 1,
             text,
             version: s.version + 1,
@@ -281,6 +293,8 @@ export const useStore = create<Store>()((set) => ({
             lastPath: null,
         })),
     setText: (text, version) => set({ text, version, saved: false }),
+    markExported: () => set((s) => ({ exportedText: s.text })),
+    setReplacing: (replacing) => set({ replacing }),
     applyResult: ({ doc, view }) =>
         set((s) => {
             const lastGood = doc?.evaluated ? doc : s.lastGood;

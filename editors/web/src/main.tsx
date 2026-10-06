@@ -19,7 +19,7 @@ import "./styles/tokens.css";
 import "./styles/base.css";
 import "./styles/type.css";
 import App from "./App.tsx";
-import { newDoc } from "./state/files.ts";
+import { SKELETON } from "./state/files.ts";
 import { initialTheme, loadSaved, startAutosave } from "./state/persist.ts";
 import { useStore } from "./state/store.ts";
 
@@ -28,8 +28,12 @@ useStore.getState().setTheme(theme);
 document.documentElement.dataset.theme = theme;
 
 const saved = await loadSaved();
-if (saved) useStore.getState().openDoc(saved.fileName, saved.text);
-else newDoc();
+// A save from before export tracking counts as never exported.
+if (saved)
+    useStore
+        .getState()
+        .openDoc(saved.fileName, saved.text, saved.exportedText ?? null);
+else useStore.getState().openDoc("untitled.mg", SKELETON);
 startAutosave();
 
 const root = document.getElementById("root");

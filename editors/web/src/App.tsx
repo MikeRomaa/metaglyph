@@ -7,6 +7,7 @@ import { PreviewSheet } from "./sheets/preview/PreviewSheet.tsx";
 import { SpacingSheet } from "./sheets/spacing/SpacingSheet.tsx";
 import { Frame } from "./shell/Frame.tsx";
 import { Header } from "./shell/Header.tsx";
+import { ReplaceModal } from "./shell/ReplaceModal.tsx";
 import { StatusBar } from "./shell/StatusBar.tsx";
 import { SourcePane } from "./source/SourcePane.tsx";
 import { importFile } from "./state/files.ts";
@@ -22,7 +23,8 @@ export default function App() {
         document.documentElement.dataset.theme = theme;
     }, [theme]);
 
-    // Dropping a .mg file anywhere imports it (plan 5, §2.1).
+    // Dropping a .mg file anywhere imports it (plan 5, §2.1); other files
+    // are refused, and unexported work is confirmed before it's replaced.
     useEffect(() => {
         const over = (e: DragEvent) => e.preventDefault();
         const drop = (e: DragEvent) => {
@@ -50,6 +52,7 @@ export default function App() {
                 <SourcePane />
             </div>
             <StatusBar />
+            <ReplaceModal />
         </Frame>
     );
 }

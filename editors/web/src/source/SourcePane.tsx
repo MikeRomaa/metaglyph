@@ -82,6 +82,11 @@ function extensions(): Extension[] {
             ...historyKeymap,
             indentWithTab,
         ]),
+        // A dropped file opens as the document (App's handler, which
+        // checks it); CodeMirror would otherwise paste it into the text.
+        EditorView.domEventHandlers({
+            drop: (e) => (e.dataTransfer?.files.length ?? 0) > 0,
+        }),
         EditorView.updateListener.of((update) => {
             const store = useStore.getState();
             if (update.docChanged) {

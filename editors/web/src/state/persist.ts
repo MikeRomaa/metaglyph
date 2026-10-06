@@ -11,6 +11,8 @@ const AUTOSAVE_MS = 1000;
 interface SavedDoc {
     fileName: string;
     text: string;
+    /** Absent in saves from before export tracking. */
+    exportedText?: string | null;
     updatedAt: number;
 }
 
@@ -30,8 +32,13 @@ export async function loadSaved(): Promise<SavedDoc | undefined> {
 }
 
 async function save() {
-    const { fileName, text, version } = useStore.getState();
-    const doc: SavedDoc = { fileName, text, updatedAt: Date.now() };
+    const { fileName, text, exportedText, version } = useStore.getState();
+    const doc: SavedDoc = {
+        fileName,
+        text,
+        exportedText,
+        updatedAt: Date.now(),
+    };
     try {
         await (await db).put(STORE, doc, KEY);
         // Only "saved" if nothing changed while writing.
@@ -46,7 +53,12 @@ async function save() {
 export function startAutosave() {
     let timer: ReturnType<typeof setTimeout> | undefined;
     return useStore.subscribe((s, prev) => {
-        if (s.version === prev.version && s.fileName === prev.fileName) return;
+        if (
+            s.version === prev.version &&
+            s.fileName === prev.fileName &&
+            s.exportedText === prev.exportedText
+        )
+            return;
         clearTimeout(timer);
         timer = setTimeout(save, AUTOSAVE_MS);
     });

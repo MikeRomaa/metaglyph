@@ -1,0 +1,11 @@
+.message {
+    margin: 0;
+    padding: 0.875rem;
+    font: 400 0.75rem / 1.5 var(--font-sans);
+    color: var(--ink);
+    text-wrap: pretty;
+}
+
+.message strong {
+    font: 500 0.75rem var(--font-mono);
+}

@@ -5,6 +5,7 @@ import {
     exportTtf,
     newDoc,
     pickFile,
+    replaceDoc,
     SAMPLES,
 } from "../state/files.ts";
 import { rememberTheme } from "../state/persist.ts";
@@ -155,9 +156,7 @@ function FileMenu({ fileName }: { fileName: string }) {
                             type="button"
                             key={s.fileName}
                             role="menuitem"
-                            onClick={run(() =>
-                                useStore.getState().openDoc(s.fileName, s.text),
-                            )}
+                            onClick={run(() => replaceDoc(s.fileName, s.text))}
                         >
                             {s.fileName}
                         </button>

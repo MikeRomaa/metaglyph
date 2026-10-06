@@ -8,12 +8,15 @@ export function Modal({
     title,
     aside,
     footer,
+    compact,
     onClose,
     children,
 }: {
     title: ReactNode;
     aside?: ReactNode;
     footer?: ReactNode;
+    /** Sized to its content, for a short question. */
+    compact?: boolean;
     onClose: () => void;
     children: ReactNode;
 }) {
@@ -35,7 +38,12 @@ export function Modal({
                 if (e.target === e.currentTarget) onClose();
             }}
         >
-            <div className={styles.sheet} role="dialog" aria-modal="true">
+            <div
+                className={styles.sheet}
+                data-compact={compact || undefined}
+                role="dialog"
+                aria-modal="true"
+            >
                 <div className={styles.head}>
                     <span className={styles.title}>{title}</span>
                     {aside !== undefined && (

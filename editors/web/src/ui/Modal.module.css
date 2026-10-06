@@ -20,6 +20,11 @@
     box-shadow: 6px 6px 0 var(--ink);
 }
 
+.sheet[data-compact] {
+    width: min(30rem, 100%);
+    height: auto;
+}
+
 .head {
     flex: none;
     display: flex;

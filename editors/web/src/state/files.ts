@@ -20,19 +20,46 @@ instance Regular ()
 
 export const SAMPLES = [{ fileName: "metaglyph-sans.mg", text: metaglyphSans }];
 
-export function newDoc() {
-    useStore.getState().openDoc("untitled.mg", SKELETON);
+/** The document has changes not yet exported as `.mg`. */
+export function unexported(): boolean {
+    const { text, exportedText } = useStore.getState();
+    return text !== exportedText;
 }
 
+/** Opens `text` in place of the document, first asking the user (see
+ * `ReplaceModal`) when that would lose unexported work. */
+export function replaceDoc(fileName: string, text: string) {
+    const store = useStore.getState();
+    if (unexported()) store.setReplacing({ fileName, text });
+    else store.openDoc(fileName, text);
+}
+
+export function newDoc() {
+    replaceDoc("untitled.mg", SKELETON);
+}
+
+export function isMgFile(file: File): boolean {
+    return /\.mg$/i.test(file.name);
+}
+
+/** Opens `file` if it is a `.mg` file; anything else is refused. */
 export async function importFile(file: File) {
-    useStore.getState().openDoc(file.name, await file.text());
+    if (!isMgFile(file)) {
+        useStore
+            .getState()
+            .setNotice(
+                `Can't open “${file.name}”: only .mg files can be opened.`,
+            );
+        return;
+    }
+    replaceDoc(file.name, await file.text());
 }
 
 /** Opens a file picker and imports the chosen `.mg` file. */
 export function pickFile() {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ".mg,text/plain";
+    input.accept = ".mg";
     input.onchange = () => {
         const file = input.files?.[0];
         if (file) void importFile(file);
@@ -51,11 +78,12 @@ export function download(blob: Blob, name: string) {
 }
 
 export function exportDoc() {
-    const { fileName, text } = useStore.getState();
+    const { fileName, text, markExported } = useStore.getState();
     download(
         new Blob([text], { type: "text/plain" }),
         fileName.endsWith(".mg") ? fileName : `${fileName}.mg`,
     );
+    markExported();
 }
 
 /** Why TTF export is unavailable for `doc`, or null when it can run: a
