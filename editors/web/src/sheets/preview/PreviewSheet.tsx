@@ -3,8 +3,10 @@ import type { FontData } from "../../engine/types.ts";
 import { verticalExtent } from "../../font/lookup.ts";
 import { useStore } from "../../state/store.ts";
 import { Centre, Empty, LeftColumn, Section, sheet } from "../../ui/Sheet.tsx";
-import { caretX, indexAt, type Line, layout, lineOf } from "./layout.ts";
+import { exportSpecimen, type SpecimenFormat } from "./exportSpecimen.ts";
+import { caretX, indexAt, type Line, layout, lineOf, shape } from "./layout.ts";
 import styles from "./PreviewSheet.module.css";
+import type { Sample } from "./specimen.ts";
 
 /** Sample texts; "Every glyph" is built from the font itself. */
 const PRESETS: { label: string; text: string }[] = [
@@ -26,6 +28,33 @@ function everyGlyph(font: FontData): string {
         .join("");
 }
 
+/** The specimen's texts: the font's letters over its digits, a row each
+ * on one line; the pangram, on one line; then the preview's own text. */
+function specimenSamples(font: FontData, text: string): Sample[] {
+    const inked = (c: string) =>
+        shape(font, c).every((i) => !i.missing && i.glyph?.outline.trim());
+    const rows = [
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        "abcdefghijklmnopqrstuvwxyz",
+        "0123456789",
+    ]
+        .map((row) => [...row].filter(inked).join(""))
+        .filter(Boolean);
+    const block = rows.join("\n");
+    // The digits stand a little apart from the letters above them.
+    const gapBefore = rows.map((row, i) =>
+        i > 0 && /^[0-9]/.test(row) ? 0.25 : 0,
+    );
+    const pangram = PRESETS[0].text;
+    const ink = shape(font, pangram).filter((i) => i.text.trim());
+    const covered = ink.filter((i) => !i.missing).length >= ink.length * 0.8;
+    const out: Sample[] = [];
+    if (block) out.push({ text: block, oneLine: true, gapBefore });
+    if (covered) out.push({ text: pangram, oneLine: true });
+    if (text.trim() && text !== pangram) out.push({ text });
+    return out.length > 0 ? out : [{ text: everyGlyph(font) }];
+}
+
 /** The page's padding, in pixels (matches `.page` in the CSS). */
 const PAD_X = 32;
 const PAD_Y = 24;
@@ -40,6 +69,9 @@ export function PreviewSheet() {
     const setKern = useStore((s) => s.setPreviewKern);
     const metrics = useStore((s) => s.previewMetrics);
     const setMetrics = useStore((s) => s.setPreviewMetrics);
+    const info = useStore((s) => s.lastGood?.font);
+    const fileName = useStore((s) => s.fileName);
+    const [exporting, setExporting] = useState<SpecimenFormat | null>(null);
 
     const toolbar = (
         <>
@@ -121,6 +153,42 @@ export function PreviewSheet() {
                     </div>
                     <p className={styles.note}>
                         Click the preview and type. Presets replace the text.
+                    </p>
+                </Section>
+                <Section title="Specimen sheet" flush>
+                    <div className={styles.presets}>
+                        {(["pdf", "png", "svg"] as const).map((format) => (
+                            <button
+                                type="button"
+                                key={format}
+                                className={styles.preset}
+                                disabled={exporting !== null}
+                                onClick={() => {
+                                    setExporting(format);
+                                    exportSpecimen(
+                                        format,
+                                        font,
+                                        info,
+                                        fileName,
+                                        {
+                                            samples: specimenSamples(
+                                                font,
+                                                text,
+                                            ),
+                                            kern,
+                                        },
+                                    )
+                                        .catch((e) => console.error(e))
+                                        .finally(() => setExporting(null));
+                                }}
+                            >
+                                {exporting === format ? "…" : format}
+                            </button>
+                        ))}
+                    </div>
+                    <p className={styles.note}>
+                        Every inked glyph and a few settings on an A3 drawing
+                        sheet. PDF opens the print dialog: choose “Save as PDF”.
                     </p>
                 </Section>
                 {missing.size > 0 && (

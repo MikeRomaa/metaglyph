@@ -97,6 +97,23 @@ describe("preview layout", () => {
         ]);
     });
 
+    it("breaks a too-wide word between glyphs when asked", () => {
+        expect(texts(layout(font, "AVAVAV A", 1300, false, true))).toEqual([
+            "AV",
+            "AV",
+            "AV ",
+            "A",
+        ]);
+    });
+
+    it("takes a width per line", () => {
+        const width = (n: number) => (n === 0 ? 2000 : 700);
+        expect(texts(layout(font, "A A A", width, false))).toEqual([
+            "A A ",
+            "A",
+        ]);
+    });
+
     it("keeps an empty line for an empty paragraph", () => {
         const lines = layout(font, "A\n\nV", 5000, true);
         expect(lines.map((l) => [l.start, l.end, l.items.length])).toEqual([

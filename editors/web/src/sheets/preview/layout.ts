@@ -113,15 +113,18 @@ export function place(
 const isSpace = (item: Shaped) => item.text === " ";
 
 /**
- * `text` as lines no wider than `maxWidth` font units: each paragraph
- * (`\n`) wrapped greedily after runs of spaces, which stay at the end of
- * their line; a word wider than the line gets a line of its own.
+ * `text` as lines no wider than `maxWidth` font units (or, as a function,
+ * the width for line `n`): each paragraph (`\n`) wrapped greedily after
+ * runs of spaces, which stay at the end of their line. A word wider than
+ * the line gets a line of its own or, with `breakWords`, breaks between
+ * glyphs.
  */
 export function layout(
     font: FontData,
     text: string,
-    maxWidth: number,
+    maxWidth: number | ((line: number) => number),
     kern: boolean,
+    breakWords = false,
 ): Line[] {
     const lines: Line[] = [];
     let offset = 0;
@@ -133,6 +136,16 @@ export function layout(
         }
         let from = 0;
         while (from < shaped.length) {
+            const max =
+                typeof maxWidth === "number"
+                    ? maxWidth
+                    : maxWidth(lines.length);
+            const width = (to: number) => {
+                let visible = to;
+                while (visible > from && isSpace(shaped[visible - 1]))
+                    visible--;
+                return place(font, shaped.slice(from, visible), kern).width;
+            };
             // The furthest break that fits, or the first one at least.
             let cut = -1;
             for (let k = from; k < shaped.length; k++) {
@@ -140,14 +153,15 @@ export function layout(
                 const breaks =
                     isSpace(shaped[k]) && !isSpace(shaped[k + 1] ?? shaped[k]);
                 if (!last && !breaks) continue;
-                let visible = k + 1;
-                while (visible > from && isSpace(shaped[visible - 1]))
-                    visible--;
-                const fits =
-                    place(font, shaped.slice(from, visible), kern).width <=
-                    maxWidth;
+                const fits = width(k + 1) <= max;
                 if (fits || cut < 0) cut = k + 1;
                 if (!fits) break;
+            }
+            if (breakWords && width(cut) > max) {
+                // As many glyphs as fit, one at least.
+                const over = cut;
+                cut = from + 1;
+                while (cut < over && width(cut + 1) <= max) cut++;
             }
             const lineItems = shaped.slice(from, cut);
             lines.push({
